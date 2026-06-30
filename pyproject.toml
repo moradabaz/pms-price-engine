@@ -1,0 +1,33 @@
+[tool.uv.workspace]
+members = [
+    "services/market-ingestor",
+    "streaming/flink-jobs",
+    "dashboard",
+    "libs/shared-schemas",
+    "libs/common",
+    "specs",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "ruff>=0.15.0",
+    "mypy>=2.1.0",
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+    "jsonschema>=4.26.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

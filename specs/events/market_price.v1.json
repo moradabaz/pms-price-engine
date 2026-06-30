@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "market_price.v1",
+  "title": "MarketPrice",
+  "description": "Competitive market pricing snapshot for a given property profile and target night. Published by the market-ingestor to Kinesis. Used by Flink to provide the market reference input for the pricing engine.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "schema_version",
+    "market_area",
+    "property_profile",
+    "target_date",
+    "pricing",
+    "market_context",
+    "collected_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Idempotency key. The Flink consumer uses this to deduplicate on reprocessing."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+
+    "market_area": {
+      "type": "object",
+      "required": ["city", "country_code"],
+      "additionalProperties": false,
+      "description": "Market reference area. The Flink join matches apartments to market events by city + neighborhood when available.",
+      "properties": {
+        "city":         { "type": "string", "examples": ["Barcelona", "Madrid", "Valencia"] },
+        "neighborhood": { "type": ["string", "null"], "description": "Sub-city area for more precise comparisons (e.g. Eixample, Gràcia, Malasaña)." },
+        "country_code": { "type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2." }
+      }
+    },
+
+    "property_profile": {
+      "type": "object",
+      "required": ["type", "bedrooms"],
+      "additionalProperties": false,
+      "description": "Attributes used to filter comparable properties. Only apartments matching the same profile are included in the market sample.",
+      "properties": {
+        "type":       { "type": "string", "enum": ["apartment", "studio", "house", "villa", "room"] },
+        "bedrooms":   { "type": "integer", "minimum": 0, "description": "0 = studio." },
+        "max_guests": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+
+    "target_date": {
+      "type": "string",
+      "format": "date",
+      "description": "The specific night these market prices apply to (check-in date). Market prices are highly date-sensitive — do not reuse this event for other dates."
+    },
+
+    "pricing": {
+      "type": "object",
+      "required": ["avg_nightly_rate", "currency"],
+      "additionalProperties": false,
+      "description": "Nightly rate distribution across comparable listings for target_date.",
+      "properties": {
+        "avg_nightly_rate": { "type": "number", "minimum": 0, "description": "Mean nightly rate of the sample." },
+        "p25":              { "type": ["number", "null"], "minimum": 0, "description": "25th percentile — the budget end of the market." },
+        "p50":              { "type": ["number", "null"], "minimum": 0, "description": "Median — most representative single market price." },
+        "p75":              { "type": ["number", "null"], "minimum": 0, "description": "75th percentile — the premium end of the market." },
+        "currency":         { "type": "string", "const": "EUR" }
+      }
+    },
+
+    "market_context": {
+      "type": "object",
+      "required": ["sample_size", "data_source"],
+      "additionalProperties": false,
+      "description": "Metadata about the market sample. Used to assess data quality before trusting the price signal.",
+      "properties": {
+        "occupancy_rate": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of sampled listings already booked for target_date. High occupancy = high demand = pricing power. Low occupancy = oversupply = pressure to discount."
+        },
+        "sample_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of comparable listings included. Samples below 10 should be flagged as low-confidence."
+        },
+        "data_source": {
+          "type": "string",
+          "enum": ["inside_airbnb", "mock", "scraped_airbnb", "scraped_booking"],
+          "description": "Origin of the market data. The pricing engine may apply a confidence weight by source."
+        },
+        "platform": {
+          "type": ["string", "null"],
+          "enum": ["airbnb", "booking", "vrbo", "mixed", null],
+          "description": "Which OTA the sample was drawn from. Null when data_source=inside_airbnb (aggregated)."
+        }
+      }
+    },
+
+    "collected_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the market-ingestor collected this data. Used by Flink watermarking."
+    }
+  }
+}

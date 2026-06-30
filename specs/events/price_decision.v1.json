@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "price_decision.v1",
+  "title": "PriceDecision",
+  "description": "The output of the Flink pricing engine for one apartment and one target night. Written to both DynamoDB (hot path) and Iceberg (audit trail). Every field must be present so that the property manager can reconstruct exactly why a price was set, months later.",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "schema_version",
+    "apartment_id",
+    "apartment_reference",
+    "target_date",
+    "decided_at",
+    "cost_inputs",
+    "market_inputs",
+    "calculation",
+    "output"
+  ],
+  "additionalProperties": false,
+  "properties": {
+
+    "decision_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Idempotency key for Iceberg and DynamoDB sinks."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+
+    "apartment_id":        { "type": "string" },
+    "apartment_reference": { "type": "string", "description": "Human-readable property code (e.g. BCN-042). Denormalised here so audit records are self-contained." },
+
+    "target_date": {
+      "type": "string",
+      "format": "date",
+      "description": "The specific night this price recommendation applies to (check-in date)."
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the Flink job produced this decision."
+    },
+
+    "cost_inputs": {
+      "type": "object",
+      "required": ["billing_period", "total_monthly_cost_eur", "available_days", "daily_cost_eur"],
+      "additionalProperties": false,
+      "description": "Cost snapshot used in this calculation. Aggregated by Flink from payment_line events for the billing period.",
+      "properties": {
+        "billing_period": {
+          "type": "object",
+          "required": ["start", "end"],
+          "additionalProperties": false,
+          "properties": {
+            "start": { "type": "string", "format": "date" },
+            "end":   { "type": "string", "format": "date" }
+          }
+        },
+        "total_monthly_cost_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Sum of amount_gross for all payment lines for this apartment in the billing period."
+        },
+        "available_days": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of days in the billing period the apartment is available for rent (not blocked or under maintenance)."
+        },
+        "daily_cost_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "total_monthly_cost_eur / available_days. The cost floor before margin."
+        },
+        "cost_lines_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of payment_line events that contributed to total_monthly_cost_eur. Used to detect incomplete cost data."
+        }
+      }
+    },
+
+    "market_inputs": {
+      "type": "object",
+      "required": ["market_area", "avg_nightly_rate_eur", "collected_at"],
+      "additionalProperties": false,
+      "description": "Market snapshot used in this calculation. From the most recent market_price event for this apartment's market area and target_date.",
+      "properties": {
+        "market_area":            { "type": "string", "description": "city/neighborhood identifier (e.g. 'Barcelona/Eixample')." },
+        "avg_nightly_rate_eur":   { "type": "number", "minimum": 0 },
+        "occupancy_rate":         { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "sample_size":            { "type": ["integer", "null"], "minimum": 1 },
+        "collected_at":           { "type": "string", "format": "date-time", "description": "Freshness indicator. Stale market data (>48h) should be flagged." }
+      }
+    },
+
+    "calculation": {
+      "type": "object",
+      "required": ["target_margin", "minimum_price_eur", "competitiveness_discount", "market_reference_price_eur", "rule_applied"],
+      "additionalProperties": false,
+      "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
+      "properties": {
+        "target_margin": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Configured minimum profit margin (e.g. 0.20 = 20% above daily cost). Set per apartment or globally."
+        },
+        "minimum_price_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "daily_cost_eur × (1 + target_margin). The absolute floor — no price below this."
+        },
+        "competitiveness_discount": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction below market average to stay competitive (e.g. 0.05 = 5% below avg). Set per apartment or globally."
+        },
+        "market_reference_price_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "avg_nightly_rate_eur × (1 - competitiveness_discount). The market-derived target price."
+        },
+        "rule_applied": {
+          "type": "string",
+          "enum": ["minimum_floor", "market_competitive"],
+          "description": "minimum_floor: market_reference_price < minimum_price, so the floor was used. market_competitive: market signal is healthy, competitive pricing applied."
+        }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "required": ["suggested_price_eur", "currency", "effective_margin"],
+      "additionalProperties": false,
+      "description": "The recommendation the property manager sees.",
+      "properties": {
+        "suggested_price_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "max(minimum_price_eur, market_reference_price_eur). The final recommended nightly rate."
+        },
+        "currency": { "type": "string", "const": "EUR" },
+        "effective_margin": {
+          "type": "number",
+          "description": "(suggested_price_eur / daily_cost_eur) - 1. The actual margin this price achieves. Always >= target_margin by construction."
+        },
+        "below_market_by": {
+          "type": ["number", "null"],
+          "description": "avg_nightly_rate_eur - suggested_price_eur. Positive means we are priced below market. Null when rule_applied=minimum_floor (market signal was irrelevant)."
+        }
+      }
+    }
+  }
+}

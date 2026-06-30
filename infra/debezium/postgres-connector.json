@@ -1,0 +1,32 @@
+{
+  "name": "pms-payment-lines-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "pms",
+    "database.password": "pms",
+    "database.dbname": "pms_db",
+
+    "topic.prefix": "pms",
+    "table.include.list": "public.payment_lines",
+
+    "slot.name": "debezium_payment_lines",
+    "plugin.name": "pgoutput",
+    "publication.name": "dbz_publication",
+
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "false",
+    "transforms.unwrap.add.fields": "op,db,table,lsn,source.ts_ms",
+
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+
+    "heartbeat.interval.ms": "30000",
+    "errors.tolerance": "none"
+  }
+}

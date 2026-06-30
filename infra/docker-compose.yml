@@ -1,0 +1,155 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — payment_lines source, WAL enabled for Debezium CDC
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    container_name: pms_postgres
+    environment:
+      POSTGRES_USER: pms
+      POSTGRES_PASSWORD: pms
+      POSTGRES_DB: pms_db
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_replication_slots=4
+        -c max_wal_senders=4
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pms -d pms_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Zookeeper — required by Kafka
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: pms_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # ---------------------------------------------------------------------------
+  # Kafka — event bus for payment-events.v1
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: pms_kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Kafka Connect — hosts the Debezium PostgreSQL connector
+  # ---------------------------------------------------------------------------
+  kafka-connect:
+    image: debezium/connect:2.6
+    container_name: pms_kafka_connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: pms-connect-group
+      CONFIG_STORAGE_TOPIC: pms_connect_configs
+      OFFSET_STORAGE_TOPIC: pms_connect_offsets
+      STATUS_STORAGE_TOPIC: pms_connect_statuses
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Apache Flink — stateful stream processing (PyFlink)
+  # ---------------------------------------------------------------------------
+  # Image must match the apache-flink Python package version in streaming/flink-jobs/pyproject.toml.
+  # Mismatching image vs package = jobs fail to start. Current: apache-flink 2.3.0 → flink:2.0-java21
+  flink-jobmanager:
+    image: apache/flink:2.0-java21
+    container_name: pms_flink_jobmanager
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.bind-port: 8081
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/overview"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  flink-taskmanager:
+    image: apache/flink:2.0-java21
+    container_name: pms_flink_taskmanager
+    command: taskmanager
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+
+  # ---------------------------------------------------------------------------
+  # LocalStack — emulates AWS services locally (Kinesis, S3, DynamoDB)
+  #
+  #   Kinesis  → market-price-events stream
+  #   S3       → Iceberg cold path (pricing history)
+  #   DynamoDB → hot path (current recommended price per apartment)
+  #
+  # Single endpoint: http://localhost:4566
+  # Credentials:     AWS_ACCESS_KEY_ID=test / AWS_SECRET_ACCESS_KEY=test
+  # ---------------------------------------------------------------------------
+  localstack:
+    image: localstack/localstack:3.4
+    container_name: pms_localstack
+    environment:
+      SERVICES: kinesis,s3,dynamodb
+      AWS_DEFAULT_REGION: eu-west-1
+      KINESIS_PROVIDER: kinesalite
+      PERSISTENCE: 1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - ./localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal kinesis list-streams"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  postgres_data:
+  localstack_data:

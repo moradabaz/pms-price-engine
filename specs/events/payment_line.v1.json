@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payment_line.v1",
+  "title": "PaymentLine",
+  "description": "An operational cost line in the property manager's ledger. Captured via CDC (Debezium → Kafka) whenever a row is inserted or updated in the payment_lines table.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "schema_version",
+    "apartment_id",
+    "apartment_reference",
+    "concept",
+    "cost_type",
+    "description",
+    "amount_gross",
+    "vat_rate",
+    "currency",
+    "billing_period",
+    "payment_status",
+    "source",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Idempotency key. Used by Flink sinks to deduplicate on replay."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+
+    "apartment_id": {
+      "type": "string",
+      "description": "Surrogate key from the PMS database (UUID or integer as string)."
+    },
+    "apartment_reference": {
+      "type": "string",
+      "description": "Human-readable property code used by the PM (e.g. BCN-042, MAD-007). Stable across renames.",
+      "examples": ["BCN-042", "MAD-007", "VLC-015"]
+    },
+
+    "concept": {
+      "type": "string",
+      "description": "Standardised cost category. The pricing engine uses this to group costs by nature.",
+      "enum": [
+        "electricity",
+        "water",
+        "gas",
+        "internet",
+        "pms_subscription",
+        "ota_fee",
+        "channel_manager",
+        "office_rent",
+        "cleaning",
+        "maintenance",
+        "insurance",
+        "community_fee",
+        "other"
+      ]
+    },
+
+    "cost_type": {
+      "type": "string",
+      "description": "Nature of the cost relative to the pricing calculation. Fixed costs are divided by available days. Variable costs scale with usage or bookings. One-time costs are amortised or excluded depending on config.",
+      "enum": ["fixed", "variable", "one_time"]
+    },
+
+    "is_shared": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when this cost (e.g. office rent, channel manager fee) is shared across multiple apartments and has been pre-allocated before insertion."
+    },
+    "allocation_ratio": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Fraction of the original shared cost allocated to this apartment (e.g. 0.01 for 1 out of 100 apartments). Null when is_shared=false. The pricing engine uses the already-allocated amount_gross — this field is stored for audit only."
+    },
+
+    "description": {
+      "type": "string",
+      "description": "Free-text line as it appears on the invoice or bank statement (e.g. 'Endesa luz enero 2025 - Calle Gracia 42')."
+    },
+
+    "supplier": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name":   { "type": "string" },
+        "tax_id": { "type": ["string", "null"], "description": "CIF/NIF of the supplier for Spanish accounting." }
+      }
+    },
+
+    "invoice_number": {
+      "type": ["string", "null"],
+      "description": "Supplier invoice number (número de factura). Null for direct debits without an invoice reference."
+    },
+
+    "billing_period": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "description": "The service period this cost covers — NOT the payment date. A January electricity bill paid in February has billing_period 2025-01-01/2025-01-31.",
+      "properties": {
+        "start": { "type": "string", "format": "date" },
+        "end":   { "type": "string", "format": "date" }
+      }
+    },
+
+    "amount_gross": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total amount the PM pays, VAT included. Source of truth for the pricing engine."
+    },
+    "vat_rate": {
+      "type": "number",
+      "enum": [0.0, 0.04, 0.10, 0.21],
+      "description": "Spanish IVA rate: 0% (exempt), 4% (superreducido), 10% (reducido), 21% (general)."
+    },
+    "amount_net": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "amount_gross / (1 + vat_rate). Stored for audit; the pricing engine uses amount_gross as it reflects actual cash outflow."
+    },
+    "currency": {
+      "type": "string",
+      "const": "EUR",
+      "description": "Locked to EUR for this PoC. Extend to ISO 4217 pattern if multi-currency support is needed."
+    },
+
+    "due_date":       { "type": ["string", "null"], "format": "date" },
+    "payment_date":   { "type": ["string", "null"], "format": "date", "description": "Date the payment left the bank account. Null until status=paid." },
+    "payment_method": { "type": ["string", "null"], "enum": ["bank_transfer", "direct_debit", "card", "cash", null] },
+    "payment_status": {
+      "type": "string",
+      "enum": ["pending", "paid", "overdue", "disputed"]
+    },
+
+    "source": {
+      "type": "string",
+      "enum": ["bank_statement", "manual_entry", "synthetic"],
+      "description": "How the record entered the PMS database."
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at":  { "type": ["string", "null"], "format": "date-time" }
+  }
+}
