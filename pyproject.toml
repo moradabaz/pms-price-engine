@@ -17,6 +17,14 @@ dev-dependencies = [
     "jsonschema>=4.26.0",
 ]
 
+# apache-beam (pulled in transitively by apache-flink) has a legacy setup.py
+# that imports pkg_resources at build time without declaring it as a build
+# dependency. Under PEP 517 isolated builds this raises ModuleNotFoundError
+# unless a setuptools version that still bundles pkg_resources is explicitly
+# added here — current setuptools (82.x) has dropped pkg_resources entirely.
+[tool.uv.extra-build-dependencies]
+apache-beam = ["setuptools<81"]
+
 [tool.ruff]
 line-length = 88
 target-version = "py311"

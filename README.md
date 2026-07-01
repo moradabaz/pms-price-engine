@@ -243,6 +243,7 @@ See [`docs/adr/`](docs/adr/) for full decision records.
 | ADR-0001 | Kafka for payment-events (Debezium constraint), Kinesis for market-price-events |
 | ADR-0002 | PyFlink over Java Flink — single language stack (Python) |
 | ADR-0003 | `payment_line.v1` is a flat, metadata-free CDC contract; `event_id` identifies a row and requires keyed-upsert consumption |
+| ADR-0004 | pandas pinned to `2.2.x` workspace-wide to satisfy both `apache-flink` and `dashboard` under a single lockfile |
 
 ---
 
