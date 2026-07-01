@@ -1,0 +1,38 @@
+{
+  "decision_id": "c3d4e5f6-89ab-4562-b3fc-2c963f66afa6",
+  "schema_version": "1.0",
+  "apartment_id": "a1b2c3d4-0001",
+  "apartment_reference": "BCN-042",
+  "target_date": "2026-08-15",
+  "decided_at": "2026-07-01T06:05:00Z",
+  "cost_inputs": {
+    "billing_period": {
+      "start": "2026-06-01",
+      "end": "2026-06-30"
+    },
+    "total_monthly_cost_eur": 410.0,
+    "available_days": 30,
+    "daily_cost_eur": 13.67,
+    "cost_lines_count": 6
+  },
+  "market_inputs": {
+    "market_area": "Barcelona/Eixample",
+    "avg_nightly_rate_eur": 120.5,
+    "occupancy_rate": 0.72,
+    "sample_size": 34,
+    "collected_at": "2026-07-01T06:00:00Z"
+  },
+  "calculation": {
+    "target_margin": 0.2,
+    "minimum_price_eur": 16.4,
+    "competitiveness_discount": 0.05,
+    "market_reference_price_eur": 114.475,
+    "rule_applied": "market_competitive"
+  },
+  "output": {
+    "suggested_price_eur": 114.475,
+    "currency": "EUR",
+    "effective_margin": 7.376,
+    "below_market_by": 6.025
+  }
+}

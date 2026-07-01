@@ -15,7 +15,8 @@
     "amount_gross",
     "vat_rate",
     "currency",
-    "billing_period",
+    "billing_period_start",
+    "billing_period_end",
     "payment_status",
     "source",
     "created_at"
@@ -86,14 +87,13 @@
       "description": "Free-text line as it appears on the invoice or bank statement (e.g. 'Endesa luz enero 2025 - Calle Gracia 42')."
     },
 
-    "supplier": {
-      "type": "object",
-      "required": ["name"],
-      "additionalProperties": false,
-      "properties": {
-        "name":   { "type": "string" },
-        "tax_id": { "type": ["string", "null"], "description": "CIF/NIF of the supplier for Spanish accounting." }
-      }
+    "supplier_name": {
+      "type": ["string", "null"],
+      "description": "Supplier name, denormalised as a flat column so it survives CDC without nesting (see ADR-0003). Null when the cost line has no identifiable supplier (e.g. an internal allocation)."
+    },
+    "supplier_tax_id": {
+      "type": ["string", "null"],
+      "description": "CIF/NIF of the supplier for Spanish accounting. Flattened alongside supplier_name — see ADR-0003. Independently nullable: a tax_id without a name is invalid at the application layer but not rejected by this schema."
     },
 
     "invoice_number": {
@@ -101,15 +101,15 @@
       "description": "Supplier invoice number (número de factura). Null for direct debits without an invoice reference."
     },
 
-    "billing_period": {
-      "type": "object",
-      "required": ["start", "end"],
-      "additionalProperties": false,
-      "description": "The service period this cost covers — NOT the payment date. A January electricity bill paid in February has billing_period 2025-01-01/2025-01-31.",
-      "properties": {
-        "start": { "type": "string", "format": "date" },
-        "end":   { "type": "string", "format": "date" }
-      }
+    "billing_period_start": {
+      "type": "string",
+      "format": "date",
+      "description": "Start of the service period this cost covers — NOT the payment date. A January electricity bill paid in February has billing_period_start 2025-01-01. Flattened from the original nested billing_period object — see ADR-0003."
+    },
+    "billing_period_end": {
+      "type": "string",
+      "format": "date",
+      "description": "End of the service period this cost covers — NOT the payment date. See billing_period_start."
     },
 
     "amount_gross": {

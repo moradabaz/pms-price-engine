@@ -194,7 +194,9 @@ pms-price-engine/
 │   │   ├── payment_line.v1.json
 │   │   ├── market_price.v1.json
 │   │   └── price_decision.v1.json
-│   └── contracts/           # Tests that validate producers/consumers against schemas
+│   ├── contracts/           # Tests that validate producers/consumers against schemas
+│   └── phases/              # Per-phase specs (spec-driven development) — requirements,
+│       └── 01-cdc-pipeline/ # acceptance criteria, non-goals, written before implementation
 ├── services/
 │   └── market-ingestor/     # ETL — publishes market prices to Kinesis (LocalStack)
 ├── streaming/
@@ -218,15 +220,17 @@ pms-price-engine/
 
 ## Development Phases
 
-| Phase | Scope | Key output |
-|---|---|---|
-| 0 | Repo setup | This structure, schemas, CI |
-| 1 | CDC pipeline | Postgres → Debezium → Kafka, validated with kcat |
-| 2 | Market ingestion | Scraper/mock → Kinesis (LocalStack) |
-| 3 | Flink processing | Stateful join, pricing engine, dual sink |
-| 4 | Persistence | Iceberg schema, dbt models |
-| 5 | Dashboard | Streamlit reading DynamoDB + dbt |
-| 6 | Demo & docs | ADRs, architecture diagram, lessons learned |
+Each phase is spec'd in `specs/phases/<NN-name>/spec.md` — requirements and acceptance criteria written before implementation — starting with Phase 1.
+
+| Phase | Scope | Key output | Spec |
+|---|---|---|---|
+| 0 | Repo setup | This structure, schemas, CI | — |
+| 1 | CDC pipeline | Postgres → Debezium → Kafka, validated with kcat | [`specs/phases/01-cdc-pipeline/spec.md`](specs/phases/01-cdc-pipeline/spec.md) |
+| 2 | Market ingestion | Scraper/mock → Kinesis (LocalStack) | not yet written |
+| 3 | Flink processing | Stateful join, pricing engine, dual sink | not yet written |
+| 4 | Persistence | Iceberg schema, dbt models | not yet written |
+| 5 | Dashboard | Streamlit reading DynamoDB + dbt | not yet written |
+| 6 | Demo & docs | ADRs, architecture diagram, lessons learned | not yet written |
 
 ---
 
@@ -238,6 +242,7 @@ See [`docs/adr/`](docs/adr/) for full decision records.
 |---|---|
 | ADR-0001 | Kafka for payment-events (Debezium constraint), Kinesis for market-price-events |
 | ADR-0002 | PyFlink over Java Flink — single language stack (Python) |
+| ADR-0003 | `payment_line.v1` is a flat, metadata-free CDC contract; `event_id` identifies a row and requires keyed-upsert consumption |
 
 ---
 
