@@ -1,5 +1,5 @@
 """Contract tests for payment_line.v1 — the CDC output of Debezium reading
-public.payment_lines (see specs/phases/01-cdc-pipeline/spec.md).
+public.payment_lines (see specs/phases/02-cdc-pipeline/spec.md).
 
 Beyond plain schema conformance, this suite encodes the decisions in
 ADR-0003 as regression tests: a message with leaked CDC envelope metadata, or

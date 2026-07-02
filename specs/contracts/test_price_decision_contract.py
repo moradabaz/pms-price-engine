@@ -1,5 +1,5 @@
 """Contract tests for price_decision.v1 — produced by the Flink pricing
-engine (Phase 3) and written to both DynamoDB and Iceberg."""
+engine (Phase 4) and written to both DynamoDB and Iceberg."""
 
 import jsonschema
 import pytest
