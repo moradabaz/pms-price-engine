@@ -16,7 +16,7 @@ Separately, once the pandas conflict was resolved, `uv sync` hit a second, unrel
 
 ## Rationale
 
-- `dashboard` has zero implementation code as of this decision (Phase 5 is unbuilt). Relaxing an aspirational, never-validated version pin costs nothing today — there is no code depending on pandas 3.x-specific behavior to preserve.
+- `dashboard` has zero implementation code as of this decision (Phase 6 is unbuilt). Relaxing an aspirational, never-validated version pin costs nothing today — there is no code depending on pandas 3.x-specific behavior to preserve.
 - The alternative — splitting the workspace into conflicting resolution groups (uv supports this, but it adds real complexity: per-package lock forking, `--package`-scoped installs) — was rejected because it contradicts the project's explicit "single lockfile" simplicity goal for a stack whose primary purpose is learning, not managing dependency isolation machinery.
 - Pinning an older `setuptools` **only for apache-beam's build environment** (not the whole workspace) is the narrowest possible fix: it doesn't affect what `setuptools` version is actually installed/used at runtime by any project code, only what's available while `apache-beam`'s own `setup.py` executes once during dependency resolution.
 

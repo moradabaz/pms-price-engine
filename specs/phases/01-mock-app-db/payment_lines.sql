@@ -4,10 +4,12 @@
 -- (specs/events/payment_line.v1.json). Changing a column here without updating
 -- that schema (and vice versa) breaks the CDC contract — see ADR-0003.
 --
--- This file is the authoritative source-table definition for Phase 1. It is not
--- yet wired into infra/docker-compose.yml — doing so (as a
--- docker-entrypoint-initdb.d script) is Phase 1 implementation work, tracked in
--- specs/phases/01-cdc-pipeline/spec.md.
+-- This file is the authoritative source-table definition for Phase 1 (mock app
+-- + payment_lines DB). It is not yet wired into infra/docker-compose.yml —
+-- doing so (as a docker-entrypoint-initdb.d script) is Phase 1 implementation
+-- work, tracked in specs/phases/01-mock-app-db/spec.md. Phase 2 (CDC pipeline,
+-- specs/phases/02-cdc-pipeline/spec.md) depends on this table existing and
+-- being actively written to by the Phase 1 mock app.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- required for gen_random_uuid()
 

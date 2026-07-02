@@ -1,5 +1,5 @@
 """Contract tests for market_price.v1 — published by the market-ingestor
-service (Phase 2) to the market-price-events Kinesis stream."""
+service (Phase 3) to the market-price-events Kinesis stream."""
 
 import jsonschema
 import pytest
