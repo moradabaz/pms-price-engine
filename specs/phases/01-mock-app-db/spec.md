@@ -11,7 +11,7 @@
 
 There is no real property-manager application in this project — that's normal for a PoC, but it means we need a stand-in that behaves believably enough to learn CDC against. This phase builds that stand-in: a `payment_lines` table in PostgreSQL, plus a small **mock app** that writes to it the way a real PM back-office would — new cost lines arriving continuously (invoices entered as they come in) and existing lines occasionally changing (a payment moves from `pending` to `paid`).
 
-This phase is also the first hands-on encounter with the mechanism Phase 2 depends on: **PostgreSQL's write-ahead log (WAL)**. Before Debezium and Kafka Connect are in the picture at all, the goal here is to understand *why* logical replication works — `wal_level=logical`, a replication slot, and what a raw decoded change actually looks like — by inspecting it directly (`psql` + `pg_recvlogical` or `pg_logical_slot_get_changes`), not through a connector's abstraction.
+This phase is also the first hands-on encounter with the mechanism Phase 2 depends on: **PostgreSQL's write-ahead log (WAL)**. Before Debezium and Kafka Connect are in the picture at all, the goal here is to understand *why* logical replication works — `wal_level=logical`, a replication slot, and what a raw decoded change actually looks like — by inspecting it directly (`psql` + `pg_recvlogical` or `pg_logical_slot_get_binary_changes`), not through a connector's abstraction.
 
 By the end of this phase we can prove: *"Postgres is running with logical replication enabled, `payment_lines` has realistic historical and live data, and we can see raw WAL change events for both inserts and updates using nothing but Postgres tooling."* Phase 2 then plugs Debezium into exactly this.
 
@@ -23,12 +23,12 @@ This phase does **not** touch Kafka, Debezium, or Kafka Connect at all (see Phas
 
 ### In scope
 
-- The `payment_lines` PostgreSQL table, per [`payment_lines.sql`](./payment_lines.sql), wired into `infra/docker-compose.yml` as a `docker-entrypoint-initdb.d` init script (this was drafted but not yet wired — see file history).
+- The `payment_lines` PostgreSQL table, per [`payment_lines.sql`](./payment_lines.sql), wired into `infra/docker-compose.yml` as a `docker-entrypoint-initdb.d` init script.
 - Enabling logical replication: `wal_level=logical` on the Postgres container, and manually creating a replication slot to confirm decoding works (`pgoutput` plugin — the same one Phase 2's Debezium connector will use).
 - A minimal **mock app** (a small long-running Python process, e.g. `services/mock-pm-app`) that:
   - performs an initial **backfill/seed** of historical rows (requirements in §4), then
   - **continuously** inserts new rows on an interval and occasionally **updates** existing rows, for as long as it runs — this is what makes it a believable stand-in for a live PM app, not a one-shot script.
-- Manual verification that WAL changes are observable via raw Postgres tooling (`pg_recvlogical` or `SELECT * FROM pg_logical_slot_get_changes(...)`), independent of Debezium.
+- Manual verification that WAL changes are observable via raw Postgres tooling (`pg_recvlogical` or `SELECT * FROM pg_logical_slot_get_binary_changes(...)`), independent of Debezium. `pgoutput` produces binary protocol output, so the plain-text `pg_logical_slot_get_changes` errors against it (`ERROR: logical decoding output plugin "pgoutput" produces binary output`) — the `_binary_` variant (or `pg_recvlogical`) is required.
 
 ### Out of scope (explicitly deferred)
 
@@ -111,7 +111,7 @@ The build context is the repo root, not `services/mock-pm-app` itself — this s
 - **AC-03 — Backfill present.** After the mock app's seed step, `payment_lines` contains ≥2 months of history across ≥10 apartments and ≥3 `concept` values, all with `source = 'synthetic'`.
 - **AC-04 — Continuous writes.** With the mock app running, `SELECT count(*)` on `payment_lines` increases over a short observation window (e.g. 2 minutes) without manual intervention.
 - **AC-05 — Update path exercised.** At least one row transitions `payment_status: pending → paid` (with `payment_date` set and `updated_at` advancing) while the mock app runs, independent of the initial seed.
-- **AC-06 — Raw WAL visibility.** A manually created logical replication slot (`pgoutput` plugin) shows decoded change events for both an `INSERT` and an `UPDATE` against `payment_lines`, inspected directly via `pg_recvlogical` or `pg_logical_slot_get_changes` — this is the phase's core learning checkpoint and must be demonstrated before starting Phase 2.
+- **AC-06 — Raw WAL visibility.** A manually created logical replication slot (`pgoutput` plugin) shows decoded change events for both an `INSERT` and an `UPDATE` against `payment_lines`, inspected directly via `pg_recvlogical` or `pg_logical_slot_get_binary_changes` (`pgoutput` is binary-only — the plain-text `pg_logical_slot_get_changes` does not work against it) — this is the phase's core learning checkpoint and must be demonstrated before starting Phase 2.
 - **AC-07 — Decoupled from Phase 2.** The mock app runs correctly with Kafka/Debezium/Kafka Connect stopped or absent entirely — it has no dependency on them.
 
 ---
