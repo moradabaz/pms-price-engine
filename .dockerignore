@@ -1,0 +1,15 @@
+.venv/
+.git/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+.idea/
+.vscode/
+infra/localstack/volume/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
