@@ -1,7 +1,8 @@
 import logging
-from typing import Any
+from typing import cast
 
 import structlog
+from structlog.typing import FilteringBoundLogger
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -20,5 +21,5 @@ def configure_logging(level: str = "INFO") -> None:
     )
 
 
-def get_logger(name: str | None = None) -> Any:
-    return structlog.get_logger(name)
+def get_logger(name: str | None = None) -> FilteringBoundLogger:
+    return cast(FilteringBoundLogger, structlog.get_logger(name))
