@@ -19,6 +19,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ../specs/phases/01-mock-app-db/payment_lines.sql:/docker-entrypoint-initdb.d/01-payment_lines.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pms -d pms_db"]
       interval: 10s

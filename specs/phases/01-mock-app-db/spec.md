@@ -57,7 +57,50 @@ The generator must produce data realistic enough for later phases (cost aggregat
 
 ---
 
-## 5. Acceptance criteria
+## 5. Configuration
+
+Two things need concrete values before this phase can be implemented: how `payment_lines.sql` gets wired into Compose, and how the mock app itself is configured and deployed. Both are captured here so implementation has no open decisions left.
+
+### 5.1 Postgres init wiring
+
+| Setting | Value | Why |
+|---|---|---|
+| Init script mount | `../specs/phases/01-mock-app-db/payment_lines.sql:/docker-entrypoint-initdb.d/01-payment_lines.sql:ro` added to the `postgres` service's `volumes:` in `infra/docker-compose.yml` | Mounted directly from its spec location (single source of truth — this file is already documented as authoritative, see ADR-0003) rather than copied into an `infra/postgres/init/` directory, which would create two copies that can silently drift. |
+| WAL settings | Already set on the `postgres` service: `wal_level=logical`, `max_replication_slots=4`, `max_wal_senders=4` | Done in Phase 0 — no change needed here, just confirmed by AC-01. |
+
+### 5.2 Mock app service (`services/mock-pm-app`)
+
+Settings are loaded via `pydantic-settings` (prefix `MOCK_APP_`), consistent with `libs/common`'s existing `pydantic-settings` dependency — this is the first real consumer of that library.
+
+| Env var | Default | Why |
+|---|---|---|
+| `MOCK_APP_POSTGRES_DSN` | *(required, no default)* | e.g. `postgresql://pms:pms@postgres:5432/pms_db` inside the Compose network. No safe default exists across dev vs. Compose contexts, so it must be set explicitly. |
+| `MOCK_APP_SEED_MONTHS` | `2` | Matches AC-03's minimum history window. |
+| `MOCK_APP_SEED_APARTMENTS` | `10` | Matches AC-03's minimum apartment count; references are drawn from a fixed city-code pool (`BCN`, `MAD`, `VLC`, `SEV`, ...) formatted `<CITY>-<NNN>`. |
+| `MOCK_APP_INSERT_INTERVAL_MIN_SECONDS` | `10` | Lower bound of §4's "every ~10–30 seconds" cadence. |
+| `MOCK_APP_INSERT_INTERVAL_MAX_SECONDS` | `30` | Upper bound; the actual interval is randomized uniformly between min and max on every tick, per §4's "interval configurable." |
+| `MOCK_APP_UPDATE_CHECK_INTERVAL_SECONDS` | `60` | How often the generator looks for an existing `pending` row to flip to `paid` (AC-05). Decoupled from the insert cadence because updates model back-office processing catching up, not invoices arriving. |
+| `MOCK_APP_LOG_LEVEL` | `INFO` | Via `libs/common`'s `structlog` setup. |
+
+Docker Compose addition (new service, alongside `postgres`, in `infra/docker-compose.yml`):
+
+```yaml
+mock-pm-app:
+  build: ../services/mock-pm-app
+  container_name: pms_mock_pm_app
+  depends_on:
+    postgres:
+      condition: service_healthy
+  environment:
+    MOCK_APP_POSTGRES_DSN: postgresql://pms:pms@postgres:5432/pms_db
+  restart: unless-stopped
+```
+
+`restart: unless-stopped` directly implements §7's "no failure/retry handling... restarted manually (or via Docker Compose `restart: unless-stopped`)" — making that the actual configured behavior rather than just a documented option.
+
+---
+
+## 6. Acceptance criteria
 
 - **AC-01 — Logical replication enabled.** `SHOW wal_level;` reports `logical` on the running Postgres container.
 - **AC-02 — Table live.** `payment_lines` exists per `payment_lines.sql`, created via Docker Compose init (not a manual `psql` step).
@@ -69,7 +112,7 @@ The generator must produce data realistic enough for later phases (cost aggregat
 
 ---
 
-## 6. Known limitations
+## 7. Known limitations
 
 - The mock app's data distribution is arbitrary/random, not modeled on real PM cost patterns — it's realistic enough to be useful for later phases, not a statistically faithful simulation.
 - The manually created replication slot used for AC-06 must be dropped (or reused deliberately) before Phase 2 registers Debezium's own slot (`debezium_payment_lines`, per the Phase 2 spec) — two slots reading the same WAL is fine, but an abandoned unused slot will make PostgreSQL retain WAL indefinitely and should not be left running.
@@ -77,7 +120,7 @@ The generator must produce data realistic enough for later phases (cost aggregat
 
 ---
 
-## 7. Follow-ups for later phases
+## 8. Follow-ups for later phases
 
 - **Phase 2 depends on this phase's mock app being started (and having seeded data) *before* the Debezium connector is registered**, so its `snapshot.mode: initial` backfill has something to snapshot — this is the same seed-timing requirement previously drafted directly in the Phase 2 spec; it now lives here since this phase owns the data generator.
 - **Phase 2 must create its own dedicated replication slot** (`debezium_payment_lines`) rather than reusing whatever slot was created for this phase's AC-06 — see Known Limitations above.

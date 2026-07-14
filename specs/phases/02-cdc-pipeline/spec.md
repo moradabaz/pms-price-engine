@@ -25,7 +25,7 @@ This phase does **not** yet compute any prices, fetch any market data, or produc
 
 - A Debezium PostgreSQL connector ([`infra/debezium/postgres-connector.json`](../../../infra/debezium/postgres-connector.json)) reading the `payment_lines` table (created and seeded in Phase 1) that:
   - performs an **initial snapshot** of existing rows, then
-  - **streams** ongoing inserts and updates via logical replication (WAL, `pgoutput`), using its own dedicated replication slot distinct from any slot created manually during Phase 1 (see Phase 1 spec, §6).
+  - **streams** ongoing inserts and updates via logical replication (WAL, `pgoutput`), using its own dedicated replication slot distinct from any slot created manually during Phase 1 (see Phase 1 spec, §7).
 - The `payment-events.v1` Kafka topic, partitioned by `apartment_id`, carrying messages that validate against [`payment_line.v1.json`](../../events/payment_line.v1.json) with **zero additional fields**.
 - Manual verification via `kcat` (per README) that the above holds.
 
@@ -37,7 +37,7 @@ This phase does **not** yet compute any prices, fetch any market data, or produc
 - Any pricing computation or `price_decision` output.
 - DynamoDB / Iceberg / dashboard (Phases 5–6).
 - Automated integration tests that spin up the full Docker Compose stack (Phase 2 verification is manual via `kcat`, per the project's phased approach — automating this is a candidate for a later hardening pass, not a blocker for calling Phase 2 done).
-- Handling hard deletes of `payment_lines` rows as a first-class case (see §6, Known Limitations).
+- Handling hard deletes of `payment_lines` rows as a first-class case (see §7, Known Limitations).
 - Multi-currency support (`currency` stays hardcoded to EUR — see schema).
 
 ---
@@ -60,7 +60,7 @@ Config: [`infra/debezium/postgres-connector.json`](../../../infra/debezium/postg
 
 | Behavior | Setting | Why |
 |---|---|---|
-| Initial snapshot | `snapshot.mode: initial` | Backfills existing rows so the pricing engine has cost history from day one of the demo (seeded in Phase 1 — see §5). Explicit, not left to Debezium's default. |
+| Initial snapshot | `snapshot.mode: initial` | Backfills existing rows so the pricing engine has cost history from day one of the demo (seeded in Phase 1 — see §6). Explicit, not left to Debezium's default. |
 | Replication mechanism | `plugin.name: pgoutput`, `slot.name: debezium_payment_lines` | Native PostgreSQL logical decoding — the same plugin used for manual inspection in Phase 1, AC-06, but via its own dedicated slot. No extra plugin install required (unlike `decoderbufs`/`wal2json`). |
 | Publication | `publication.name: dbz_publication`, `publication.autocreate.mode: filtered` | Created explicitly by Phase 1's `payment_lines.sql`; `filtered` is a safety net if it's ever missing, scoped to `table.include.list` only (never "all tables"). |
 | Row → event shape | `transforms.unwrap.type: ExtractNewRecordState` | Emits only the row's current ("after") state — the CDC envelope itself is discarded, which is what makes the flat, metadata-free contract in §3 possible. |
@@ -72,7 +72,7 @@ Config: [`infra/debezium/postgres-connector.json`](../../../infra/debezium/postg
 
 ## 5. Seed / backfill data (owned by Phase 1)
 
-Debezium's initial snapshot only backfills what's already in `payment_lines` when the connector starts. Seeding that data — coverage, realism, provenance, and mutation-coverage requirements — is entirely [Phase 1](../01-mock-app-db/spec.md)'s responsibility (its §4 and §5); this phase's only requirement is a precondition: **Phase 1's mock app must have completed its backfill and be running its continuous generator loop before this phase's Debezium connector is registered**, so `snapshot.mode: initial` has something realistic to snapshot and keeps receiving live traffic afterward.
+Debezium's initial snapshot only backfills what's already in `payment_lines` when the connector starts. Seeding that data — coverage, realism, provenance, and mutation-coverage requirements — is entirely [Phase 1](../01-mock-app-db/spec.md)'s responsibility (its §4 and §6); this phase's only requirement is a precondition: **Phase 1's mock app must have completed its backfill and be running its continuous generator loop before this phase's Debezium connector is registered**, so `snapshot.mode: initial` has something realistic to snapshot and keeps receiving live traffic afterward.
 
 ---
 
