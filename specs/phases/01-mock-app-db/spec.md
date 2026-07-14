@@ -86,7 +86,9 @@ Docker Compose addition (new service, alongside `postgres`, in `infra/docker-com
 
 ```yaml
 mock-pm-app:
-  build: ../services/mock-pm-app
+  build:
+    context: ..
+    dockerfile: services/mock-pm-app/Dockerfile
   container_name: pms_mock_pm_app
   depends_on:
     postgres:
@@ -95,6 +97,8 @@ mock-pm-app:
     MOCK_APP_POSTGRES_DSN: postgresql://pms:pms@postgres:5432/pms_db
   restart: unless-stopped
 ```
+
+The build context is the repo root, not `services/mock-pm-app` itself — this service is a uv workspace member and its build needs sibling packages (`libs/common`, `libs/shared-schemas`) plus the root lockfile, none of which are reachable from a build context scoped to its own directory.
 
 `restart: unless-stopped` directly implements §7's "no failure/retry handling... restarted manually (or via Docker Compose `restart: unless-stopped`)" — making that the actual configured behavior rather than just a documented option.
 

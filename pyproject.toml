@@ -1,6 +1,7 @@
 [tool.uv.workspace]
 members = [
     "services/market-ingestor",
+    "services/mock-pm-app",
     "streaming/flink-jobs",
     "dashboard",
     "libs/shared-schemas",
@@ -36,6 +37,7 @@ select = ["E", "F", "I", "N", "UP"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

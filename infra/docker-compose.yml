@@ -27,6 +27,24 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
+  # Mock PM app — writes synthetic payment_lines rows (seed + continuous)
+  # Build context is the repo root, not this service's own directory: it's a
+  # uv workspace member and needs its sibling packages (libs/common,
+  # libs/shared-schemas) and the root lockfile to build (see Dockerfile).
+  # ---------------------------------------------------------------------------
+  mock-pm-app:
+    build:
+      context: ..
+      dockerfile: services/mock-pm-app/Dockerfile
+    container_name: pms_mock_pm_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MOCK_APP_POSTGRES_DSN: postgresql://pms:pms@postgres:5432/pms_db
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
   # Zookeeper — required by Kafka
   # ---------------------------------------------------------------------------
   zookeeper:
