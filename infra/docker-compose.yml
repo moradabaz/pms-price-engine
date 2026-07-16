@@ -99,6 +99,12 @@ services:
       STATUS_STORAGE_TOPIC: pms_connect_statuses
       KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    volumes:
+      # Custom Debezium CustomConverter (see infra/debezium/custom-converters) that
+      # renders DATE columns as "yyyy-MM-dd" strings instead of Debezium's default
+      # epoch-day integer encoding — mounted into the postgres connector's own plugin
+      # directory so it shares that plugin's classloader (no custom image needed).
+      - ./debezium/custom-converters/target/custom-converters-1.0.0.jar:/kafka/connect/debezium-connector-postgres/custom-converters-1.0.0.jar:ro
     ports:
       - "8083:8083"
     healthcheck:
