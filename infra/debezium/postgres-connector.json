@@ -19,17 +19,27 @@
 
     "snapshot.mode": "initial",
 
-    "transforms": "unwrap",
+    "message.key.columns": "public.payment_lines:apartment_id",
+
+    "decimal.handling.mode": "double",
+
+    "converters": "dates",
+    "dates.type": "com.pms.debezium.DateStringConverter",
+    "dates.format.date": "yyyy-MM-dd",
+
+    "transforms": "unwrap,route",
     "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
     "transforms.unwrap.drop.tombstones": "true",
     "transforms.unwrap.delete.handling.mode": "drop",
+    "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.route.regex": "pms\\.public\\.payment_lines",
+    "transforms.route.replacement": "payment-events.v1",
 
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",
     "key.converter.schemas.enable": "false",
     "value.converter": "org.apache.kafka.connect.json.JsonConverter",
     "value.converter.schemas.enable": "false",
 
-    "heartbeat.interval.ms": "30000",
     "errors.tolerance": "none"
   }
 }

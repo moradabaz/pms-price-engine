@@ -38,6 +38,10 @@ infra/terraform/.terraform.lock.hcl
 # LocalStack
 infra/localstack/volume/
 
+# Maven (infra/debezium/custom-converters) - build the jar with:
+#   docker run --rm -v "$(pwd)/infra/debezium/custom-converters:/app" -w /app maven:3.9-eclipse-temurin-17 mvn -q -DskipTests package
+infra/debezium/custom-converters/target/
+
 # IDE
 .idea/
 .vscode/

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.pms.debezium</groupId>
+  <artifactId>custom-converters</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <!--
+    Fixes DATE columns being emitted as raw epoch-day integers (io.debezium.time.Date)
+    instead of ISO strings, per specs/events/payment_line.v1.json's "format": "date"
+    contract. Kafka Connect's bundled TimestampConverter SMT cannot do this — it only
+    recognizes Kafka Connect's own logical type names, not Debezium's
+    (see error-handling/ for the investigation). Debezium's documented fix for exactly
+    this gap is the CustomConverter SPI implemented here.
+
+    debezium-api/debezium-core versions must match the Debezium image running in
+    infra/docker-compose.yml's kafka-connect service (debezium/connect:2.6, which
+    bundles Debezium 2.6.2.Final) - both are "provided" because the running container
+    already has them on the plugin's classpath; only our compiled class needs to ship.
+  -->
+
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <debezium.version>2.6.2.Final</debezium.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.debezium</groupId>
+      <artifactId>debezium-api</artifactId>
+      <version>${debezium.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>connect-api</artifactId>
+      <version>3.7.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>
