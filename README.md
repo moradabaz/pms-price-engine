@@ -228,7 +228,7 @@ Each phase is spec'd in `specs/phases/<NN-name>/spec.md` — requirements and ac
 | 0 | Repo setup | This structure, schemas, CI | — |
 | 1 | Mock app & `payment_lines` DB | Postgres table + generator app writing live/seeded cost data; hands-on WAL/logical-replication check | [`specs/phases/01-mock-app-db/spec.md`](specs/phases/01-mock-app-db/spec.md) |
 | 2 | CDC pipeline | Postgres → Debezium → Kafka, validated with kcat | [`specs/phases/02-cdc-pipeline/spec.md`](specs/phases/02-cdc-pipeline/spec.md) |
-| 3 | Market ingestion | Scraper/mock → Kinesis (LocalStack) | not yet written |
+| 3 | Market ingestion | Synthetic `market-ingestor` → Kinesis (LocalStack), verified live | [`specs/phases/03-market-ingestion/spec.md`](specs/phases/03-market-ingestion/spec.md) |
 | 4 | Flink processing | Stateful join, pricing engine, dual sink | not yet written |
 | 5 | Persistence | Iceberg schema, dbt models | not yet written |
 | 6 | Dashboard | Streamlit reading DynamoDB + dbt | not yet written |
