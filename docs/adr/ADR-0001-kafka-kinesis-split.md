@@ -1,7 +1,7 @@
 # ADR-0001 — Kafka for cost events, Kinesis for market-price events
 
 **Date:** 2026-06-30
-**Status:** Accepted
+**Status:** Accepted — partition-key claim in Consequences (third bullet) superseded for `market-price-events` by [ADR-0005](ADR-0005-market-price-partition-key.md); `payment-events.v1` is unaffected
 
 ## Context
 

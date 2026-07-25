@@ -175,6 +175,26 @@ services:
       timeout: 10s
       retries: 10
 
+  # ---------------------------------------------------------------------------
+  # Market ingestor — publishes synthetic market_price.v1 snapshots to Kinesis
+  # (Phase 3). Build context is the repo root, same reasoning as mock-pm-app:
+  # a uv workspace member needing sibling packages (libs/common,
+  # libs/shared-schemas) and the root lockfile to build (see Dockerfile).
+  # ---------------------------------------------------------------------------
+  market-ingestor:
+    build:
+      context: ..
+      dockerfile: services/market-ingestor/Dockerfile
+    container_name: pms_market_ingestor
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      MARKET_INGESTOR_KINESIS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   localstack_data:
