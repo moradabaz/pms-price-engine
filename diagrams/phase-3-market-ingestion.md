@@ -105,6 +105,100 @@ sequenceDiagram
     Note over LS,MI: Flink (Phase 4) is not consuming yet.<br/>Verified manually via aws kinesis get-records (AC-02/03/04),<br/>same role Phase 1's pg_recvlogical / Phase 2's kcat played for their transports.
 ```
 
+## 3. Collaboration diagram — one tick's message exchange
+
+Mermaid has no native UML collaboration/communication diagram type, so this is a flowchart used to
+approximate one: a hub object (`main.py`) with numbered links to its collaborators, emphasizing *who talks
+to whom* over strict time order (that's diagram 2's job).
+
+```mermaid
+flowchart TB
+    MI["market-ingestor<br/>(main.py)"]
+    SS["MarketPrice<br/>(shared_schemas)"]
+    KS[("Kinesis<br/>market-price-events")]
+    LG["structlog<br/>(libs/common)"]
+
+    MI -->|"1: build_market_price_event()"| SS
+    SS -->|"2: validated instance"| MI
+    MI -->|"3: put_records(Records=[18])"| KS
+    KS -->|"4: response (FailedRecordCount, per-record status)"| MI
+    MI -->|"5: [if failures] put_records(failed only)"| KS
+    KS -->|"6: response"| MI
+    MI -->|"7: log(tick_complete)"| LG
+
+    classDef hub fill:#1f6feb,color:#fff,stroke:#0b3d91;
+    class MI hub;
+```
+
+## 4. How Kinesis's partition log actually works
+
+Two mechanics this project's `PartitionKey` choice (ADR-0005) depends on: how a key maps to a shard, and
+what a shard *is*.
+
+**4.1 — `PartitionKey` → shard, via a 128-bit hash space**
+
+```mermaid
+flowchart LR
+    pk["PartitionKey (string)<br/>e.g. 'Barcelona|Eixample|apartment|2'"] -->|"MD5 → 128-bit integer"| hash["hash(PartitionKey)"]
+    hash -->|"falls inside this shard's range"| shard1
+
+    subgraph ranges["Hash key space 0 .. 2^128-1 — one contiguous range per shard"]
+        direction LR
+        shard0["shard-0000<br/>range A"]
+        shard1["shard-0001<br/>range B"]
+        shard2["shard-0002<br/>range C"]
+        shard3["shard-0003<br/>range D"]
+    end
+```
+
+Kinesis owns the hashing — the producer never computes it (spec §4, Failure handling / partition key
+notes). The same string always hashes to the same 128-bit integer, which always falls in the same shard's
+range — that's the entire mechanism behind ADR-0005's partition affinity (AC-04).
+
+**4.2 — a shard is an ordered, append-only log — not a queue, not a table**
+
+```mermaid
+flowchart LR
+    subgraph shard["shard-0000 — ordered, append-only, 24h retention"]
+        direction LR
+        r1["seq 4961...001<br/>pk: BCN·Eixample·apt·2"]
+        r2["seq 4961...002<br/>pk: MAD·Centro·studio·0"]
+        r3["seq 4961...003<br/>pk: BCN·Eixample·apt·2"]
+        r4["seq 4961...004<br/>..."]
+        r1 --> r2 --> r3 --> r4
+    end
+    trim["TRIM_HORIZON<br/>(oldest still-retained record)"] -.-> r1
+    latest["LATEST<br/>(next record to arrive)"] -.-> r4
+```
+
+Sequence numbers are monotonically increasing **within a shard only** — there is no global ordering across
+shards. Records from *different* partition keys freely interleave in the same shard if they hash to the
+same range (exactly what happened here: 18 segments, 4 shards, several segments per shard by construction).
+`GetShardIterator` (`ShardIteratorType`: `TRIM_HORIZON` / `LATEST` / `AT_SEQUENCE_NUMBER` /
+`AT_TIMESTAMP`) returns an opaque cursor into one shard's log; `GetRecords` reads forward from that cursor
+and returns a `NextShardIterator` to keep polling — this is exactly what the verification script in PR #5's
+"How to test" section does, once per shard.
+
+## 5. Timeline — log growth per shard, tick by tick
+
+Reconstructed exactly from the live verification numbers (30/30/10/20 final split, §"What was verified" in
+`docs/AUDIT_DIARY.md`) divided by the 5 ticks observed — affinity was 100% stable (AC-04, zero violations),
+so the same 6/6/2/4 segments land on the same shards *every single tick*, not just on average.
+
+```mermaid
+timeline
+    title Records per shard, accumulated across ticks (AC-04: zero affinity violations)
+    Tick 1 (t=0s)   : shard-0000 +6 (total 6)  : shard-0001 +6 (total 6)  : shard-0002 +2 (total 2)  : shard-0003 +4 (total 4)
+    Tick 2 (t=60s)  : shard-0000 +6 (total 12) : shard-0001 +6 (total 12) : shard-0002 +2 (total 4)  : shard-0003 +4 (total 8)
+    Tick 3 (t=120s) : shard-0000 +6 (total 18) : shard-0001 +6 (total 18) : shard-0002 +2 (total 6)  : shard-0003 +4 (total 12)
+    Tick 4 (t=180s) : shard-0000 +6 (total 24) : shard-0001 +6 (total 24) : shard-0002 +2 (total 8)  : shard-0003 +4 (total 16)
+    Tick 5 (t=240s) : shard-0000 +6 (total 30) : shard-0001 +6 (total 30) : shard-0002 +2 (total 10) : shard-0003 +4 (total 20)
+```
+
+The skew isn't random noise that might average out — it's a deterministic consequence of which 18 fixed
+strings hash into which of the 4 ranges, so it repeats identically forever unless the key scheme or shard
+count changes (ADR-0005's accepted trade-off).
+
 ## What this diagram does *not* include
 
 - Phase 4 (Flink consuming `market-price-events`, joining against `payment-events.v1`, computing `price_decision.v1`).
