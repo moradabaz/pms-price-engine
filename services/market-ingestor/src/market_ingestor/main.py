@@ -20,9 +20,7 @@ def _build_client(settings: MarketIngestorSettings) -> Any:
     )
 
 
-def run_tick(
-    client: Any, settings: MarketIngestorSettings, rng: random.Random
-) -> None:
+def run_tick(client: Any, settings: MarketIngestorSettings, rng: random.Random) -> None:
     now = datetime.now(UTC)
     records: list[KinesisRecord] = []
 

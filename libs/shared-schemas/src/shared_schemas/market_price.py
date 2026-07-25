@@ -42,9 +42,7 @@ class MarketContext(BaseModel):
 
     occupancy_rate: float | None = Field(default=None, ge=0, le=1)
     sample_size: int = Field(ge=1)
-    data_source: Literal[
-        "inside_airbnb", "mock", "scraped_airbnb", "scraped_booking"
-    ]
+    data_source: Literal["inside_airbnb", "mock", "scraped_airbnb", "scraped_booking"]
     platform: Literal["airbnb", "booking", "vrbo", "mixed"] | None = None
 
 
