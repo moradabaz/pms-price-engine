@@ -52,6 +52,22 @@ ser ventanas de tiempo fijo sino estado continuo + timers, event-time/watermarks
 un beneficio claro *para este caso concreto*. Pero es exactamente el tipo de complejidad que "aprender
 streaming" pide no evitar por comodidad — tu llamada.
 
+**Confirmado (2026-07-27): processing-time.** Watermarks resuelven un problema que no tenemos — saber
+"¿ya vi todo hasta este instante?" para poder cerrar una ventana. Aquí no hay ventanas, solo upsert reactivo
+sobre `MapState`; no hay nada que cerrar.
+
+El riesgo real que sí queda sobre la mesa: `MapState.put()` no compara nada, simplemente sobrescribe. En
+operación normal esto no es un problema (Kafka preserva el orden por partición/clave, así que "orden de
+llegada" = "orden real"). El único escenario donde falla es un **reproceso** — el job releyendo offsets
+antiguos tras un fallo sin checkpoint, o un backfill manual — donde un evento viejo llega *ahora* y pisa un
+dato bueno más reciente, porque el evento no lleva ninguna marca de "cuándo pasé de verdad" que se pueda
+comparar. **Mitigación barata sin necesitar watermarks:** comparar el propio campo `updated_at`/`collected_at`
+del evento contra el que ya está guardado antes de sobrescribir, y descartar si es más viejo — una
+comparación de una línea, no una `WatermarkStrategy` completa. Y con checkpointing habilitado (Decisión F),
+el escenario de "reprocesar desde el principio" deja de ser la vía normal de recuperación — el job resume
+desde el último checkpoint, no desde el offset 0 — así que el caso que esta mitigación cubre pasa a ser
+residual (solo backfill manual), no parte de la operación normal.
+
 ---
 
 ## B. Agregación de coste por apartamento — ventana vs estado continuo
@@ -83,6 +99,35 @@ referencia nueva. Falta decidir *cómo* Flink la consume:
 
 **Mi lectura (ya alineada con tu elección anterior):** Broadcast State Pattern — es la construcción real de
 DataStream API para este tamaño de dato de referencia, y no obliga a mezclar Table API en el job.
+
+### C.1 — Cómo se puebla `apartment_market_segments` (confirmado 2026-07-27: seed script)
+
+Tres rutas posibles, en orden de madurez:
+
+1. **Manual** — alguien inserta la asignación a mano. No escala, cero automatismo.
+2. **Seed script (elegido)** — un script que corre una vez (o en cada deploy), lee los apartamentos ya
+   existentes en `mock-pm-app` (datos semilla fijos, `seed_apartments`) y les asigna de forma determinista
+   uno de los 18 segmentos fijos de `market-ingestor` según sus atributos (ciudad, tipo, habitaciones),
+   insertando el resultado en `apartment_market_segments`. Estático después de correr — un apartamento nuevo
+   exige re-correr el script.
+3. **Dinámico/CDC** — la asignación se recalcula en vivo a partir de los atributos del apartamento, que
+   también viajarían por CDC. Correcto a largo plazo, pero más pieza de la que este PoC necesita.
+
+**Confirmado: opción 2.** Es el patrón real de una tabla de dimensión/maestro en un DW — se siembra una vez,
+se consume como Broadcast State (arriba). Sigue pendiente el "quién mantiene esto al día" si el catálogo de
+apartamentos de `mock-pm-app` cambia — fuera de alcance por ahora, no bloquea la Fase 4.
+
+### C.2 — `target_margin` / `competitiveness_discount` por apartamento (confirmado 2026-07-27)
+
+El propio enunciado del negocio ya lo exige: "el cliente puede establecer un porcentaje de rentabilidad" es
+una decisión del dueño del apartamento, no un parámetro global del sistema. **Confirmado: se configura por
+apartamento** (con posible valor por defecto a nivel de cliente/property manager si el dominio de
+`mock-pm-app` agrupa apartamentos bajo un dueño — pendiente de confirmar ese modelo de dominio).
+
+Mecanismo: vive como campo del apartamento en `mock-pm-app`, viaja por el mismo pipeline CDC ya existente
+(Fases 1-2), y se añade al **mismo Broadcast State que ya transmite el segmento** (no hace falta un canal
+nuevo) — el mismo `KeyedBroadcastProcessFunction` que enriquece con segmento enriquece también con
+`target_margin`/`competitiveness_discount`.
 
 ---
 
@@ -192,6 +237,30 @@ la Fase 3 está mergeada, así que este es un follow-up de implementación pendi
 
 ---
 
+## D.2 — Estacionalidad real (confirmado 2026-07-27: vive en Fase 3, no en Fase 4)
+
+Hueco identificado: el muestreo sintético de `market-ingestor` (spec §5.2) no varía por día de la semana,
+festivo o temporada — un `avg_nightly_rate_eur` de un martes cualquiera de febrero es estadísticamente igual
+al de un sábado de agosto, lo cual no es realista.
+
+**Confirmado: la estacionalidad se implementa en la Fase 3, no en la Fase 4.** Motivo: `avg_nightly_rate_eur`
+ya se genera por `target_date` en `market-ingestor` — es el sitio natural para inyectar la variación
+calendario. Así, la fórmula de pricing de la Fase 4 se mantiene agnóstica del calendario: siempre lee
+`avg_nightly_rate_eur(target_date)` tal cual, y ese valor ya viene "cocinado" con estacionalidad. Ningún
+código de Fase 4 necesita saber qué día de la semana es.
+
+Implementación concreta (nuevo `seasonality.py` en `services/market-ingestor`, aplicado antes del muestreo
+log-normal en `pricing.py`):
+
+1. Flag fin de semana/festivo por `target_date` (librería `holidays` o calendario fijo por ciudad).
+2. Tabla de multiplicador por mes/temporada (ej. agosto en BCN ×1.3, temporada baja ×0.85).
+3. Aplicar el multiplicador al precio de referencia antes de samplear.
+
+Mismo lote de follow-up que D.1 (cobertura cíclica) sobre la Fase 3 ya mergeada — candidato a resolverse en
+el mismo PR. No diseñado en detalle todavía (tabla de multiplicadores por segmento/mes pendiente de definir).
+
+---
+
 ## E. Qué dispara el cálculo de un `price_decision`
 
 **Esta decisión queda casi resuelta por D:** con el join regular de Table API, la emisión ya ocurre de forma
@@ -203,8 +272,32 @@ cobertura completa por hora (D.1), ese caso solo debería dispararse ante un inc
 
 | Opción | Qué pasa en la práctica |
 |---|---|
-| **El propio join de D dispara la emisión (recomendado)** | Cada cambio en Hoja 1 o Hoja 2 emite directamente — sin timer, sin código de disparo aparte. Requiere, aparte, un vigilante de frescura separado (una query periódica, no parte del pipeline de streaming) para detectar cuando una noche lleva >48h sin refrescarse. |
-| ~~Timer periódico manual~~ | Superado por D — si el join ya emite en cada cambio relevante, un timer aparte para "cuándo recalcular" sería redundante. Se mantiene solo como vigilante de frescura, no como disparador de cálculo. |
+| **El propio join de D dispara la emisión (recomendado)** | Cada cambio en Hoja 1 o Hoja 2 emite directamente — sin timer, sin código de disparo aparte. Requiere, aparte, un vigilante de frescura separado para detectar cuando una noche lleva >48h sin refrescarse (ver E.1). |
+| ~~Timer periódico manual~~ | Superado por D — si el join ya emite en cada cambio relevante, un timer aparte para "cuándo recalcular" sería redundante. |
+
+### E.1 — Vigilante de frescura (confirmado 2026-07-27: timer dentro del job, patrón "dead man's switch")
+
+Cuatro opciones consideradas:
+
+| Opción | Pro | Contra |
+|---|---|---|
+| **Timer dentro del job** (`onTimer`) | Patrón idiomático de Flink, reutiliza el keyed state que ya existe, es el tercer primitivo core (State, Time, Timers) que el proyecto aún no ha tocado | Mezcla responsabilidad de pricing con responsabilidad de observabilidad |
+| Query batch aparte | Separación de responsabilidades limpia | Componente nuevo, no aprovecha lo ya construido |
+| Alerta externa (Prometheus/Grafana) | Estándar en producción | No existe esa pieza en el stack — sobre-ingeniería para el PoC |
+| Solo un flag en el evento | Gratis, cero infraestructura | No alerta si el job entero muere — solo informa cuando SÍ hay un `price_decision` que emitir |
+
+**Confirmado: combinación de la primera y la última.** Cada vez que se actualiza una clave en Hoja 1 o Hoja 2,
+se registra (o se resetea) un `processing-time timer` a +48h para esa clave — el patrón **dead man's
+switch**: el silencio es la señal, no un evento explícito. Mientras sigan llegando actualizaciones, el timer
+nunca llega a dispararse porque se cancela y se reprograma en cada evento. Si el timer sí se dispara, es la
+prueba de que nadie ha tocado esa clave en 48h → se emite un evento `data_stale` a un side-output (stream
+aparte, no un `price_decision`) — no es una query separada del sistema, vive dentro del mismo
+`KeyedProcessFunction` de la Decisión D. Además, cada `price_decision` emitido lleva su propio
+`data_age_seconds` calculado inline (gratis, sin infraestructura nueva) para que cualquier consumidor
+downstream pueda ver la frescura sin depender del side-output.
+
+Es también la pieza de aprendizaje que cierra el trío de primitivos de DataStream API que este proyecto se
+propuso explorar: State (B, C, D), Time (Decisión A) y ahora Timers (E.1).
 
 ---
 
@@ -222,6 +315,20 @@ costes, el `BroadcastState` de segmentos, el `ValueState` de mercado de la Decis
 **Mi lectura:** el README ya declara "stateful joins" como parte del stack de Flink — no habilitar
 checkpointing dejaría fuera la razón principal por la que Flink existe frente a un script normal (tolerancia
 a fallos de estado). Recomiendo habilitarlo, aceptando la pieza extra de infraestructura.
+
+**Confirmado (2026-07-27): checkpointing habilitado, con `EmbeddedRocksDBStateBackend` + almacenamiento en
+S3 (LocalStack).** Aclarando algo que puede sonar como "elige uno u otro" pero no lo es — son dos ejes
+distintos:
+
+- **State backend** (dónde vive el `MapState`/`BroadcastState` mientras el job corre): Heap (memoria) vs
+  RocksDB (disco, serializado). Con nuestro volumen (100 apartamentos, 18 segmentos × 60 noches ≈ 1080
+  entradas) cabría de sobra en memoria — RocksDB no hace falta por tamaño.
+- **Checkpoint storage** (dónde se persiste la foto periódica para recuperación): filesystem local vs S3.
+
+Se eligen los dos juntos: **RocksDB como state backend** (no por necesidad de tamaño, sino porque es el
+patrón real de producción — checkpoints incrementales, solo el delta — y aprenderlo aquí con datos pequeños
+es barato) + **S3 vía LocalStack como almacenamiento de checkpoints**, modo `EXACTLY_ONCE`, intervalo
+alineado a la cadencia de mercado (60s, el mismo tick de `market-ingestor`).
 
 ---
 
@@ -247,9 +354,98 @@ ADR-0005 como trade-off aceptado.
 
 ---
 
-## Próximo paso
+## Balance a fecha de 2026-07-27
 
-Con este mapa delante, las decisiones que de verdad cambian el diseño del spec son **D** (Temporal Table Join
-vs CoProcessFunction manual) y **F** (checkpointing sí/no). El resto (A, B, C, E, G, H) ya tiene una lectura
-razonablemente clara. Cuando quieras, discutimos D y F con calma y retomamos también la pregunta pendiente
-del sink de Iceberg (Fase 4 vs Fase 5) antes de escribir `specs/phases/04-flink-processing/spec.md`.
+### Qué tenemos hecho
+
+- **Fases 1–3: completas, verificadas en vivo, mergeadas en `main`** (PR #3, #4, #5). Nada de esto cambia por
+  la Fase 4, salvo el follow-up de D.1.
+- **Mapeo apartamento→segmento (Decisión C):** decidido — tabla de referencia nueva, consumida vía Broadcast
+  State Pattern. No implementado todavía.
+- **Fórmula de pricing:** decidida — Modelo 1 (`suggested_price = max(minimum_price, market_reference_price)`),
+  suelo = coste+margen, techo = mercado (estrictamente por debajo, vía `competitiveness_discount`). Caso
+  límite resuelto: si el suelo supera el techo, **el coste manda siempre** — el cliente nunca pierde
+  rentabilidad por diseño.
+- **Join coste ⋈ mercado (Decisión D):** decidido — `KeyedProcessFunction` a mano, keyed por `segment`,
+  DataStream API, con dos `MapState` (apartamentos del segmento / noches del segmento) y fan-out cruzado.
+  Table API descartado explícitamente.
+- **Cobertura de fechas (D.1):** decidido — `market-ingestor` debe pasar de fecha aleatoria por tick a
+  recorrido cíclico determinista de la ventana de 60 días.
+- **Semántica de tiempo (Decisión A):** confirmado — processing-time, con mitigación de una línea
+  (comparar `updated_at`/`collected_at` antes de sobrescribir) para el caso residual de reproceso manual.
+- **Checkpointing (Decisión F):** confirmado — habilitado, `EmbeddedRocksDBStateBackend` + almacenamiento en
+  S3 (LocalStack), `EXACTLY_ONCE`, intervalo 60s.
+- **Vigilante de frescura (E.1):** confirmado — timer `onTimer` dentro del mismo `KeyedProcessFunction`
+  (patrón dead man's switch) + side-output `data_stale` + campo `data_age_seconds` en cada `price_decision`.
+- **Población de `apartment_market_segments` (C.1):** confirmado — seed script determinista, no manual ni
+  dinámico.
+- **`target_margin`/`competitiveness_discount` por apartamento (C.2):** confirmado — por apartamento, viaja
+  por el mismo Broadcast State que el segmento.
+- **Estacionalidad (D.2):** confirmado — vive en la Fase 3 (`market-ingestor`), no en la Fase 4; Fase 4 se
+  mantiene agnóstica del calendario.
+- Todo lo anterior está documentado en este archivo y en el artefacto publicado, en la rama
+  `phase-4-flink-processing` (pusheada a origin, sin PR abierta todavía).
+
+### Qué tenemos que hacer
+
+1. Crear la tabla de referencia `apartment_market_segments` (schema + seed script, C.1) — territorio de la
+   Fase 1, no existe hoy en ningún sitio.
+2. Parchear `services/market-ingestor` (Fase 3, ya mergeada) para el recorrido cíclico determinista (D.1) y
+   la estacionalidad (D.2) — edición sobre `specs/phases/03-market-ingestion/spec.md` §4/§5.2 + código,
+   idealmente en el mismo PR.
+3. Editar `specs/events/price_decision.v1.json`: nuevo valor de `rule_applied` para "coste manda y quedamos
+   por encima de mercado" (nombre aún sin decidir), dejar de anular `below_market_by` cuando el suelo gana,
+   añadir `data_age_seconds` (E.1).
+4. Escribir `specs/phases/04-flink-processing/spec.md` formal — todavía no existe, solo este documento
+   pre-spec.
+5. Implementar `streaming/flink-jobs/` — hoy solo tiene `pyproject.toml` y un `__init__.py` vacío. Incluye el
+   `KeyedProcessFunction` de D, el timer de E.1, RocksDB+S3 de F.
+6. Añadir el campo `target_margin`/`competitiveness_discount` al Broadcast State de C.2 (junto al segmento).
+7. Diseñar el sink DynamoDB: claves primarias, y si hace falta un índice secundario para que la Fase 6
+   pueda leer "todas las decisiones de un apartamento".
+8. Decidir y documentar la estrategia de test de un job PyFlink (notoriamente difícil de testear en unitario).
+9. Actualizar `docs/AUDIT_DIARY.md` — sigue diciendo "Fase 4: Not started, spec not yet written".
+10. Abrir la PR de `phase-4-flink-processing` una vez el spec formal esté escrito.
+
+### Decisiones que aún no has tomado
+
+1. **Iceberg:** ¿la Fase 4 escribe directo a S3+Iceberg además de DynamoDB, o solo DynamoDB y la Fase 5 se
+   encarga del resto? Pregunta lanzada, nunca resuelta — la conversación se desvió hacia el pricing.
+2. **Nombre del tercer estado de `rule_applied`** (precio por encima de mercado por proteger el coste) —
+   propuesto, pediste opinión sobre el nombre, sin cerrar.
+3. **Modelo de dueño del apartamento** — si `target_margin`/`competitiveness_discount` (C.2) tienen un valor
+   por defecto a nivel de cliente/property manager con override por apartamento, o son puramente por
+   apartamento sin jerarquía — pendiente de confirmar el modelo de dominio de `mock-pm-app`.
+4. **Tabla de multiplicadores de estacionalidad (D.2)** — confirmado que vive en Fase 3, pero los valores
+   concretos por mes/segmento no están diseñados todavía.
+5. **Quién mantiene `apartment_market_segments` al día** (C.1) — el seed script resuelve la carga inicial,
+   pero no qué pasa si un apartamento cambia de segmento después.
+
+### Qué debe asegurar el spec de Flink, sin excepción
+
+Razonando como un data engineer sénior que tiene que firmar este spec antes de que nadie escriba código:
+
+- **Límites explícitos de tamaño de estado** para cada `MapState` (apartamentos por segmento, noches por
+  segmento) y su regla de expulsión — por escrito, como restricción dura, no implícita en la descripción.
+  Incluye los timers de E.1: cuántos timers activos por clave, y qué pasa con el timer si la clave desaparece
+  (apartamento dado de baja) — un timer huérfano es una fuga de estado tan real como un `MapState` sin límite.
+- **Semántica de reinicio/replay explícita:** qué pasa al reiniciar el job con y sin checkpoint; nunca debe
+  duplicar coste (protegido hoy por upsert-por-`event_id`, pero debe ser un criterio de aceptación explícito,
+  no solo una propiedad asumida).
+- **Manejo de fallos del sink DynamoDB** (throttling, reintentos) — con el mismo rigor de framing Kleppmann
+  que ya se usó para `put_records` en la Fase 3, no un "ya veremos".
+- **Criterios de aceptación numerados (AC-01...)** con el mismo rigor que las Fases 2 y 3 — no prosa
+  descriptiva sin verificación live.
+- **El ejemplo numérico trabajado** (90/100/110/120€) debe quedar escrito **dentro del spec mismo**, no solo
+  en el historial de esta conversación — quien lo lea en seis meses no tiene por qué reconstruirlo.
+- **Declaraciones explícitas de "fuera de alcance, propiedad de X"** para Iceberg, estacionalidad y el
+  vigilante de frescura — cero huecos implícitos, seguir el precedente de las Fases 2 y 3.
+- **Una estrategia de test concreta para el job de PyFlink** — la instrucción permanente de este proyecto es
+  "aplica tests en todo momento"; un spec que no diga cómo se testea un job de PyFlink (notoriamente difícil
+  de testear en unitario) está incompleto.
+- **Requisitos mínimos de observabilidad** — volumen de fan-out por segmento, tamaño de estado, lag frente a
+  Kafka/Kinesis. Un job de streaming sin esto es inoperable en producción, y "aprender streaming" incluye
+  aprender a operarlo, no solo a escribirlo.
+- **Una ADR propia para el cambio de contrato** — modificar `price_decision.v1.json` es el primer cambio de
+  este proyecto sobre un contrato de evento que otra fase ya trataba como "cerrado" — merece su propia ADR
+  (precedente: ADR-0005), no solo un párrafo dentro del spec de la Fase 4.
