@@ -57,11 +57,19 @@
 
 ---
 
-## 7. Verify the pinned `apache-flink` version's Kinesis connector actually supports what this job assumes — don't assume Python/Java connector parity
+## 7. Confirmed: PyFlink 2.3's Kinesis connector is `FlinkKinesisConsumer` only — no modern `KinesisSource`
 
-**The gotcha:** PyFlink's DataStream API connectors have historically lagged behind Java Flink's in both feature completeness and how they're packaged (some require an extra JAR on the classpath even when driven from Python, some expose a narrower configuration surface than their Java equivalent). `streaming/flink-jobs/pyproject.toml` pins `apache-flink>=2.3.0` — this needs to be checked against whatever Kinesis source connector API that version actually ships for PyFTlink specifically, not assumed to mirror Java Flink's Kinesis connector docs one-to-one.
+**Update (2026-07-29): verified against the actual installed `apache-flink==2.3.0`, not assumed.** `pyflink.datastream.connectors.kinesis` exposes only the legacy `FlinkKinesisConsumer` (the older `SourceFunction`-based API) for reading — there is no `KinesisSource`/`KinesisSourceBuilder` counterpart to Kafka's modern `KafkaSource`. This is exactly the Python/Java parity gap this entry originally warned about, now confirmed rather than speculative. `job.py` uses `FlinkKinesisConsumer` accordingly.
 
-**Why this matters here:** this project has already been burned, twice, by assuming a tool's default/documented behavior matched reality without checking against the actual running version (Debezium's `CustomConverter` SPI needing to be hand-written because no bundled SMT recognized Debezium's logical types; LocalStack's DynamoDB Streams support already flagged as unverified in ADR-0006). Add the Kinesis-from-PyFlink connector to that same "verify before building on it" list, rather than a fourth instance of the same category of surprise.
+**Why this matters here:** confirms this project's practice of checking a tool's actual installed behavior instead of assuming docs/parity hold (same category as Debezium's `CustomConverter` gap, LocalStack's DynamoDB Streams support). Also: `KafkaSource`/`FlinkKinesisConsumer` objects require real connector JARs on the classpath to even construct — attempting to build one without `pipeline.jars` configured fails immediately with a clear Java-class-not-found error, confirmed by trying it directly.
+
+---
+
+## 9. No native custom-Sink API in PyFlink's DataStream — `SinkFunction` only wraps existing Java sinks
+
+**Confirmed 2026-07-29:** `pyflink.datastream.functions.SinkFunction` takes a Java class name or `JavaObject` in its constructor — it is not a base class meant for custom Python write logic the way `MapFunction`/`ProcessFunction` are. There is no Python-native custom `Sink`/`SinkWriter` class in this PyFlink version either.
+
+**The practical pattern used here** (`dynamodb_sink.py` + `job.py`): implement the custom write (boto3 `put_item`) as a `MapFunction` that performs the write as a side effect and passes its input through unchanged, then terminate the stream with `SinkFunction("org.apache.flink.streaming.api.functions.sink.DiscardingSink")` — a no-op Java sink that exists only so the job graph has a formal terminal operator (Flink requires at least one). Consistent with Decision G: no 2PC/transactional sink needed since `put_item` is already idempotent by `decision_id`.
 
 ---
 
@@ -73,6 +81,16 @@
 
 ---
 
+## 10. Timer deadlines must be stored at millisecond precision, matching the timer service — not as full-precision `datetime`
+
+**Found via testing, 2026-07-29, not review.** Item 3's deadline-map pattern initially stored `datetime` objects (microsecond precision) in the deadline `MapState`, while `register_processing_time_timer()` takes an epoch-millisecond `int`. Converting the stored `datetime` to millis for registration, then back to a `datetime` on `on_timer`'s firing, loses precision on the round trip — the reconstructed value almost never exactly equals the originally stored one, so `expired_keys`'s equality check silently never matched. The watchdog would have fired on schedule but never actually flagged anything as expired.
+
+**Fix:** store deadlines as the same epoch-millisecond `int` used to register the timer (`watchdog.next_deadline_millis`) — no `datetime` round-trip at all, so the equality check in `on_timer` compares the exact same representation on both sides.
+
+**Why this matters generally:** any Flink timer-adjacent state that needs to compare against a fired timer's `timestamp` must be stored in that same unit and precision — mixing a higher-precision Python representation with Flink's millisecond timer resolution is an easy, silent mismatch that unit tests catch immediately but a live cluster would only reveal as "the watchdog just never seems to fire."
+
+---
+
 ## What to do with this list
 
-Before or during `streaming/flink-jobs/` implementation, treat each item above as something to actively verify against the real PyFlink version and the real running job — not settled by having been written down here. Items 1, 3, and 8 are design decisions the implementation must make deliberately (max parallelism, the deadline-map timer pattern, not reaching for State TTL on the watchdog path). Items 4–7 are things to keep an eye on once the job is actually running under load, not blockers to starting implementation.
+Before or during `streaming/flink-jobs/` implementation, treat each item above as something to actively verify against the real PyFlink version and the real running job — not settled by having been written down here. Items 1, 3, 9, and 10 are design decisions/fixes already applied in the implementation (max parallelism, the deadline-map timer pattern, the MapFunction+DiscardingSink sink shape, millis-precision deadlines). Items 4–7 are things to keep an eye on once the job is actually running under load, not blockers to starting implementation.
