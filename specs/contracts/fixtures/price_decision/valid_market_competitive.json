@@ -20,7 +20,8 @@
     "avg_nightly_rate_eur": 120.5,
     "occupancy_rate": 0.72,
     "sample_size": 34,
-    "collected_at": "2026-07-01T06:00:00Z"
+    "collected_at": "2026-07-01T06:00:00Z",
+    "data_age_seconds": 300
   },
   "calculation": {
     "target_margin": 0.2,
