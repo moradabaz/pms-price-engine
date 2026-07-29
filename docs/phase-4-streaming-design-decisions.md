@@ -114,8 +114,10 @@ Tres rutas posibles, en orden de madurez:
    también viajarían por CDC. Correcto a largo plazo, pero más pieza de la que este PoC necesita.
 
 **Confirmado: opción 2.** Es el patrón real de una tabla de dimensión/maestro en un DW — se siembra una vez,
-se consume como Broadcast State (arriba). Sigue pendiente el "quién mantiene esto al día" si el catálogo de
-apartamentos de `mock-pm-app` cambia — fuera de alcance por ahora, no bloquea la Fase 4.
+se consume como Broadcast State (arriba). **Confirmado (2026-07-28): "quién mantiene esto al día" queda
+fuera de alcance de Fase 4**, punto final, no una pendiente abierta — si el catálogo de apartamentos de
+`mock-pm-app` cambia de segmento, la ruta natural de evolución sería CDC sobre esos mismos atributos (la
+opción 3 ya descartada arriba por sobre-ingeniería para este PoC), pero no se construye nada de eso ahora.
 
 ### C.2 — `target_margin` / `competitiveness_discount` por apartamento (confirmado 2026-07-27)
 
@@ -128,6 +130,19 @@ Mecanismo: vive como campo del apartamento en `mock-pm-app`, viaja por el mismo 
 (Fases 1-2), y se añade al **mismo Broadcast State que ya transmite el segmento** (no hace falta un canal
 nuevo) — el mismo `KeyedBroadcastProcessFunction` que enriquece con segmento enriquece también con
 `target_margin`/`competitiveness_discount`.
+
+**Confirmado (2026-07-28): modelo plano, sin jerarquía cliente→apartamento, fuera de alcance de Fase 4.**
+`mock-pm-app` no modela hoy ningún concepto de "dueño"/"cliente" agrupando apartamentos — construir esa
+jerarquía ahora sería diseñar sobre un dominio que no existe. `target_margin`/`competitiveness_discount` se
+configuran **por apartamento**, sin default a otro nivel. Documentado explícitamente en el spec de Fase 4
+como asunción, no como hueco — una jerarquía cliente→apartamento es una extensión futura sobre `mock-pm-app`
+(Fase 1), no un bloqueo de esta fase.
+
+**Valor por defecto para esta primera versión (confirmado 2026-07-28): `target_margin = 0.05` (5%)** para
+todo apartamento sin override explícito en el seed de `mock-pm-app`. Es también, directamente, la garantía
+de negocio detrás del nuevo estado `cost_protected` (ver G.2 / ADR-0007 más abajo): coste + este margen
+mínimo es un suelo no negociable por el motor de pricing — bajarlo o prescindir del apartamento es siempre
+decisión del cliente, nunca algo que el sistema decida automáticamente.
 
 ---
 
@@ -257,7 +272,22 @@ log-normal en `pricing.py`):
 3. Aplicar el multiplicador al precio de referencia antes de samplear.
 
 Mismo lote de follow-up que D.1 (cobertura cíclica) sobre la Fase 3 ya mergeada — candidato a resolverse en
-el mismo PR. No diseñado en detalle todavía (tabla de multiplicadores por segmento/mes pendiente de definir).
+el mismo PR.
+
+**Tabla de multiplicadores (confirmado 2026-07-28): tres franjas por mes, iguales para las tres ciudades
+en esta primera versión** (no una tabla por segmento — 18 tablas sería sobre-ingeniería para un PoC), anclada
+explícitamente a los extremos verano/invierno que motivaron esta decisión, no solo a un "alta/baja" genérico:
+
+| Franja | Meses | Multiplicador | Motivo |
+|---|---|---|---|
+| Temporada alta (verano) | Julio, Agosto | `×1.30` | Pico turístico mediterráneo — el propio caso que motivó pedir esta confirmación. |
+| Temporada media (hombro) | Mayo, Junio, Septiembre, Octubre | `×1.05` | Transición — ligeramente por encima de la referencia anual, no plano. |
+| Temporada baja (invierno) | Noviembre–Abril | `×0.85` | Mínimo turístico — el otro extremo explícito pedido (no solo "resto del año" implícito). |
+
+Aplicado como multiplicador único sobre `segment_median` (§5.2 de la Fase 3) antes del muestreo log-normal —
+no varía todavía por ciudad (Barcelona/Madrid/Valencia comparten la misma tabla en esta primera versión); una
+tabla diferenciada por ciudad queda como refinamiento futuro si los datos de las fuentes ya investigadas
+(spec Fase 3 §5.2) muestran patrones estacionales visiblemente distintos entre ellas.
 
 ---
 
@@ -343,6 +373,52 @@ Kleppmann de la Fase 3 sin necesidad: aquí el propio diseño del evento ya resu
 
 ---
 
+## G.1 — Persistencia en Iceberg: CDC vía DynamoDB Streams, no dual-write (confirmado 2026-07-28)
+
+Pregunta abierta desde el balance anterior: ¿Fase 4 escribe directo a S3+Iceberg además de DynamoDB, o solo
+DynamoDB y Fase 5 se encarga del resto? Rechazada explícitamente la opción de dual-write (el mismo job de
+Flink escribiendo a los dos sinks) citando el problema que Kleppmann nombra en DDIA (cap. 11): escribir el
+mismo hecho a dos sistemas independientes desde el mismo código de aplicación no tiene atomicidad entre
+ellos — un fallo entre las dos escrituras los deja divergentes sin forma de detectarlo ni repararlo.
+
+**Confirmado: Flink escribe solo a DynamoDB** (un único `put_item` por decisión, idempotente por
+`decision_id`, Decisión G). **Iceberg se puebla vía un consumidor CDC nuevo que lee DynamoDB Streams** —
+exactamente el mismo patrón que ya usa este proyecto desde la Fase 2 (no escribir el mismo hecho a Postgres
+y Kafka desde la app; leer el WAL de Postgres y derivar Kafka de ahí), aplicado ahora a DynamoDB Streams como
+el "WAL" y un consumidor nuevo (Python, `boto3` `dynamodbstreams` + PyIceberg) como el equivalente de
+Kafka Connect. Detalle completo, alternativas descartadas (2PC, export batch, KCL/Lambda) y consecuencias:
+**[ADR-0006](adr/ADR-0006-dynamodb-single-writer-iceberg-cdc.md)**.
+
+**Esto es trabajo de Fase 5, no de Fase 4** — Fase 4 solo necesita declarar en su spec que su sink es único
+(DynamoDB) y que la población de Iceberg está fuera de su alcance, propiedad de Fase 5. Coincide con cómo
+Fase 5 ya estaba descrita en `docs/AUDIT_DIARY.md` ("consumirá la salida de la Fase 4 hacia S3 + Iceberg") —
+este ADR aclara el *cómo* (CDC vía DynamoDB Streams), no inventa alcance nuevo.
+
+---
+
+## G.2 — Tercer estado de `rule_applied`: `cost_protected` (confirmado 2026-07-28)
+
+Pregunta abierta desde el balance anterior: nombre del tercer estado de `rule_applied` para "precio por encima
+de mercado por proteger el coste". Resuelta junto con la reafirmación explícita del principio de negocio: el
+suelo (coste + `target_margin`) **manda siempre** — nunca lo pisa el propio motor de pricing; bajar el margen
+o prescindir del apartamento es siempre decisión del cliente, nunca automática.
+
+Eso separa el "suelo gana" existente (`minimum_floor`) en dos situaciones con significado operativo distinto,
+según si el suelo queda por debajo o por encima de `avg_nightly_rate_eur` (el precio medio de mercado *sin*
+descuento, no `market_reference_price_eur`, que ya lleva aplicado `competitiveness_discount`):
+
+- Suelo gana pero **sigue por debajo** de la media de mercado → `minimum_floor` (se mantiene, sin cambios).
+  Informativo, no alarmante — el apartamento sigue siendo competitivo, solo sin el descuento habitual.
+- Suelo gana y **queda por encima** de la media de mercado → **`cost_protected`** (nuevo). Señal accionable:
+  los costes están sacando al apartamento de su propio mercado — exactamente el momento en que el cliente
+  debe decidir entre bajar `target_margin` o prescindir del apartamento.
+
+Detalle completo (fórmulas, `below_market_by` deja de anularse, nuevo campo `data_age_seconds`):
+**[ADR-0007](adr/ADR-0007-price-decision-cost-protected-rule.md)**. Ya aplicado a
+`specs/events/price_decision.v1.json`.
+
+---
+
 ## H. Paralelismo del job vs particiones/shards de origen
 
 Kafka (`payment-events.v1`) tiene 6 particiones; Kinesis (`market-price-events`) tiene 4 shards (Fase 3,
@@ -354,7 +430,7 @@ ADR-0005 como trade-off aceptado.
 
 ---
 
-## Balance a fecha de 2026-07-27
+## Balance a fecha de 2026-07-28
 
 ### Qué tenemos hecho
 
@@ -382,8 +458,19 @@ ADR-0005 como trade-off aceptado.
 - **`target_margin`/`competitiveness_discount` por apartamento (C.2):** confirmado — por apartamento, viaja
   por el mismo Broadcast State que el segmento.
 - **Estacionalidad (D.2):** confirmado — vive en la Fase 3 (`market-ingestor`), no en la Fase 4; Fase 4 se
-  mantiene agnóstica del calendario.
-- Todo lo anterior está documentado en este archivo y en el artefacto publicado, en la rama
+  mantiene agnóstica del calendario. Tabla de multiplicadores por mes (verano ×1.30, hombro ×1.05, invierno
+  ×0.85) confirmada 2026-07-28, igual para las tres ciudades en esta primera versión.
+- **Persistencia en Iceberg (G.1):** confirmado 2026-07-28 — sin dual-write; Flink escribe solo a DynamoDB,
+  Iceberg se puebla vía CDC sobre DynamoDB Streams, trabajo de Fase 5. [ADR-0006](adr/ADR-0006-dynamodb-single-writer-iceberg-cdc.md).
+- **Tercer estado de `rule_applied` (G.2):** confirmado 2026-07-28 — `cost_protected`, ya aplicado a
+  `specs/events/price_decision.v1.json` junto con `below_market_by` siempre calculado y el nuevo campo
+  `data_age_seconds`. [ADR-0007](adr/ADR-0007-price-decision-cost-protected-rule.md).
+- **Modelo de dueño del apartamento (C.2):** confirmado 2026-07-28 — sin jerarquía cliente→apartamento
+  (fuera de alcance de Fase 4), `target_margin` con **valor por defecto 0.05 (5%)** por apartamento para esta
+  primera versión.
+- **Mantenimiento de `apartment_market_segments` (C.1):** confirmado 2026-07-28 — fuera de alcance de Fase 4,
+  cerrado, no una pendiente abierta.
+- Todo lo anterior está documentado en este archivo, en sus ADRs, y en el artefacto publicado, en la rama
   `phase-4-flink-processing` (pusheada a origin, sin PR abierta todavía).
 
 ### Qué tenemos que hacer
@@ -391,35 +478,30 @@ ADR-0005 como trade-off aceptado.
 1. Crear la tabla de referencia `apartment_market_segments` (schema + seed script, C.1) — territorio de la
    Fase 1, no existe hoy en ningún sitio.
 2. Parchear `services/market-ingestor` (Fase 3, ya mergeada) para el recorrido cíclico determinista (D.1) y
-   la estacionalidad (D.2) — edición sobre `specs/phases/03-market-ingestion/spec.md` §4/§5.2 + código,
-   idealmente en el mismo PR.
-3. Editar `specs/events/price_decision.v1.json`: nuevo valor de `rule_applied` para "coste manda y quedamos
-   por encima de mercado" (nombre aún sin decidir), dejar de anular `below_market_by` cuando el suelo gana,
-   añadir `data_age_seconds` (E.1).
+   la estacionalidad con la tabla verano/hombro/invierno confirmada (D.2) — edición sobre
+   `specs/phases/03-market-ingestion/spec.md` §4/§5.2 + código, idealmente en el mismo PR.
+3. ~~Editar `specs/events/price_decision.v1.json`~~ — **hecho** (ADR-0007): `cost_protected`,
+   `below_market_by` siempre calculado, `data_age_seconds` añadido.
 4. Escribir `specs/phases/04-flink-processing/spec.md` formal — todavía no existe, solo este documento
-   pre-spec.
+   pre-spec. Ya no tiene decisiones de dominio pendientes que lo bloqueen (ver sección siguiente).
 5. Implementar `streaming/flink-jobs/` — hoy solo tiene `pyproject.toml` y un `__init__.py` vacío. Incluye el
-   `KeyedProcessFunction` de D, el timer de E.1, RocksDB+S3 de F.
-6. Añadir el campo `target_margin`/`competitiveness_discount` al Broadcast State de C.2 (junto al segmento).
-7. Diseñar el sink DynamoDB: claves primarias, y si hace falta un índice secundario para que la Fase 6
-   pueda leer "todas las decisiones de un apartamento".
+   `KeyedProcessFunction` de D (con las tres ramas de `rule_applied`), el timer de E.1, RocksDB+S3 de F.
+6. Añadir el campo `target_margin` (default `0.05`) / `competitiveness_discount` al Broadcast State de C.2
+   (junto al segmento).
+7. Diseñar el sink DynamoDB (**único sink**, per ADR-0006 — sin Iceberg desde Flink): claves primarias, y si
+   hace falta un índice secundario para que la Fase 6 pueda leer "todas las decisiones de un apartamento".
 8. Decidir y documentar la estrategia de test de un job PyFlink (notoriamente difícil de testear en unitario).
-9. Actualizar `docs/AUDIT_DIARY.md` — sigue diciendo "Fase 4: Not started, spec not yet written".
+9. Actualizar `docs/AUDIT_DIARY.md` — sigue diciendo "Fase 4: Not started, spec not yet written"; añadir
+   también una nota en la sección de Fase 5 sobre el consumidor CDC de DynamoDB Streams (ADR-0006).
 10. Abrir la PR de `phase-4-flink-processing` una vez el spec formal esté escrito.
 
-### Decisiones que aún no has tomado
+### Decisiones de dominio — todas resueltas 2026-07-28
 
-1. **Iceberg:** ¿la Fase 4 escribe directo a S3+Iceberg además de DynamoDB, o solo DynamoDB y la Fase 5 se
-   encarga del resto? Pregunta lanzada, nunca resuelta — la conversación se desvió hacia el pricing.
-2. **Nombre del tercer estado de `rule_applied`** (precio por encima de mercado por proteger el coste) —
-   propuesto, pediste opinión sobre el nombre, sin cerrar.
-3. **Modelo de dueño del apartamento** — si `target_margin`/`competitiveness_discount` (C.2) tienen un valor
-   por defecto a nivel de cliente/property manager con override por apartamento, o son puramente por
-   apartamento sin jerarquía — pendiente de confirmar el modelo de dominio de `mock-pm-app`.
-4. **Tabla de multiplicadores de estacionalidad (D.2)** — confirmado que vive en Fase 3, pero los valores
-   concretos por mes/segmento no están diseñados todavía.
-5. **Quién mantiene `apartment_market_segments` al día** (C.1) — el seed script resuelve la carga inicial,
-   pero no qué pasa si un apartamento cambia de segmento después.
+Las 5 decisiones que bloqueaban escribir el spec formal (Iceberg, nombre del tercer `rule_applied`, modelo de
+dueño, tabla de estacionalidad, mantenimiento de `apartment_market_segments`) están todas cerradas — ver G.1,
+G.2, C.2 y C.1 arriba, y ADR-0006/ADR-0007. **No queda ninguna decisión de dominio pendiente que bloquee
+escribir `specs/phases/04-flink-processing/spec.md`** — lo que queda es convertir decisiones en artefactos
+(ítems 1, 2, 4–10 de la lista de arriba).
 
 ### Qué debe asegurar el spec de Flink, sin excepción
 
