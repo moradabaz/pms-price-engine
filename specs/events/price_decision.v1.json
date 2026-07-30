@@ -83,7 +83,7 @@
 
     "market_inputs": {
       "type": "object",
-      "required": ["market_area", "avg_nightly_rate_eur", "collected_at"],
+      "required": ["market_area", "avg_nightly_rate_eur", "collected_at", "data_age_seconds"],
       "additionalProperties": false,
       "description": "Market snapshot used in this calculation. From the most recent market_price event for this apartment's market area and target_date.",
       "properties": {
@@ -91,7 +91,8 @@
         "avg_nightly_rate_eur":   { "type": "number", "minimum": 0 },
         "occupancy_rate":         { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "sample_size":            { "type": ["integer", "null"], "minimum": 1 },
-        "collected_at":           { "type": "string", "format": "date-time", "description": "Freshness indicator. Stale market data (>48h) should be flagged." }
+        "collected_at":           { "type": "string", "format": "date-time", "description": "Freshness indicator. Stale market data (>48h) should be flagged." },
+        "data_age_seconds":       { "type": "integer", "minimum": 0, "description": "Seconds between collected_at and decided_at, computed inline at decision time. Cheaper, always-present companion to the separate data_stale side-output, which only fires past the 48h dead-man's-switch threshold (see ADR-0007)." }
       }
     },
 
@@ -124,15 +125,15 @@
         },
         "rule_applied": {
           "type": "string",
-          "enum": ["minimum_floor", "market_competitive"],
-          "description": "minimum_floor: market_reference_price < minimum_price, so the floor was used. market_competitive: market signal is healthy, competitive pricing applied."
+          "enum": ["market_competitive", "minimum_floor", "cost_protected"],
+          "description": "market_competitive: minimum_price_eur <= market_reference_price_eur, competitive pricing applied. minimum_floor: market_reference_price_eur < minimum_price_eur <= avg_nightly_rate_eur, the cost floor won but the apartment is still at or below the raw market average. cost_protected: minimum_price_eur > avg_nightly_rate_eur, the cost floor pushed the price above the raw market average — the property's costs are pricing it out of its own market; the only levers are lowering target_margin or discontinuing the listing (ADR-0007)."
         }
       }
     },
 
     "output": {
       "type": "object",
-      "required": ["suggested_price_eur", "currency", "effective_margin"],
+      "required": ["suggested_price_eur", "currency", "effective_margin", "below_market_by"],
       "additionalProperties": false,
       "description": "The recommendation the property manager sees.",
       "properties": {
@@ -147,8 +148,8 @@
           "description": "(suggested_price_eur / daily_cost_eur) - 1. The actual margin this price achieves. Always >= target_margin by construction."
         },
         "below_market_by": {
-          "type": ["number", "null"],
-          "description": "avg_nightly_rate_eur - suggested_price_eur. Positive means we are priced below market. Null when rule_applied=minimum_floor (market signal was irrelevant)."
+          "type": "number",
+          "description": "avg_nightly_rate_eur - suggested_price_eur. Positive means priced below the raw market average; negative means priced above it (expected for rule_applied=cost_protected). Always computed — never null, since a price_decision is never emitted without market_inputs (ADR-0007)."
         }
       }
     }

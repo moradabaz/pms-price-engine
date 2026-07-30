@@ -16,14 +16,17 @@ awslocal kinesis create-stream \
 echo ">> [LocalStack] Creating S3 bucket: pms-iceberg"
 awslocal s3 mb s3://pms-iceberg --region "$REGION"
 
-echo ">> [LocalStack] Creating DynamoDB table: apartment_prices"
+echo ">> [LocalStack] Creating DynamoDB table: price_decision (spec 04 §10, ADR-0006)"
 awslocal dynamodb create-table \
-  --table-name apartment_prices \
+  --table-name price_decision \
   --attribute-definitions \
       AttributeName=apartment_id,AttributeType=S \
+      AttributeName=target_date,AttributeType=S \
   --key-schema \
       AttributeName=apartment_id,KeyType=HASH \
+      AttributeName=target_date,KeyType=RANGE \
   --billing-mode PAY_PER_REQUEST \
+  --stream-specification StreamEnabled=true,StreamViewType=NEW_AND_OLD_IMAGES \
   --region "$REGION"
 
 echo ">> [LocalStack] Bootstrap complete."

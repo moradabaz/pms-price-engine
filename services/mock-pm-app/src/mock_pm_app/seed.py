@@ -14,6 +14,42 @@ def already_seeded(conn: Any) -> bool:
     return bool(count > 0)
 
 
+def already_seeded_segments(conn: Any) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM apartment_market_segments")
+        (count,) = cur.fetchone()
+    return bool(count > 0)
+
+
+def seed_apartment_market_segments(conn: Any, apartments: list[Apartment]) -> int:
+    # Decision C.1: seed once, deterministically, from mock-pm-app's own
+    # apartment pool — target_margin/competitiveness_discount are left to the
+    # table's own DEFAULT 0.05 (Decision C.2), not set here, so the schema
+    # stays the single source of truth for that default.
+    with conn.cursor() as cur:
+        for apartment in apartments:
+            cur.execute(
+                """
+                INSERT INTO apartment_market_segments
+                    (apartment_id, apartment_reference, city, neighborhood,
+                     property_type, bedrooms)
+                VALUES (%(apartment_id)s, %(apartment_reference)s, %(city)s,
+                        %(neighborhood)s, %(property_type)s, %(bedrooms)s)
+                ON CONFLICT (apartment_id) DO NOTHING
+                """,
+                {
+                    "apartment_id": apartment.apartment_id,
+                    "apartment_reference": apartment.apartment_reference,
+                    "city": apartment.city,
+                    "neighborhood": apartment.neighborhood,
+                    "property_type": apartment.property_type,
+                    "bedrooms": apartment.bedrooms,
+                },
+            )
+    conn.commit()
+    return len(apartments)
+
+
 def _month_bounds(months_ago: int, today: date) -> tuple[date, date]:
     year = today.year
     month = today.month - months_ago

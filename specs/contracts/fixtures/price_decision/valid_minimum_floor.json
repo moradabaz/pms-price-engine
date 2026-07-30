@@ -1,0 +1,39 @@
+{
+  "decision_id": "d4e5f6a7-89ab-4562-b3fc-2c963f66afb7",
+  "schema_version": "1.0",
+  "apartment_id": "a1b2c3d4-0002",
+  "apartment_reference": "MAD-007",
+  "target_date": "2026-08-15",
+  "decided_at": "2026-07-01T06:05:00Z",
+  "cost_inputs": {
+    "billing_period": {
+      "start": "2026-06-01",
+      "end": "2026-06-30"
+    },
+    "total_monthly_cost_eur": 4200.0,
+    "available_days": 30,
+    "daily_cost_eur": 140.0,
+    "cost_lines_count": 8
+  },
+  "market_inputs": {
+    "market_area": "Madrid/Centro",
+    "avg_nightly_rate_eur": 150.0,
+    "occupancy_rate": 0.68,
+    "sample_size": 22,
+    "collected_at": "2026-07-01T06:00:00Z",
+    "data_age_seconds": 300
+  },
+  "calculation": {
+    "target_margin": 0.05,
+    "minimum_price_eur": 147.0,
+    "competitiveness_discount": 0.05,
+    "market_reference_price_eur": 142.5,
+    "rule_applied": "minimum_floor"
+  },
+  "output": {
+    "suggested_price_eur": 147.0,
+    "currency": "EUR",
+    "effective_margin": 0.05,
+    "below_market_by": 3.0
+  }
+}

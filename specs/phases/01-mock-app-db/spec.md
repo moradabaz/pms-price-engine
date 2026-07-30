@@ -30,6 +30,8 @@ This phase does **not** touch Kafka, Debezium, or Kafka Connect at all (see Phas
   - **continuously** inserts new rows on an interval and occasionally **updates** existing rows, for as long as it runs — this is what makes it a believable stand-in for a live PM app, not a one-shot script.
 - Manual verification that WAL changes are observable via raw Postgres tooling (`pg_recvlogical` or `SELECT * FROM pg_logical_slot_get_binary_changes(...)`), independent of Debezium. `pgoutput` produces binary protocol output, so the plain-text `pg_logical_slot_get_changes` errors against it (`ERROR: logical decoding output plugin "pgoutput" produces binary output`) — the `_binary_` variant (or `pg_recvlogical`) is required.
 
+**Follow-up added 2026-07-29 (Phase 4, Decision C.1/C.2 — [`docs/phase-4-streaming-design-decisions.md`](../../../docs/phase-4-streaming-design-decisions.md)):** [`apartment_market_segments.sql`](./apartment_market_segments.sql), a dimension table mapping each apartment to the market segment `market-ingestor` (Phase 3) prices it against, plus its `target_margin`/`competitiveness_discount`. Seeded once by `services/mock-pm-app` from the same apartment pool (`build_apartment_pool`), which now also carries `city`/`neighborhood`/`property_type`/`bedrooms` — a real, additive change to `Apartment`, not just an implementation detail. Reuses `dbz_publication` (no new Debezium connector) — wiring `infra/debezium/postgres-connector.json`'s `table.include.list` to actually capture it is tracked as Phase 4 implementation work, not done here.
+
 ### Out of scope (explicitly deferred)
 
 - Debezium, Kafka Connect, and the `payment-events.v1` Kafka topic entirely (Phase 2).
@@ -76,7 +78,7 @@ Settings are loaded via `pydantic-settings` (prefix `MOCK_APP_`), consistent wit
 |---|---|---|
 | `MOCK_APP_POSTGRES_DSN` | *(required, no default)* | e.g. `postgresql://pms:pms@postgres:5432/pms_db` inside the Compose network. No safe default exists across dev vs. Compose contexts, so it must be set explicitly. |
 | `MOCK_APP_SEED_MONTHS` | `2` | Matches AC-03's minimum history window. |
-| `MOCK_APP_SEED_APARTMENTS` | `10` | Matches AC-03's minimum apartment count; references are drawn from a fixed city-code pool (`BCN`, `MAD`, `VLC`, `SEV`, ...) formatted `<CITY>-<NNN>`. |
+| `MOCK_APP_SEED_APARTMENTS` | `10` | Matches AC-03's minimum apartment count; references are formatted `<CITY>-<NNN>`, cycled deterministically across the 3 cities × 2 neighborhoods × 3 property profiles `market-ingestor` actually prices (`BCN`/`MAD`/`VLC` — restricted from an earlier 6-city pool on 2026-07-29, Phase 4 Decision C.1, so every apartment has a real market segment to compare against). |
 | `MOCK_APP_INSERT_INTERVAL_MIN_SECONDS` | `10` | Lower bound of §4's "every ~10–30 seconds" cadence. |
 | `MOCK_APP_INSERT_INTERVAL_MAX_SECONDS` | `30` | Upper bound; the actual interval is randomized uniformly between min and max on every tick, per §4's "interval configurable." |
 | `MOCK_APP_UPDATE_CHECK_INTERVAL_SECONDS` | `60` | How often the generator looks for an existing `pending` row to flip to `paid` (AC-05). Decoupled from the insert cadence because updates model back-office processing catching up, not invoices arriving. |

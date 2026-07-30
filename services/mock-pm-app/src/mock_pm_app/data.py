@@ -1,22 +1,74 @@
 from dataclasses import dataclass
 
-CITY_CODES = ["BCN", "MAD", "VLC", "SEV", "PMI", "IBZ"]
+# Restricted to the 3 cities services/market-ingestor/src/market_ingestor/segments.py
+# actually prices (Phase 4, Decision C.1 / ADR-0006 context) — an apartment must
+# belong to a market segment that genuinely exists, not just a plausible-looking
+# city code with nothing to compare its cost against. Kept as a literal here, not
+# imported cross-service: mock-pm-app and market-ingestor are independently
+# deployable services with their own lockfiles. If this list drifts from
+# market-ingestor's SEGMENTS, apartment_market_segments' contract test should
+# catch it (specs/contracts/).
+_NEIGHBORHOODS_BY_CITY: dict[str, list[str]] = {
+    "Barcelona": ["Eixample", "Gràcia"],
+    "Madrid": ["Centro", "Chamberí"],
+    "Valencia": ["Ruzafa", "El Carmen"],
+}
+_CITY_CODES_BY_NAME: dict[str, str] = {
+    "Barcelona": "BCN",
+    "Madrid": "MAD",
+    "Valencia": "VLC",
+}
+_PROPERTY_PROFILES: list[tuple[str, int]] = [
+    ("studio", 0),
+    ("apartment", 1),
+    ("apartment", 2),
+]
+
+CITY_CODES = list(_CITY_CODES_BY_NAME.values())
+
+
+def _segment_combos() -> list[tuple[str, str, str, int]]:
+    # Same nested order as market-ingestor's _build_segments() (18 combos) —
+    # apartments are cycled through it so every one lands on a real segment.
+    return [
+        (city, neighborhood, property_type, bedrooms)
+        for city, neighborhoods in _NEIGHBORHOODS_BY_CITY.items()
+        for neighborhood in neighborhoods
+        for property_type, bedrooms in _PROPERTY_PROFILES
+    ]
+
+
+_SEGMENT_COMBOS = _segment_combos()
 
 
 @dataclass(frozen=True)
 class Apartment:
     apartment_id: str
     apartment_reference: str
+    city: str
+    neighborhood: str
+    property_type: str
+    bedrooms: int
 
 
 def build_apartment_pool(count: int) -> list[Apartment]:
-    return [
-        Apartment(
-            apartment_id=f"{CITY_CODES[i % len(CITY_CODES)]}-{i + 1:03d}",
-            apartment_reference=f"{CITY_CODES[i % len(CITY_CODES)]}-{i + 1:03d}",
+    apartments = []
+    for i in range(count):
+        city, neighborhood, property_type, bedrooms = _SEGMENT_COMBOS[
+            i % len(_SEGMENT_COMBOS)
+        ]
+        reference = f"{_CITY_CODES_BY_NAME[city]}-{i + 1:03d}"
+        apartments.append(
+            Apartment(
+                apartment_id=reference,
+                apartment_reference=reference,
+                city=city,
+                neighborhood=neighborhood,
+                property_type=property_type,
+                bedrooms=bedrooms,
+            )
         )
-        for i in range(count)
-    ]
+    return apartments
 
 
 @dataclass(frozen=True)
