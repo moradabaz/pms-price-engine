@@ -11,7 +11,7 @@ _SHOULDER_SEASON_MONTHS = {5, 6, 9, 10}
 
 HIGH_SEASON_MULTIPLIER = 1.30
 SHOULDER_SEASON_MULTIPLIER = 1.05
-LOW_SEASON_MULTIPLIER = 0.85  # invierno (Nov-Apr) — the trough explicitly named in Punto 4
+LOW_SEASON_MULTIPLIER = 0.85  # invierno (Nov-Apr) — the trough named in Punto 4
 
 
 def seasonal_multiplier(target_date: date) -> float:

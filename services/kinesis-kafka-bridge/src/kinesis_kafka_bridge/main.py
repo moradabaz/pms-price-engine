@@ -4,14 +4,24 @@ import boto3
 from common import configure_logging, get_logger
 from kafka import KafkaProducer
 
-from kinesis_kafka_bridge.bridge import latest_iterator, list_shard_ids, poll_shard, republish
+from kinesis_kafka_bridge.bridge import (
+    latest_iterator,
+    list_shard_ids,
+    poll_shard,
+    republish,
+)
 from kinesis_kafka_bridge.settings import BridgeSettings
 
 
-def run_forever(kinesis: object, producer: KafkaProducer, settings: BridgeSettings) -> None:
+def run_forever(
+    kinesis: object, producer: KafkaProducer, settings: BridgeSettings
+) -> None:
     logger = get_logger(__name__)
     shard_ids = list_shard_ids(kinesis, settings.kinesis_stream_name)
-    iterators = {sid: latest_iterator(kinesis, settings.kinesis_stream_name, sid) for sid in shard_ids}
+    iterators: dict[str, str | None] = {
+        sid: latest_iterator(kinesis, settings.kinesis_stream_name, sid)
+        for sid in shard_ids
+    }
     logger.info("bridge_starting", shards=len(shard_ids), topic=settings.kafka_topic)
 
     while True:
@@ -31,7 +41,9 @@ def main() -> None:
     configure_logging(settings.log_level)
 
     kinesis = boto3.client(
-        "kinesis", region_name=settings.aws_region, endpoint_url=settings.kinesis_endpoint_url
+        "kinesis",
+        region_name=settings.aws_region,
+        endpoint_url=settings.kinesis_endpoint_url,
     )
     producer = KafkaProducer(bootstrap_servers=settings.kafka_bootstrap_servers)
 

@@ -1,5 +1,5 @@
 import time
-from typing import Any
+from typing import Any, cast
 
 import boto3
 from pyflink.datastream.functions import MapFunction
@@ -47,7 +47,7 @@ def _to_dynamodb_item(decision: PriceDecision) -> dict[str, Any]:
     put_item's Item is the bare attribute map — not wrapped in {"M": ...}
     the way a nested attribute value would be."""
     data = decision.model_dump(mode="json")
-    return _python_to_dynamodb(data)["M"]
+    return cast(dict[str, Any], _python_to_dynamodb(data)["M"])
 
 
 def _python_to_dynamodb(value: Any) -> Any:

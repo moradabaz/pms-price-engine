@@ -31,7 +31,8 @@ def seed_apartment_market_segments(conn: Any, apartments: list[Apartment]) -> in
             cur.execute(
                 """
                 INSERT INTO apartment_market_segments
-                    (apartment_id, apartment_reference, city, neighborhood, property_type, bedrooms)
+                    (apartment_id, apartment_reference, city, neighborhood,
+                     property_type, bedrooms)
                 VALUES (%(apartment_id)s, %(apartment_reference)s, %(city)s,
                         %(neighborhood)s, %(property_type)s, %(bedrooms)s)
                 ON CONFLICT (apartment_id) DO NOTHING

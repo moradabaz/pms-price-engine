@@ -52,7 +52,9 @@ def run_tick(
         settings.publish_backoff_base_seconds,
     )
     get_logger(__name__).info(
-        "tick_complete", segments_published=len(records), target_date=target_date.isoformat()
+        "tick_complete",
+        segments_published=len(records),
+        target_date=target_date.isoformat(),
     )
 
 

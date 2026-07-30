@@ -39,6 +39,20 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
+exclude = ["(^|/)tests/"]
+
+# PyFlink ships no type stubs — these modules subclass its process functions
+# and take Flink-provided (ctx, runtime_context) params that can't be typed.
+[[tool.mypy.overrides]]
+module = [
+    "flink_jobs.job",
+    "flink_jobs.stage_cost_enrichment",
+    "flink_jobs.stage_price_decision",
+    "flink_jobs.dynamodb_sink",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_subclassing_any = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

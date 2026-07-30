@@ -13,8 +13,16 @@ _NEIGHBORHOODS_BY_CITY: dict[str, list[str]] = {
     "Madrid": ["Centro", "Chamberí"],
     "Valencia": ["Ruzafa", "El Carmen"],
 }
-_CITY_CODES_BY_NAME: dict[str, str] = {"Barcelona": "BCN", "Madrid": "MAD", "Valencia": "VLC"}
-_PROPERTY_PROFILES: list[tuple[str, int]] = [("studio", 0), ("apartment", 1), ("apartment", 2)]
+_CITY_CODES_BY_NAME: dict[str, str] = {
+    "Barcelona": "BCN",
+    "Madrid": "MAD",
+    "Valencia": "VLC",
+}
+_PROPERTY_PROFILES: list[tuple[str, int]] = [
+    ("studio", 0),
+    ("apartment", 1),
+    ("apartment", 2),
+]
 
 CITY_CODES = list(_CITY_CODES_BY_NAME.values())
 
@@ -46,7 +54,9 @@ class Apartment:
 def build_apartment_pool(count: int) -> list[Apartment]:
     apartments = []
     for i in range(count):
-        city, neighborhood, property_type, bedrooms = _SEGMENT_COMBOS[i % len(_SEGMENT_COMBOS)]
+        city, neighborhood, property_type, bedrooms = _SEGMENT_COMBOS[
+            i % len(_SEGMENT_COMBOS)
+        ]
         reference = f"{_CITY_CODES_BY_NAME[city]}-{i + 1:03d}"
         apartments.append(
             Apartment(
