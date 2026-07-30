@@ -260,7 +260,51 @@ These three branches are exactly the three fixtures in `specs/contracts/fixtures
 | Freshness threshold | 48h (E.1) | Confirmed in the pre-spec doc; with Phase 3's D.1 cyclic coverage now live, every segment/date is refreshed at least hourly in steady state, so this threshold should only ever fire on a genuine incident (e.g. `market-ingestor` down), not in normal operation. |
 | Hoja 1 per-segment cap | 500 entries (§6) | Defensive, not a real expected scale — see §6. |
 | Checkpoint interval | 60s | Matches `market-ingestor`'s tick cadence (§9). |
-| `apartment_market_segments` topic name | `apartment-market-segments.v1` (proposed; confirm against whatever the Debezium `RegexRouter` config actually produces once wired — §4) | Follows the same `<business-name>.v1` convention as `payment-events.v1`. |
+| `apartment_market_segments` topic name | `apartment-market-segments.v1` (confirmed live — §4) | Follows the same `<business-name>.v1` convention as `payment-events.v1`. |
+| `market-price-bridge.v1` topic | 4 partitions, RF 1 | Populated by `services/kinesis-kafka-bridge` (ADR-0008) — Stage B's actual market-data input, not Kinesis directly. |
+
+### 11.1 Commands used for the live deployment (2026-07-30)
+
+Reproduces the manual steps this phase's live verification actually used — same rigor as Phase 2 §6/Phase 3 §6, not left implicit.
+
+```bash
+# One-time: create the two new Kafka topics (auto-create is off, per Phase 2)
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic apartment-market-segments.v1 --partitions 1 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic market-price-bridge.v1 --partitions 4 --replication-factor 1
+
+# One-time: extend the existing Debezium connector to also capture
+# apartment_market_segments (PUT takes the bare config, not the {name, config} wrapper POST uses)
+curl -X PUT -H "Content-Type: application/json" \
+  --data @<(python3 -c "import json; print(json.dumps(json.load(open('infra/debezium/postgres-connector.json'))['config']))") \
+  http://localhost:8083/connectors/pms-payment-lines-connector/config
+
+# One-time: price_decision DynamoDB table (also in infra/localstack/init-aws.sh for fresh volumes)
+aws --endpoint-url=http://localhost:4566 --region eu-west-1 dynamodb create-table \
+  --table-name price_decision \
+  --attribute-definitions AttributeName=apartment_id,AttributeType=S AttributeName=target_date,AttributeType=S \
+  --key-schema AttributeName=apartment_id,KeyType=HASH AttributeName=target_date,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --stream-specification StreamEnabled=true,StreamViewType=NEW_AND_OLD_IMAGES
+
+# Build and start the Flink cluster (custom image — see streaming/flink-jobs/Dockerfile) and the bridge
+docker compose -f infra/docker-compose.yml build flink-jobmanager kinesis-kafka-bridge
+docker compose -f infra/docker-compose.yml up -d flink-jobmanager flink-taskmanager kinesis-kafka-bridge
+
+# Submit the job — both -pyclientexec and -pyexec must point at the venv's
+# Python, not the system one (spec dependencies live only in the venv)
+docker exec -d pms_flink_jobmanager flink run \
+  -pyclientexec /app/.venv/bin/python3 -pyexec /app/.venv/bin/python3 \
+  -py /app/streaming/flink-jobs/src/flink_jobs/main.py
+
+# Verify: Flink UI / REST
+curl -s http://localhost:8081/jobs
+curl -s "http://localhost:8081/jobs/<job-id>/exceptions?maxExceptions=5"
+
+# Verify: data actually landed
+aws --endpoint-url=http://localhost:4566 --region eu-west-1 dynamodb scan --table-name price_decision --select COUNT
+```
 
 ---
 

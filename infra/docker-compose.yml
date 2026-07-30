@@ -117,16 +117,45 @@ services:
   # ---------------------------------------------------------------------------
   # Apache Flink — stateful stream processing (PyFlink)
   # ---------------------------------------------------------------------------
-  # Image must match the apache-flink Python package version in streaming/flink-jobs/pyproject.toml.
-  # Mismatching image vs package = jobs fail to start. Current: apache-flink 2.3.0 → flink:2.0-java21
+  # Custom image (streaming/flink-jobs/Dockerfile), not the bare apache/flink
+  # image: official Flink images ship Java-only, with no Python at all, and
+  # PyFlink's Python UDFs must run inside the TaskManager process itself
+  # (Beam portability framework) — so Python + this exact apache-flink pip
+  # version must be installed on both jobmanager and taskmanager, not just
+  # wherever `flink run` is invoked from. Image version corrected 2026-07-29
+  # to apache/flink:2.3.0-java21, matching apache-flink==2.3.0 in
+  # streaming/flink-jobs/pyproject.toml — the previous flink:2.0-java21 was a
+  # real, unverified mismatch, not a deliberate choice.
   flink-jobmanager:
-    image: apache/flink:2.0-java21
+    build:
+      context: ..
+      dockerfile: streaming/flink-jobs/Dockerfile
+    image: pms-flink-pyflink:2.3.0
     container_name: pms_flink_jobmanager
     command: jobmanager
     environment:
+      # s3.* keys are cluster-wide (flink-conf.yaml), not per-job — the S3
+      # filesystem plugin initializes from this global config when the
+      # CheckpointCoordinator starts, before a job's own env.configure()
+      # settings are in play. Must be set here on both jobmanager AND
+      # taskmanager, not passed through the job's Configuration object.
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.bind-port: 8081
+        s3.endpoint: http://localstack:4566
+        s3.path.style.access: true
+        s3.access-key: test
+        s3.secret-key: test
+      # Only needed where `flink run -py` is actually invoked (this
+      # container) — FlinkJobSettings is read once at submission time,
+      # then closed over by the already-serialized job graph shipped to
+      # TaskManagers, not re-read there.
+      FLINK_JOB_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      FLINK_JOB_DYNAMODB_ENDPOINT_URL: http://localstack:4566
+      FLINK_JOB_S3_ENDPOINT_URL: http://localstack:4566
+      FLINK_JOB_CHECKPOINT_STORAGE_PATH: s3://pms-iceberg/flink-checkpoints
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
     ports:
       - "8081:8081"
     healthcheck:
@@ -136,7 +165,10 @@ services:
       retries: 5
 
   flink-taskmanager:
-    image: apache/flink:2.0-java21
+    build:
+      context: ..
+      dockerfile: streaming/flink-jobs/Dockerfile
+    image: pms-flink-pyflink:2.3.0
     container_name: pms_flink_taskmanager
     command: taskmanager
     depends_on:
@@ -146,6 +178,14 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 4
+        s3.endpoint: http://localstack:4566
+        s3.path.style.access: true
+        s3.access-key: test
+        s3.secret-key: test
+      # DynamoDbSinkFunction's boto3 client runs here — the operator executes
+      # on the TaskManager, not the JobManager that merely submitted the job.
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
 
   # ---------------------------------------------------------------------------
   # LocalStack — emulates AWS services locally (Kinesis, S3, DynamoDB)
@@ -192,6 +232,30 @@ services:
         condition: service_healthy
     environment:
       MARKET_INGESTOR_KINESIS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Kinesis→Kafka bridge — exists solely because no Kinesis connector runs on
+  # Flink 2.x (error-handling/flink-2x-removes-legacy-sourcefunction-...md).
+  # Republishes market-price-events verbatim onto a Kafka topic Stage B reads
+  # via KafkaSource instead. Not a permanent architecture choice — revisit if
+  # a Flink-2.x-compatible Kinesis connector ever ships.
+  # ---------------------------------------------------------------------------
+  kinesis-kafka-bridge:
+    build:
+      context: ..
+      dockerfile: services/kinesis-kafka-bridge/Dockerfile
+    container_name: pms_kinesis_kafka_bridge
+    depends_on:
+      localstack:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      BRIDGE_KINESIS_ENDPOINT_URL: http://localstack:4566
+      BRIDGE_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
     restart: unless-stopped

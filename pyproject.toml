@@ -2,6 +2,7 @@
 members = [
     "services/market-ingestor",
     "services/mock-pm-app",
+    "services/kinesis-kafka-bridge",
     "streaming/flink-jobs",
     "dashboard",
     "libs/shared-schemas",

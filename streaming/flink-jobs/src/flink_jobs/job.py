@@ -3,8 +3,11 @@ import json
 from pyflink.common import Configuration
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
-from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
-from pyflink.datastream.connectors.kinesis import FlinkKinesisConsumer
+from pyflink.datastream.connectors.kafka import (
+    KafkaOffsetResetStrategy,
+    KafkaOffsetsInitializer,
+    KafkaSource,
+)
 from pyflink.datastream.functions import SinkFunction
 from shared_schemas.market_price import MarketPrice
 from shared_schemas.payment_line import PaymentLine
@@ -27,6 +30,11 @@ def _configure_checkpointing(env, settings: FlinkJobSettings) -> None:
     config.set_string("state.backend.incremental", "true")
     config.set_string("state.checkpoints.dir", settings.checkpoint_storage_path)
     config.set_string("execution.checkpointing.mode", "EXACTLY_ONCE")
+    if settings.s3_endpoint_url:
+        config.set_string("s3.endpoint", settings.s3_endpoint_url)
+        config.set_string("s3.path.style.access", "true")
+        config.set_string("s3.access-key", "test")
+        config.set_string("s3.secret-key", "test")
     env.configure(config)
 
 
@@ -55,7 +63,13 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         .set_bootstrap_servers(settings.kafka_bootstrap_servers)
         .set_topics(settings.payment_events_topic)
         .set_group_id(settings.kafka_consumer_group_id)
-        .set_starting_offsets(KafkaOffsetsInitializer.committed_offsets())
+        # committed_offsets() alone has no fallback (default NONE) and
+        # throws NoOffsetForPartitionException the first time this consumer
+        # group ever reads this topic — EARLIEST here mirrors Debezium's own
+        # snapshot.mode:initial precedent (full history on first run).
+        .set_starting_offsets(
+            KafkaOffsetsInitializer.committed_offsets(KafkaOffsetResetStrategy.EARLIEST)
+        )
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
@@ -85,14 +99,17 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         CostEnrichmentFunction()
     )
 
-    kinesis_props = {"aws.region": settings.aws_region}
-    if settings.kinesis_endpoint_url:
-        kinesis_props["aws.endpoint"] = settings.kinesis_endpoint_url
-    market_source = FlinkKinesisConsumer(
-        settings.kinesis_stream_name, SimpleStringSchema(), kinesis_props
+    market_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.market_price_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.latest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
     )
     market_stream = (
-        env.add_source(market_source)
+        env.from_source(market_source, WatermarkStrategy.no_watermarks(), "market-price-bridge")
         .map(MarketPrice.model_validate_json)
         .key_by(
             lambda mp: (
@@ -115,5 +132,7 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         region_name=settings.aws_region,
     )
     price_decisions.map(dynamodb_writer).add_sink(
-        SinkFunction("org.apache.flink.streaming.api.functions.sink.DiscardingSink")
+        # Flink 2.x moved this class under .legacy. (confirmed by scanning
+        # flink-dist-2.3.0.jar — it wasn't deleted like RichParallelSourceFunction).
+        SinkFunction("org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink")
     )

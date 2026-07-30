@@ -9,8 +9,10 @@ class FlinkJobSettings(BaseSettings):
     apartment_segments_topic: str = "apartment-market-segments.v1"
     kafka_consumer_group_id: str = "flink-price-engine"
 
-    kinesis_stream_name: str = "market-price-events"
-    kinesis_endpoint_url: str | None = None
+    # Read via Kafka, not Kinesis directly — no Kinesis connector runs on
+    # Flink 2.x (error-handling/flink-2x-removes-legacy-sourcefunction-...md).
+    # kinesis-kafka-bridge republishes market-price-events onto this topic.
+    market_price_topic: str = "market-price-bridge.v1"
     aws_region: str = "eu-west-1"
 
     dynamodb_table_name: str = "price_decision"
@@ -18,5 +20,6 @@ class FlinkJobSettings(BaseSettings):
 
     checkpoint_interval_ms: int = 60_000
     checkpoint_storage_path: str
+    s3_endpoint_url: str | None = None
     max_parallelism: int = 128
     parallelism: int = 4

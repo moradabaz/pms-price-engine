@@ -43,9 +43,11 @@ class DynamoDbSinkFunction(MapFunction):
 
 
 def _to_dynamodb_item(decision: PriceDecision) -> dict[str, Any]:
-    """Builds a DynamoDB item from a PriceDecision. Returns the item dict."""
+    """Builds a DynamoDB item from a PriceDecision. Returns the item dict.
+    put_item's Item is the bare attribute map — not wrapped in {"M": ...}
+    the way a nested attribute value would be."""
     data = decision.model_dump(mode="json")
-    return _python_to_dynamodb(data)
+    return _python_to_dynamodb(data)["M"]
 
 
 def _python_to_dynamodb(value: Any) -> Any:
