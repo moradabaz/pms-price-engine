@@ -32,7 +32,7 @@ def _cost(apartment_id="BCN-001", daily_cost=100.0, updated_at=None):
     )
 
 
-def _market(target_date="2026-08-10", avg_rate=90.0):
+def _market(target_date="2026-08-10", avg_rate=90.0, collected_at=None):
     return MarketPrice(
         event_id="00000000-0000-0000-0000-000000000001",
         market_area=MarketArea(
@@ -42,7 +42,7 @@ def _market(target_date="2026-08-10", avg_rate=90.0):
         target_date=target_date,
         pricing=Pricing(avg_nightly_rate=avg_rate),
         market_context=MarketContext(sample_size=20, data_source="mock"),
-        collected_at=datetime.now(UTC),
+        collected_at=collected_at or datetime.now(UTC),
     )
 
 
@@ -104,3 +104,23 @@ def test_on_timer_emits_data_stale_for_expired_key():
     results = list(fn.on_timer(fired_at_ms, ctx))
 
     assert results == [(DATA_STALE_TAG, ("apartment", "apt-A"))]
+
+
+def test_data_age_seconds_clamps_to_zero_under_clock_skew():
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A"), ctx))
+    future_collected_at = datetime.now(UTC).replace(year=2099)
+
+    results = list(fn.process_element2(_market(collected_at=future_collected_at), ctx))
+
+    assert results[0].market_inputs.data_age_seconds == 0
+
+
+def test_on_timer_emits_data_stale_for_expired_night():
+    fn, ctx = _make_function()
+    list(fn.process_element2(_market("2026-08-10"), ctx))
+    fired_at_ms = ctx.timer_service_.registered[0]
+
+    results = list(fn.on_timer(fired_at_ms, ctx))
+
+    assert results == [(DATA_STALE_TAG, ("night", "2026-08-10"))]

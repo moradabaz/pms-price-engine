@@ -159,7 +159,11 @@ def _build_price_decision(
             occupancy_rate=market.occupancy_rate,
             sample_size=market.sample_size,
             collected_at=market.collected_at,
-            data_age_seconds=int((decided_at - market.collected_at).total_seconds()),
+            # max(0, ...): clock skew between the producer and this node could
+            # otherwise yield a negative value, failing MarketInputs' ge=0.
+            data_age_seconds=max(
+                0, int((decided_at - market.collected_at).total_seconds())
+            ),
         ),
         calculation=Calculation(
             target_margin=cost.target_margin,

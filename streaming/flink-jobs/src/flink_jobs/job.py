@@ -19,7 +19,7 @@ from flink_jobs.stage_cost_enrichment import (
     SEGMENT_BROADCAST_DESCRIPTOR,
     CostEnrichmentFunction,
 )
-from flink_jobs.stage_price_decision import PriceDecisionFunction
+from flink_jobs.stage_price_decision import DATA_STALE_TAG, PriceDecisionFunction
 
 
 def _configure_checkpointing(env, settings: FlinkJobSettings) -> None:
@@ -109,7 +109,9 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         .build()
     )
     market_stream = (
-        env.from_source(market_source, WatermarkStrategy.no_watermarks(), "market-price-bridge")
+        env.from_source(
+            market_source, WatermarkStrategy.no_watermarks(), "market-price-bridge"
+        )
         .map(MarketPrice.model_validate_json)
         .key_by(
             lambda mp: (
@@ -126,6 +128,9 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         PriceDecisionFunction()
     )
 
+    # E.1's dead-man's-switch — logged, not a price_decision (spec §7).
+    price_decisions.get_side_output(DATA_STALE_TAG).print()
+
     dynamodb_writer = DynamoDbSinkFunction(
         table_name=settings.dynamodb_table_name,
         endpoint_url=settings.dynamodb_endpoint_url,
@@ -134,5 +139,7 @@ def build_job(env, settings: FlinkJobSettings) -> None:
     price_decisions.map(dynamodb_writer).add_sink(
         # Flink 2.x moved this class under .legacy. (confirmed by scanning
         # flink-dist-2.3.0.jar — it wasn't deleted like RichParallelSourceFunction).
-        SinkFunction("org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink")
+        SinkFunction(
+            "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
+        )
     )
