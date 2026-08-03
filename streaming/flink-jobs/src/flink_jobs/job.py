@@ -38,6 +38,12 @@ def _configure_checkpointing(env, settings: FlinkJobSettings) -> None:
     env.configure(config)
 
 
+# ADR-0009: same default as the DB column — this source replays from the
+# earliest offset (job.py below), so CDC messages predating commission_pct's
+# addition to apartment_market_segments don't carry the field at all.
+_DEFAULT_COMMISSION_PCT = 0.15
+
+
 def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
     """Parses one apartment_market_segments CDC message. Returns a row."""
     data = json.loads(raw)
@@ -49,7 +55,7 @@ def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
         bedrooms=data["bedrooms"],
         target_margin=float(data["target_margin"]),
         competitiveness_discount=float(data["competitiveness_discount"]),
-        commission_pct=float(data["commission_pct"]),
+        commission_pct=float(data.get("commission_pct", _DEFAULT_COMMISSION_PCT)),
     )
 
 
