@@ -21,7 +21,9 @@ def _cost(apartment_id: str) -> CostAggregate:
         neighborhood="Eixample",
         property_type="studio",
         bedrooms=0,
-        daily_cost_eur=100.0,
+        fixed_cost_eur=0.0,
+        variable_cost_eur=100.0,
+        one_time_cost_eur=0.0,
         total_monthly_cost_eur=3000.0,
         available_days=30,
         cost_lines_count=1,
@@ -29,6 +31,7 @@ def _cost(apartment_id: str) -> CostAggregate:
         billing_period_end=date(2026, 6, 30),
         target_margin=0.05,
         competitiveness_discount=0.05,
+        commission_pct=0.15,
         updated_at=datetime.now(UTC),
     )
 

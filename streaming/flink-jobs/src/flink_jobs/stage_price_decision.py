@@ -132,11 +132,16 @@ def _build_price_decision(
 ) -> PriceDecision:
     """Applies the pricing formula and assembles a PriceDecision. Returns it."""
     decided_at = datetime.now(UTC)
+    days_to_arrival = (target_date - decided_at.date()).days
     calc = decide_price(
-        daily_cost_eur=cost.daily_cost_eur,
+        fixed_cost_eur=cost.fixed_cost_eur,
+        variable_cost_eur=cost.variable_cost_eur,
+        one_time_cost_eur=cost.one_time_cost_eur,
         target_margin=cost.target_margin,
+        commission_pct=cost.commission_pct,
         avg_nightly_rate_eur=market.avg_nightly_rate_eur,
         competitiveness_discount=cost.competitiveness_discount,
+        days_to_arrival=days_to_arrival,
     )
     return PriceDecision(
         decision_id=uuid4(),
@@ -150,7 +155,9 @@ def _build_price_decision(
             ),
             total_monthly_cost_eur=cost.total_monthly_cost_eur,
             available_days=cost.available_days,
-            daily_cost_eur=cost.daily_cost_eur,
+            fixed_cost_eur=cost.fixed_cost_eur,
+            variable_cost_eur=cost.variable_cost_eur,
+            one_time_cost_eur=cost.one_time_cost_eur,
             cost_lines_count=cost.cost_lines_count,
         ),
         market_inputs=MarketInputs(
@@ -168,6 +175,9 @@ def _build_price_decision(
         calculation=Calculation(
             target_margin=cost.target_margin,
             minimum_price_eur=calc.minimum_price_eur,
+            floor_type=calc.floor_type,
+            commission_pct=cost.commission_pct,
+            days_to_arrival=days_to_arrival,
             competitiveness_discount=cost.competitiveness_discount,
             market_reference_price_eur=calc.market_reference_price_eur,
             rule_applied=calc.rule_applied,

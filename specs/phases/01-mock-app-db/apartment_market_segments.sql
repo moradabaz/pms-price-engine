@@ -56,9 +56,29 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     competitiveness_discount NUMERIC(5,4) NOT NULL DEFAULT 0.05
                                   CHECK (competitiveness_discount >= 0 AND competitiveness_discount <= 1),
 
+    -- ADR-0009 (D2): blended OTA + payment-processing commission, in the
+    -- profitability floor's denominator (it scales with the final price, so
+    -- it can't be pre-computed as a fixed euro cost the way Cf/Cv/Cr are).
+    -- 0.15 (15%) is the confirmed default; per-apartment override is already
+    -- supported by this being a real column, same pattern as target_margin.
+    commission_pct       NUMERIC(5,4) NOT NULL DEFAULT 0.15
+                                  CHECK (commission_pct >= 0 AND commission_pct <= 1),
+
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ
 );
+
+-- ADR-0009: this table predates commission_pct — ADD COLUMN IF NOT EXISTS so a
+-- volume from before this column existed still picks it up (CREATE TABLE IF
+-- NOT EXISTS above is a no-op once the table already exists, same concern this
+-- file's header already documents for re-running against an existing volume).
+ALTER TABLE public.apartment_market_segments
+    ADD COLUMN IF NOT EXISTS commission_pct NUMERIC(5,4) NOT NULL DEFAULT 0.15;
+ALTER TABLE public.apartment_market_segments
+    DROP CONSTRAINT IF EXISTS apartment_market_segments_commission_pct_check;
+ALTER TABLE public.apartment_market_segments
+    ADD CONSTRAINT apartment_market_segments_commission_pct_check
+        CHECK (commission_pct >= 0 AND commission_pct <= 1);
 
 CREATE INDEX IF NOT EXISTS idx_apartment_market_segments_segment
     ON public.apartment_market_segments (city, neighborhood, property_type, bedrooms);

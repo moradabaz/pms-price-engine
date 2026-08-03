@@ -12,7 +12,9 @@
     },
     "total_monthly_cost_eur": 410.0,
     "available_days": 30,
-    "daily_cost_eur": 13.67,
+    "fixed_cost_eur": 8.0,
+    "variable_cost_eur": 5.67,
+    "one_time_cost_eur": 0.0,
     "cost_lines_count": 6
   },
   "market_inputs": {

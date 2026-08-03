@@ -49,6 +49,7 @@ def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
         bedrooms=data["bedrooms"],
         target_margin=float(data["target_margin"]),
         competitiveness_discount=float(data["competitiveness_discount"]),
+        commission_pct=float(data["commission_pct"]),
     )
 
 

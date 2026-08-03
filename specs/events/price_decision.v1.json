@@ -45,9 +45,9 @@
 
     "cost_inputs": {
       "type": "object",
-      "required": ["billing_period", "total_monthly_cost_eur", "available_days", "daily_cost_eur"],
+      "required": ["billing_period", "total_monthly_cost_eur", "available_days", "fixed_cost_eur", "variable_cost_eur", "one_time_cost_eur"],
       "additionalProperties": false,
-      "description": "Cost snapshot used in this calculation. Aggregated by Flink from payment_line events for the billing period.",
+      "description": "Cost snapshot used in this calculation. Aggregated by Flink from payment_line events for the billing period, split by cost_type (ADR-0009).",
       "properties": {
         "billing_period": {
           "type": "object",
@@ -61,17 +61,27 @@
         "total_monthly_cost_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "Sum of amount_gross for all payment lines for this apartment in the billing period."
+          "description": "Sum of amount_gross for all payment lines for this apartment in the billing period, regardless of cost_type. Informational rollup, not used directly in the formula."
         },
         "available_days": {
           "type": "integer",
           "minimum": 1,
           "description": "Number of days in the billing period the apartment is available for rent (not blocked or under maintenance)."
         },
-        "daily_cost_eur": {
+        "fixed_cost_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "total_monthly_cost_eur / available_days. The cost floor before margin."
+          "description": "Cf: sum of cost_type=fixed lines / available_days. Incurred whether or not the apartment is booked (ADR-0009)."
+        },
+        "variable_cost_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cv: sum of cost_type=variable lines / available_days. Scales with occupancy (ADR-0009)."
+        },
+        "one_time_cost_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cr: average (not sum) of cost_type=one_time lines in the period — each is already the cost of one turnover (ADR-0009)."
         },
         "cost_lines_count": {
           "type": "integer",
@@ -98,19 +108,34 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "competitiveness_discount", "market_reference_price_eur", "rule_applied"],
+      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "days_to_arrival", "competitiveness_discount", "market_reference_price_eur", "rule_applied"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
         "target_margin": {
           "type": "number",
           "minimum": 0,
-          "description": "Configured minimum profit margin (e.g. 0.20 = 20% above daily cost). Set per apartment or globally."
+          "description": "Configured minimum profit margin. Set per apartment or globally. Reduced by reduced_margin_factor (0.75) in the structural_reduced_margin band (ADR-0009)."
         },
         "minimum_price_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "daily_cost_eur × (1 + target_margin). The absolute floor — no price below this."
+          "description": "The active profitability floor (ADR-0009) — whichever formula floor_type selects. structural_*: ((fixed_cost_eur + variable_cost_eur) + one_time_cost_eur) / (1 - margin - commission_pct). contribution: (variable_cost_eur + one_time_cost_eur) / (1 - commission_pct), no margin term. The absolute floor for its tier — no price below this."
+        },
+        "floor_type": {
+          "type": "string",
+          "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"],
+          "description": "Which floor formula produced minimum_price_eur, selected by days_to_arrival (ADR-0009): structural_full_margin (>30 days), structural_reduced_margin (15-30 days, margin × 0.75), contribution (<15 days, no margin term — only variable + one-time costs and commission)."
+        },
+        "commission_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Cp: blended OTA/payment-processing commission, set per apartment (default 0.15). In the floor's denominator — it scales with the final price (ADR-0009)."
+        },
+        "days_to_arrival": {
+          "type": "integer",
+          "description": "target_date minus the date this decision was made. Selects floor_type (ADR-0009)."
         },
         "competitiveness_discount": {
           "type": "number",
@@ -145,7 +170,7 @@
         "currency": { "type": "string", "const": "EUR" },
         "effective_margin": {
           "type": "number",
-          "description": "(suggested_price_eur / daily_cost_eur) - 1. The actual margin this price achieves. Always >= target_margin by construction."
+          "description": "(suggested_price_eur / total_cost_eur) - 1, where total_cost_eur = fixed_cost_eur + variable_cost_eur + one_time_cost_eur. The actual margin this price achieves."
         },
         "below_market_by": {
           "type": "number",

@@ -3,7 +3,7 @@
 **Status:** Draft
 **Depends on:** Phase 2 (`payment-events.v1`), Phase 3 (`market-price-events`, D.1/D.2 already implemented), Phase 1's `apartment_market_segments` ([Decision C.1](../01-mock-app-db/apartment_market_segments.sql))
 **Blocks:** Phase 5 (Iceberg via DynamoDB Streams CDC — [ADR-0006](../../../docs/adr/ADR-0006-dynamodb-single-writer-iceberg-cdc.md)), Phase 6 (dashboard reads `price_decision.v1` from DynamoDB)
-**Related:** [ADR-0002](../../../docs/adr/ADR-0002-pyflink-over-java-flink.md) (PyFlink), [ADR-0003](../../../docs/adr/ADR-0003-payment-line-cdc-contract.md) (upsert-by-`event_id`), [ADR-0005](../../../docs/adr/ADR-0005-market-price-partition-key.md) (segment key), [ADR-0006](../../../docs/adr/ADR-0006-dynamodb-single-writer-iceberg-cdc.md), [ADR-0007](../../../docs/adr/ADR-0007-price-decision-cost-protected-rule.md), [ADR-0008](../../../docs/adr/ADR-0008-kinesis-kafka-bridge.md) (Kinesis→Kafka bridge), [`docs/phase-4-streaming-design-decisions.md`](../../../docs/phase-4-streaming-design-decisions.md) (pre-spec, decisions A–H), [`error-handling/anticipated-risks-flink-processing.md`](../../../error-handling/anticipated-risks-flink-processing.md)
+**Related:** [ADR-0002](../../../docs/adr/ADR-0002-pyflink-over-java-flink.md) (PyFlink), [ADR-0003](../../../docs/adr/ADR-0003-payment-line-cdc-contract.md) (upsert-by-`event_id`), [ADR-0005](../../../docs/adr/ADR-0005-market-price-partition-key.md) (segment key), [ADR-0006](../../../docs/adr/ADR-0006-dynamodb-single-writer-iceberg-cdc.md), [ADR-0007](../../../docs/adr/ADR-0007-price-decision-cost-protected-rule.md), [ADR-0008](../../../docs/adr/ADR-0008-kinesis-kafka-bridge.md) (Kinesis→Kafka bridge), [ADR-0009](../../../docs/adr/ADR-0009-profitability-floor-reform.md) (division-based floor, commissions, antelación tiers), [`docs/phase-4-streaming-design-decisions.md`](../../../docs/phase-4-streaming-design-decisions.md) (pre-spec, decisions A–H), [`error-handling/anticipated-risks-flink-processing.md`](../../../error-handling/anticipated-risks-flink-processing.md)
 
 ---
 
@@ -32,7 +32,7 @@ Phase 2 gives cost per apartment. Phase 3 gives market price per segment. Neithe
 - Processing-time semantics with the one-line replay-safety mitigation (§5).
 - Explicit, bounded keyed state with a stated eviction rule for every `MapState` (§6) — required, not left implicit.
 - The freshness dead-man's-switch watchdog (§7) and its interaction with Flink's per-key timer model.
-- The pricing formula, including the `cost_protected` rule from ADR-0007 (§8).
+- The pricing formula: ADR-0007's three-way `rule_applied` rule over ADR-0009's division-based, antelación-tiered floor (§8).
 - Checkpointing: `EmbeddedRocksDBStateBackend` + S3 (LocalStack), `EXACTLY_ONCE`, 60s interval (§9).
 - The single DynamoDB sink, idempotent by `decision_id` (§10).
 - Wiring `apartment_market_segments` into the existing Debezium connector's `table.include.list` (§4) — this phase's work, not Phase 1's (Phase 1 only built the table and its seed script).
@@ -70,7 +70,7 @@ flowchart TB
     seg -.broadcast.-> stageA
     costmap <--> stageA
     bcstate <--> stageA
-    stageA -->|"CostAggregate(apartment_id, segment_key,<br/>daily_cost_eur, target_margin,<br/>competitiveness_discount, updated_at)"| rekey["keyBy(segment_key)"]
+    stageA -->|"CostAggregate(apartment_id, segment_key,<br/>fixed/variable/one_time_cost_eur, target_margin,<br/>competitiveness_discount, commission_pct, updated_at)"| rekey["keyBy(segment_key)"]
 
     subgraph stageB["Stage B — KeyedCoProcessFunction, keyed by segment"]
         aps["MapState&lt;apartment_id, CostAggregate&gt;<br/>Hoja 1 (Decision D)"]
@@ -90,7 +90,7 @@ flowchart TB
 
 **Stage A** (keyed by `apartment_id`) combines Decision B (cost aggregation) and Decision C/C.2 (segment + margin enrichment) — both need the same key and the same broadcast side:
 
-1. **Cost side** (`payment-events.v1`): upsert the incoming `PaymentLine` into `MapState<event_id, PaymentLine>` by `event_id` (never sum — ADR-0003). "Current billing period" = whichever `billing_period_end` is latest among this apartment's known entries (data-driven, not wall-clock — §6). Sum `amount_gross` for that period, divide by `available_days` (§14) → `daily_cost_eur`. Look up `(segment, target_margin, competitiveness_discount)` from broadcast state; if not yet present, skip rather than emit with a missing segment (§6).
+1. **Cost side** (`payment-events.v1`): upsert the incoming `PaymentLine` into `MapState<event_id, PaymentLine>` by `event_id` (never sum — ADR-0003). "Current billing period" = whichever `billing_period_end` is latest among this apartment's known entries (data-driven, not wall-clock — §6). Group that period's lines by `cost_type` (ADR-0009): `fixed`/`variable` summed then divided by `available_days` (§14) → `fixed_cost_eur`/`variable_cost_eur`; `one_time` lines averaged, not summed → `one_time_cost_eur` (each is already the cost of one turnover). Look up `(segment, target_margin, competitiveness_discount, commission_pct)` from broadcast state; if not yet present, skip rather than emit with a missing segment (§6).
 2. **Broadcast side** (`apartment_market_segments`): update `BroadcastState<apartment_id, (segment, target_margin, competitiveness_discount)>`.
 3. Emits a `CostAggregate` downstream on every cost-side update.
 
@@ -187,12 +187,30 @@ Every `price_decision.v1` also carries `data_age_seconds` (ADR-0007), computed i
 
 ---
 
-## 8. Pricing formula (ADR-0007's three-way rule)
+## 8. Pricing formula (ADR-0007's three-way rule over ADR-0009's floor)
 
-Computed at every fan-out emission in Stage B (§3):
+Computed at every fan-out emission in Stage B (§3). The floor itself (`minimum_price_eur`) is now division-based, includes commissions, and depends on how far out the night is — replacing the original multiplicative formula, which was the same "common error" a stakeholder profitability review flagged (multiplying understates the real margin on the final price; dividing is the only form where the configured margin actually holds).
 
 ```
-minimum_price_eur         = daily_cost_eur * (1 + target_margin)
+n = 1   # ADR-0009 D5: no per-stay-length model yet — see docs/post-poc-roadmap.md
+days_to_arrival = target_date - decided_at.date()
+
+if days_to_arrival > 30:
+    floor_type = "structural_full_margin"
+    M = target_margin
+elif days_to_arrival >= 15:
+    floor_type = "structural_reduced_margin"
+    M = target_margin * 0.75
+else:
+    floor_type = "contribution"          # 7-14d and 0-3d share this formula
+
+if floor_type == "contribution":
+    # Cf excluded: a fixed cost (IBI, comunidad...) is sunk whether or not
+    # this booking happens, so it can't be "saved" by turning one down.
+    minimum_price_eur = (n * variable_cost_eur + one_time_cost_eur) / (1 - commission_pct)
+else:
+    minimum_price_eur = (n * fixed_cost_eur + n * variable_cost_eur + one_time_cost_eur) / (1 - M - commission_pct)
+
 market_reference_price_eur = avg_nightly_rate_eur * (1 - competitiveness_discount)
 
 if minimum_price_eur <= market_reference_price_eur:
@@ -206,32 +224,29 @@ else:
     suggested_price_eur = minimum_price_eur
 
 below_market_by = avg_nightly_rate_eur - suggested_price_eur   # always computed, can be negative
-effective_margin = (suggested_price_eur / daily_cost_eur) - 1
+total_cost_eur = n * fixed_cost_eur + n * variable_cost_eur + one_time_cost_eur
+effective_margin = (suggested_price_eur / total_cost_eur) - 1
 ```
 
-### Worked example — one segment, two apartments, two nights
+`fixed_cost_eur`/`variable_cost_eur`/`one_time_cost_eur` come from Stage A's `cost_type`-grouped aggregation (§3). `commission_pct` (`Cp`, default `0.15`) travels alongside `target_margin`/`competitiveness_discount` in the same broadcast state (C.2's pattern).
 
-Segment: Barcelona/Eixample/studio. `target_margin = 0.05`, `competitiveness_discount = 0.05` for both apartments (C.2 defaults).
+### Antelación tiers (ADR-0009)
 
-Starting state — Hoja 1: `apt-A` (cost 100.0), `apt-B` (cost 140.0). Hoja 2: `2026-08-10` (rate 90.0), `2026-08-20` (rate 150.0).
+| `days_to_arrival` | `floor_type` | Margin term |
+|---|---|---|
+| `> 30` | `structural_full_margin` | full `target_margin` |
+| `15–30` | `structural_reduced_margin` | `target_margin × 0.75` |
+| `< 15` | `contribution` | none — break-even by construction |
 
-A market update for `2026-08-10` (rate unchanged at 90.0) fans out across **both** apartments:
+### Worked examples — one per `rule_applied`, all at `days_to_arrival = 45` (`structural_full_margin`)
 
-| Apartment | `minimum_price_eur` | `market_reference_price_eur` (90 × 0.95) | Comparison | `rule_applied` | `suggested_price_eur` | `below_market_by` |
-|---|---|---|---|---|---|---|
-| apt-A (cost 100) | 105.0 | 85.5 | 105.0 > 90.0 | **`cost_protected`** | 105.0 | **−15.0** |
-| apt-B (cost 140) | 147.0 | 85.5 | 147.0 > 90.0 | **`cost_protected`** | 147.0 | **−57.0** |
+Match `specs/contracts/fixtures/price_decision/`'s three fixtures exactly.
 
-A cost update for `apt-A` (new invoice → cost 140.0) fans out across **both** known nights:
-
-| Night | `avg_nightly_rate_eur` | `minimum_price_eur` (140 × 1.05) | `market_reference_price_eur` | Comparison | `rule_applied` | `suggested_price_eur` | `below_market_by` |
-|---|---|---|---|---|---|---|---|
-| 2026-08-10 | 90.0 | 147.0 | 85.5 | `147.0 > 90.0` | **`cost_protected`** | 147.0 | −57.0 |
-| 2026-08-20 | 150.0 | 147.0 | 142.5 | `142.5 < 147.0 <= 150.0` | **`minimum_floor`** | 147.0 | 3.0 |
-
-The second row matches `specs/contracts/fixtures/price_decision/valid_minimum_floor.json` exactly. For `market_competitive`: if instead `daily_cost_eur = 80.0` for `apt-A` against the `2026-08-20` night, `minimum_price_eur = 84.0 <= 142.5` → `rule_applied = "market_competitive"`, `suggested_price_eur = 142.5`, `below_market_by = 7.5`.
-
-These three branches match `specs/contracts/fixtures/price_decision/`'s three fixtures exactly — same formula, different numbers.
+| Case | `Cf` / `Cv` / `Cr` | `M` / `Cp` | `minimum_price_eur` | `avg_nightly_rate_eur` (`discount`) | `market_reference_price_eur` | `rule_applied` | `suggested_price_eur` | `below_market_by` |
+|---|---|---|---|---|---|---|---|---|
+| `market_competitive` | 8.0 / 5.67 / 0.0 | 0.20 / 0.15 | 21.03 | 120.5 (0.05) | 114.47 | **`market_competitive`** | 114.47 | 6.03 |
+| `minimum_floor` | 70.0 / 38.0 / 10.0 | 0.05 / 0.15 | 147.5 | 150.0 (0.05) | 142.5 | **`minimum_floor`** | 147.5 | 2.5 |
+| `cost_protected` | 60.0 / 30.0 / 10.0 | 0.05 / 0.15 | 125.0 | 90.0 (0.05) | 85.5 | **`cost_protected`** | 125.0 | −35.0 |
 
 ---
 
@@ -314,7 +329,7 @@ aws --endpoint-url=http://localhost:4566 --region eu-west-1 dynamodb scan --tabl
 
 ## 12. Acceptance criteria
 
-- **AC-01 — Cost aggregation is upsert, never a sum.** Two `payment_line` events with the same `event_id`, different `amount_gross` (an UPDATE) → the apartment's `daily_cost_eur` reflects only the latest value, not the sum.
+- **AC-01 — Cost aggregation is upsert, never a sum.** Two `payment_line` events with the same `event_id`, different `amount_gross` (an UPDATE) → the apartment's `fixed_cost_eur`/`variable_cost_eur`/`one_time_cost_eur` reflect only the latest value, not the sum.
 - **AC-02 — Segment/margin enrichment resolves before fan-out.** Once `apartment_market_segments` has delivered an apartment's assignment, a cost event for it emits a `CostAggregate` with the correct `segment`/`target_margin`/`competitiveness_discount` — verified against seed data.
 - **AC-03 — Cost-triggered fan-out.** N known nights in Hoja 2, a cost update for an apartment in that segment → exactly N `price_decision.v1` events, one per night, each with the *new* cost.
 - **AC-04 — Market-triggered fan-out.** M known apartments in Hoja 1, a market update for one night in that segment → exactly M `price_decision.v1` events, one per apartment, each with that night's *new* market snapshot.
@@ -341,7 +356,8 @@ PyFlink jobs are notoriously hard to unit-test — this project's standing instr
 
 ## 14. Known limitations
 
-- **`available_days` is a simplification, not a modeled reality.** `daily_cost_eur = total_monthly_cost_eur / available_days`, where `available_days` is the plain calendar length of the billing period — this project has no occupancy/blocking/maintenance-calendar system anywhere, so "available" can't mean more than "every day in the period." Never resolved by any earlier phase; made explicit here rather than silently assumed. The one line to change if a future phase adds real availability tracking.
+- **`available_days` is a simplification, not a modeled reality.** `fixed_cost_eur`/`variable_cost_eur` are each `sum(cost_type lines) / available_days`, where `available_days` is the plain calendar length of the billing period — this project has no occupancy/blocking/maintenance-calendar system anywhere, so "available" can't mean more than "every day in the period." Never resolved by any earlier phase; made explicit here rather than silently assumed. The one line to change if a future phase adds real availability tracking.
+- **Stay length (`n`) and per-channel pricing are deferred post-PoC** (ADR-0009 D5/D6, `docs/post-poc-roadmap.md`) — `n` is fixed at `1` and `commission_pct` is a single blended value per apartment, not per channel.
 - **"Current billing period" is derived, not configured** — whichever `billing_period_end` is latest among an apartment's known cost lines (§3), with no wall-clock dependency. Worth revisiting once real invoicing cadences are considered (a very-late invoice for an old period probably shouldn't silently become "current").
 - **No automated integration harness spinning up the full stack** — matches Phases 2–3's precedent; see §13 for what *is* tested.
 - **Stage A's broadcast-not-yet-arrived race** (§6) is accepted as a narrow startup condition, not solved with buffering/reconciliation.

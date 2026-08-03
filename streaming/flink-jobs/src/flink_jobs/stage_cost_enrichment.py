@@ -53,7 +53,9 @@ class CostEnrichmentFunction(KeyedBroadcastProcessFunction):
             neighborhood=assignment.neighborhood,
             property_type=assignment.property_type,
             bedrooms=assignment.bedrooms,
-            daily_cost_eur=aggregation.daily_cost_eur,
+            fixed_cost_eur=aggregation.fixed_cost_eur,
+            variable_cost_eur=aggregation.variable_cost_eur,
+            one_time_cost_eur=aggregation.one_time_cost_eur,
             total_monthly_cost_eur=aggregation.total_monthly_cost_eur,
             available_days=aggregation.available_days,
             cost_lines_count=aggregation.cost_lines_count,
@@ -61,6 +63,7 @@ class CostEnrichmentFunction(KeyedBroadcastProcessFunction):
             billing_period_end=aggregation.billing_period_end,
             target_margin=assignment.target_margin,
             competitiveness_discount=assignment.competitiveness_discount,
+            commission_pct=assignment.commission_pct,
             updated_at=datetime.now(UTC),
         )
 
