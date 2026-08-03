@@ -12,7 +12,9 @@
     },
     "total_monthly_cost_eur": 410.0,
     "available_days": 30,
-    "daily_cost_eur": 13.67,
+    "fixed_cost_eur": 8.0,
+    "variable_cost_eur": 5.67,
+    "one_time_cost_eur": 0.0,
     "cost_lines_count": 6
   },
   "market_inputs": {
@@ -25,15 +27,18 @@
   },
   "calculation": {
     "target_margin": 0.2,
-    "minimum_price_eur": 16.4,
+    "minimum_price_eur": 21.03,
+    "floor_type": "structural_full_margin",
+    "commission_pct": 0.15,
+    "days_to_arrival": 45,
     "competitiveness_discount": 0.05,
-    "market_reference_price_eur": 114.475,
+    "market_reference_price_eur": 114.47,
     "rule_applied": "market_competitive"
   },
   "output": {
-    "suggested_price_eur": 114.475,
+    "suggested_price_eur": 114.47,
     "currency": "EUR",
-    "effective_margin": 7.376,
-    "below_market_by": 6.025
+    "effective_margin": 7.3742,
+    "below_market_by": 6.03
   }
 }

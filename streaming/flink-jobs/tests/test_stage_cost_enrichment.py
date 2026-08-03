@@ -55,7 +55,7 @@ def test_emits_cost_aggregate_after_segment_arrives():
 
     fn.process_broadcast_element(
         ApartmentSegmentRow(
-            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05
+            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05, 0.15
         ),
         broadcast_ctx,
     )
@@ -69,7 +69,9 @@ def test_emits_cost_aggregate_after_segment_arrives():
     aggregate = results[0]
     assert aggregate.apartment_id == "BCN-001"
     assert aggregate.city == "Barcelona"
-    assert aggregate.daily_cost_eur == round(100.0 / 30, 2)
+    assert aggregate.variable_cost_eur == round(100.0 / 30, 2)
+    assert aggregate.fixed_cost_eur == 0.0
+    assert aggregate.commission_pct == 0.15
 
 
 def test_upsert_by_event_id_does_not_double_count():
@@ -77,7 +79,7 @@ def test_upsert_by_event_id_does_not_double_count():
     read_ctx = FakeReadOnlyContext(broadcast_state)
     fn.process_broadcast_element(
         ApartmentSegmentRow(
-            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05
+            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05, 0.15
         ),
         FakeBroadcastContext(broadcast_state),
     )

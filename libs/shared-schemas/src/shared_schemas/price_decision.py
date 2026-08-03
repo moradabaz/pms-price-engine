@@ -20,7 +20,9 @@ class CostInputs(BaseModel):
     billing_period: BillingPeriod
     total_monthly_cost_eur: float = Field(ge=0)
     available_days: int = Field(ge=1)
-    daily_cost_eur: float = Field(ge=0)
+    fixed_cost_eur: float = Field(ge=0)
+    variable_cost_eur: float = Field(ge=0)
+    one_time_cost_eur: float = Field(ge=0)
     cost_lines_count: int | None = Field(default=None, ge=0)
 
 
@@ -40,6 +42,11 @@ class Calculation(BaseModel):
 
     target_margin: float = Field(ge=0)
     minimum_price_eur: float = Field(ge=0)
+    floor_type: Literal[
+        "structural_full_margin", "structural_reduced_margin", "contribution"
+    ]
+    commission_pct: float = Field(ge=0, le=1)
+    days_to_arrival: int
     competitiveness_discount: float = Field(ge=0, le=1)
     market_reference_price_eur: float = Field(ge=0)
     rule_applied: Literal["market_competitive", "minimum_floor", "cost_protected"]

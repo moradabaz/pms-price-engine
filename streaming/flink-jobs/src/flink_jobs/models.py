@@ -12,6 +12,7 @@ class SegmentAssignment:
     bedrooms: int
     target_margin: float
     competitiveness_discount: float
+    commission_pct: float
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class ApartmentSegmentRow:
     bedrooms: int
     target_margin: float
     competitiveness_discount: float
+    commission_pct: float
 
     def to_assignment(self) -> SegmentAssignment:
         """Drops apartment_id (used as the map key, not stored in the value)."""
@@ -35,6 +37,7 @@ class ApartmentSegmentRow:
             bedrooms=self.bedrooms,
             target_margin=self.target_margin,
             competitiveness_discount=self.competitiveness_discount,
+            commission_pct=self.commission_pct,
         )
 
 
@@ -48,7 +51,9 @@ class CostAggregate:
     neighborhood: str
     property_type: str
     bedrooms: int
-    daily_cost_eur: float
+    fixed_cost_eur: float
+    variable_cost_eur: float
+    one_time_cost_eur: float
     total_monthly_cost_eur: float
     available_days: int
     cost_lines_count: int
@@ -56,6 +61,7 @@ class CostAggregate:
     billing_period_end: date
     target_margin: float
     competitiveness_discount: float
+    commission_pct: float
     updated_at: datetime
 
     @property

@@ -29,9 +29,19 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     competitiveness_discount NUMERIC(5,4) NOT NULL DEFAULT 0.05
                                   CHECK (competitiveness_discount >= 0
                                          AND competitiveness_discount <= 1),
+    commission_pct        NUMERIC(5,4) NOT NULL DEFAULT 0.15
+                                  CHECK (commission_pct >= 0 AND commission_pct <= 1),
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ
 );
+
+ALTER TABLE public.apartment_market_segments
+    ADD COLUMN IF NOT EXISTS commission_pct NUMERIC(5,4) NOT NULL DEFAULT 0.15;
+ALTER TABLE public.apartment_market_segments
+    DROP CONSTRAINT IF EXISTS apartment_market_segments_commission_pct_check;
+ALTER TABLE public.apartment_market_segments
+    ADD CONSTRAINT apartment_market_segments_commission_pct_check
+        CHECK (commission_pct >= 0 AND commission_pct <= 1);
 
 CREATE INDEX IF NOT EXISTS idx_apartment_market_segments_segment
     ON public.apartment_market_segments (city, neighborhood, property_type, bedrooms);
