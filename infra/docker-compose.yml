@@ -190,9 +190,16 @@ services:
   # ---------------------------------------------------------------------------
   # LocalStack — emulates AWS services locally (Kinesis, S3, DynamoDB)
   #
-  #   Kinesis  → market-price-events stream
-  #   S3       → Iceberg cold path (pricing history)
-  #   DynamoDB → hot path (current recommended price per apartment)
+  #   Kinesis          → market-price-events stream
+  #   S3               → pms-iceberg (Flink checkpoints) + pms-lakehouse (Iceberg warehouse, spec 05)
+  #   DynamoDB         → hot path (current recommended price per apartment) + stream_checkpoints
+  #   DynamoDB Streams  → CDC source for lakehouse-consumer (spec 05 §5, ADR-0006)
+  #
+  # No `glue` here — confirmed 2026-08-04, AWS Glue is Ultimate-tier only in
+  # LocalStack, 501s on every call in Community. lakehouse-consumer/
+  # lakehouse-maintenance use PyIceberg's SqlCatalog locally instead (spec 05
+  # §10, pre-spec Decision C corrected) — real Glue Data Catalog is a Phase 7
+  # (real AWS) promotion, not testable against this LocalStack tier at all.
   #
   # Single endpoint: http://localhost:4566
   # Credentials:     AWS_ACCESS_KEY_ID=test / AWS_SECRET_ACCESS_KEY=test
@@ -201,7 +208,7 @@ services:
     image: localstack/localstack:3.4
     container_name: pms_localstack
     environment:
-      SERVICES: kinesis,s3,dynamodb
+      SERVICES: kinesis,s3,dynamodb,dynamodbstreams
       AWS_DEFAULT_REGION: eu-west-1
       KINESIS_PROVIDER: kinesalite
       PERSISTENCE: 1
@@ -260,6 +267,60 @@ services:
       AWS_SECRET_ACCESS_KEY: test
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Lakehouse consumer — DynamoDB Streams CDC into Iceberg (Phase 5, ADR-0006).
+  # Reads price_decision's own change stream (never the table directly),
+  # merges by decision_id into price_decision_raw. Never writes to pms-iceberg
+  # (Flink's checkpoint bucket) — separate bucket, separate lifecycle.
+  #
+  # Iceberg catalog: PyIceberg SqlCatalog (SQLite on lakehouse_catalog,
+  # shared with lakehouse-maintenance) — confirmed 2026-08-04, AWS Glue Data
+  # Catalog is Ultimate-tier only in LocalStack, unavailable in Community.
+  # Phase 7 promotes to a real Glue Data Catalog (code change, not just
+  # endpoint/credentials — see build_catalog()'s docstring).
+  # ---------------------------------------------------------------------------
+  lakehouse-consumer:
+    build:
+      context: ..
+      dockerfile: services/lakehouse-consumer/Dockerfile
+    container_name: pms_lakehouse_consumer
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      LAKEHOUSE_CONSUMER_DYNAMODB_ENDPOINT_URL: http://localstack:4566
+      LAKEHOUSE_CONSUMER_S3_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - lakehouse_catalog:/data/catalog
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Lakehouse maintenance — scheduled PyIceberg-native-equivalent compaction
+  # (manual scan()+overwrite() — see error-handling/pyiceberg-native-
+  # compaction-unavailable-under-shared-lockfile-pyarrow-pin.md) on
+  # price_decision_raw. Separate from the consumer on purpose (spec 05 §6,
+  # pre-spec Decision D) — writing and maintaining are different
+  # responsibilities, no Glue Job/Spark.
+  # ---------------------------------------------------------------------------
+  lakehouse-maintenance:
+    build:
+      context: ..
+      dockerfile: services/lakehouse-maintenance/Dockerfile
+    container_name: pms_lakehouse_maintenance
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      LAKEHOUSE_MAINTENANCE_S3_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - lakehouse_catalog:/data/catalog
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   localstack_data:
+  lakehouse_catalog:

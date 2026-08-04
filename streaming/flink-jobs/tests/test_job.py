@@ -14,9 +14,7 @@ _BASE_ROW = {
 
 
 def test_parses_commission_pct_when_present():
-    row = _parse_apartment_segment_row(
-        json.dumps({**_BASE_ROW, "commission_pct": 0.2})
-    )
+    row = _parse_apartment_segment_row(json.dumps({**_BASE_ROW, "commission_pct": 0.2}))
     assert row.commission_pct == 0.2
 
 
