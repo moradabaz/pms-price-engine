@@ -160,13 +160,21 @@ for shard in shards:
 
 ## 6. Table maintenance (compaction)
 
-A separate scheduled process, `lakehouse-maintenance` — not code inside the consumer (pre-spec Decision D: writing and maintaining are different responsibilities). On an interval (proposed: hourly, coarser than the consumer's own near-real-time writes since compaction is a batch-shaped operation):
+A separate scheduled process, `lakehouse-maintenance` — not code inside the consumer (pre-spec Decision D: writing and maintaining are different responsibilities). On an interval (confirmed: hourly, coarser than the consumer's own near-real-time writes since compaction is a batch-shaped operation).
 
-```
+**Revised 2026-08-04, verified live against the actually-installed dependency, not assumed:** the pre-spec's Decision D claimed PyIceberg 0.7+ ships `rewrite_data_files()`/`expire_snapshots()` as table methods. That's not true for the version this project can actually run — `pyiceberg>=0.9` requires `pyarrow>=17`, which conflicts with `flink-jobs`' `apache-beam` pin (`pyarrow<17`) under this workspace's single lockfile (Phase 0 decision). Inspecting the installed `pyiceberg==0.8.1` source directly confirmed neither method exists in this version at all — not under a different name, not as a CLI action.
+
+**Resolution (confirmed 2026-08-04): stay on `pyiceberg==0.8.1` (single lockfile intact), implement compaction as a manual full-table rewrite using APIs that do exist in 0.8.1:**
+
+```python
 table = catalog.load_table("pms_lakehouse.price_decision_raw")
-table.rewrite_data_files()   # PyIceberg-native, no Spark
-table.expire_snapshots(older_than=now() - timedelta(days=7))
+full_data = table.scan().to_arrow()
+table.overwrite(full_data, overwrite_filter=ALWAYS_TRUE)  # delete-all + re-append in one commit
 ```
+
+`overwrite()` with `ALWAYS_TRUE` deletes every existing data file and re-appends the same rows as freshly-batched Parquet files in a single commit — same net effect AC-06 asks for (identical row count/content, fewer files) without Spark, a second lockfile, or a newer PyIceberg. Simpler than real bin-packing (always rewrites the whole table, not just small files) — acceptable at this PoC's volume (hundreds to low thousands of rows), revisit if/when table size makes a full rewrite too slow for an hourly tick.
+
+**`expire_snapshots` has no equivalent in 0.8.1 and is out of scope for this phase** (§13) — not silently dropped, deferred because it isn't correctness-critical (old snapshots don't corrupt anything, they just retain S3 storage the compaction step's own overwrite already leaves behind as orphaned files). Revisit if `pms-lakehouse`'s storage growth is ever actually observed to be a problem, or when the workspace can move past the `pyarrow<17` ceiling.
 
 No Glue Job — rejected for this PoC (pre-spec Decision D) because Glue Jobs aren't in LocalStack Community and would reintroduce a Spark/JVM dependency this project has consistently avoided (same reasoning Phase 4 already used to reject Table API in Flink).
 
@@ -237,8 +245,23 @@ transform/
 | Partitioning | `days(decided_at)` | Matches the actual query axis (time), low cardinality, leaves room to add `city` later via partition evolution without rewriting (pre-spec Decision B) |
 | Consumer checkpoint table | DynamoDB, `stream_checkpoints`, PK `shard_id` | Same shape as a Kafka consumer group's offsets, hand-rolled because no mature Python KCL exists for DynamoDB Streams |
 | Compaction interval | Hourly | Batch-shaped maintenance, coarser than the consumer's near-real-time writes |
-| dbt run interval | Same cadence family as `market-ingestor`'s tick (proposed: every 5 minutes) | Frequent enough to keep marts fresh without running dbt on every single Iceberg write |
+| dbt run interval | 15 minutes | Confirmed 2026-08-04. The dashboard's *current-price* view reads DynamoDB directly (hot path per README) — marts only serve history/margin-alerts, which don't need minute-level freshness. 15 min cuts Glue/S3 API calls ~3x versus the originally proposed 5 min (12x/day → non-trivial under Phase 7's real AWS cost guardrails) while leaving comfortable margin before a slow run risks overlapping the next tick. The tick loop must be "run, then sleep the remainder of the interval," not a fixed sleep, so a run that overruns 15 min doesn't stack. |
 | dbt engine | `dbt-duckdb` | Embedded OLAP engine, native Iceberg read support, zero extra infrastructure (pre-spec Decision H) |
+
+### 10.1 IAM permissions (design intent — not enforced by LocalStack today)
+
+LocalStack Community doesn't enforce IAM, so none of this is testable locally — it's written now so Phase 7's real AWS promotion has a spec to implement against instead of improvising credentials at deploy time. Least privilege, one role per service, no wildcard resources:
+
+| Service | Needs | On |
+|---|---|---|
+| `lakehouse-consumer` | `dynamodb:DescribeTable`, `dynamodb:DescribeStream`, `dynamodb:GetShardIterator`, `dynamodb:GetRecords`, `dynamodb:ListStreams` | `price_decision` table + its stream ARN |
+| `lakehouse-consumer` | `dynamodb:GetItem`, `dynamodb:PutItem` | `stream_checkpoints` table |
+| `lakehouse-consumer` | `glue:GetDatabase`, `glue:GetTable`, `glue:CreateTable`, `glue:UpdateTable` | `pms_lakehouse` Glue database |
+| `lakehouse-consumer` | `s3:PutObject`, `s3:GetObject`, `s3:ListBucket` | `pms-lakehouse` bucket only (never `pms-iceberg`, Flink's checkpoint bucket) |
+| `lakehouse-maintenance` | `glue:GetTable`, `glue:UpdateTable`; `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` | `pms_lakehouse.price_decision_raw`, `pms-lakehouse` bucket (delete needed — `rewrite_data_files`/`expire_snapshots` remove superseded files) |
+| `dbt-runner` | `glue:GetDatabase`, `glue:GetTable` (read-only); `s3:GetObject`, `s3:ListBucket` | `pms_lakehouse` database, `pms-lakehouse` bucket — no write access, dbt never writes back to the raw table |
+
+**Known Phase 7 open question, not resolved here:** DynamoDB Streams API actions don't support fine-grained resource ARNs as cleanly as the base table API in all cases — confirm against real AWS IAM policy simulator before assuming the table above is sufficient, don't assume LocalStack's permissiveness generalizes.
 
 ---
 
@@ -272,6 +295,7 @@ Same pyramid Phase 4 established (spec §13):
 
 - **LocalStack never exercises multi-shard DynamoDB Streams behavior** (§2, pre-spec Decision F) — the consumer's shard-splitting/parent-child logic is unit-tested against synthetic data only; real verification is a Phase 7 (AWS) concern.
 - **DynamoDB Streams retains 24h of data** (ADR-0006's own closing note) — a consumer outage longer than that permanently loses those changes from the stream. Not solved here; a candidate for its own `error-handling/` write-up if actually observed.
+- **`pyiceberg` pinned to `0.8.1`, not the latest release** (§6, confirmed 2026-08-04) — `pyiceberg>=0.9` needs `pyarrow>=17`, which conflicts with `flink-jobs`' `apache-beam` pin (`pyarrow<17`) under this workspace's single lockfile. `expire_snapshots` has no equivalent in 0.8.1, so old snapshots/manifests accumulate in `pms-lakehouse` indefinitely — not correctness-critical, revisit if storage growth is actually observed or when `flink-jobs` can tolerate a newer `pyarrow`.
 - **`dim_market_segment` and a `rule_applied`/`floor_type` junk dimension are folded into other tables for now** (§2, §8) — a deliberate scope cut, not an oversight, revisited if a future consumer of the marts needs them as first-class conformed dimensions.
 - **No production-grade orchestrator** — the local tick container is a PoC stand-in for CodeBuild + EventBridge Scheduler (§9), which is Phase 7's job to actually stand up.
 
