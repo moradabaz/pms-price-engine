@@ -5,6 +5,7 @@ members = [
     "services/kinesis-kafka-bridge",
     "services/lakehouse-consumer",
     "services/lakehouse-maintenance",
+    "services/dbt-runner",
     "streaming/flink-jobs",
     "dashboard",
     "libs/shared-schemas",

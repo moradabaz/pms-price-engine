@@ -1,0 +1,29 @@
+# Not ~/.dbt/profiles.yml on purpose — kept in-repo, invoked with
+# `--profiles-dir .` (dbt-runner's Dockerfile/main.py), so the whole project
+# is reproducible without per-machine setup.
+pms_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', '/data/dbt/pms_lakehouse.duckdb') }}"
+      extensions:
+        - httpfs
+        - iceberg
+      # Live-verified 2026-08-04: iceberg_scan() against a table cataloged by
+      # PyIceberg's SqlCatalog (not a Hadoop-catalog with a version-hint.txt)
+      # has no version pointer file for DuckDB to find on its own — hence
+      # unsafe_enable_version_guessing. "unsafe" here means "globs the
+      # metadata/ directory for the latest snapshot instead of trusting a
+      # single hint file" — fine for this single-writer, PoC-scale table
+      # (the consumer is the only writer, spec 05 §5); revisit if Phase 7's
+      # real Glue Data Catalog makes this unnecessary (Glue tracks the
+      # current pointer itself, same as this setting is standing in for).
+      settings:
+        s3_endpoint: "{{ env_var('DBT_S3_ENDPOINT', 'localhost:4566') }}"
+        s3_url_style: "path"
+        s3_use_ssl: "false"
+        s3_access_key_id: "{{ env_var('AWS_ACCESS_KEY_ID', 'test') }}"
+        s3_secret_access_key: "{{ env_var('AWS_SECRET_ACCESS_KEY', 'test') }}"
+        s3_region: "{{ env_var('AWS_REGION', 'eu-west-1') }}"
+        unsafe_enable_version_guessing: "true"

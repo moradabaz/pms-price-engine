@@ -1,0 +1,30 @@
+name: "pms_lakehouse"
+version: "1.0.0"
+config-version: 2
+profile: "pms_lakehouse"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+# Staging is a passthrough view over iceberg_scan() (spec 05 §7) — every
+# query re-reads S3, cheap at this PoC's volume. Marts are tables in the
+# local DuckDB file so the dashboard (Phase 6) doesn't need to touch
+# Iceberg/S3 on every read.
+models:
+  pms_lakehouse:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table
+
+seeds:
+  pms_lakehouse:
+    seasonality:
+      +column_types:
+        month: integer
+        season_label: varchar
+        multiplier: double

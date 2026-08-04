@@ -189,22 +189,26 @@ transform/
   seeds/
     seasonality.csv          # month → season_label → multiplier, MUST mirror
                               # services/market-ingestor/src/market_ingestor/seasonality.py
-                              # exactly (AC-09) — same "kept in sync by hand, flagged in both
+                              # exactly (AC-08) — same "kept in sync by hand, flagged in both
                               # places" pattern as apartment_market_segments.sql/migrations.py
   models/
     staging/
+      _sources.yml                 # declares price_decision_raw as a dbt source (via
+                                    # external_location: iceberg_scan(...), spec §10), with a
+                                    # freshness check against ingested_at
       stg_price_decision.sql       # 1:1 cleanup of the Iceberg source, no business logic
     intermediate/
       int_latest_decision_per_night.sql   # last known decision per (apartment, target_date, day)
     marts/
+      _marts.yml                   # not_null/relationships/accepted_values tests (AC-07, AC-09)
       dim_apartment.sql
       dim_date.sql
       fct_price_decision.sql
       fct_daily_price.sql
       fct_margin_alert.sql
-  sources.yml                # declares price_decision_raw as a dbt source, with a
-                              # freshness check (§8) against ingested_at
 ```
+
+**Corrected 2026-08-05:** the source declaration lives at `models/staging/_sources.yml`, not a bare `sources.yml` at the project root as originally drawn — dbt only parses YAML inside its configured `model-paths` (`models/`), so a root-level file would never be picked up. Same convention as declaring a source next to the staging model that reads it.
 
 `seasonality.csv` content (mirrors `seasonality.py`'s `_HIGH_SEASON_MONTHS`/`_SHOULDER_SEASON_MONTHS` exactly):
 
@@ -220,19 +224,21 @@ transform/
 
 | Table | Grain | Kimball type | Source |
 |---|---|---|---|
-| `dim_apartment` | 1 row per apartment | Dimension (SCD1) | Latest `apartment_id`/`apartment_reference`/`city`/`neighborhood`/`property_type`/`bedrooms` seen in the raw history |
+| `dim_apartment` | 1 row per apartment | Dimension (SCD1) | Latest `apartment_id`/`apartment_reference`/`city`/`neighborhood` seen in the raw history, parsed from `market_area` (`"City/Neighborhood"`, `stage_price_decision.py`) — **no `property_type`/`bedrooms`, confirmed 2026-08-05: neither field ever reaches `price_decision.v1`** (only `apartment_market_segments` in Postgres has them, and that's not a dbt source per §4). Known limitation, §13. |
 | `dim_date` | 1 row per calendar day | Conformed dimension | Calendar attributes + `seasonality.csv` join — day/month/quarter/year/day_of_week/is_weekend/season_label |
 | `fct_price_decision` | 1 row per decision emitted | Transaction fact | Straight from `stg_price_decision` — same grain as the source, the audit trail `price_decision.v1` itself promises |
 | `fct_daily_price` | 1 row per (apartment, target_date, day) | Periodic snapshot fact | From `int_latest_decision_per_night` — the "last known decision as of this day," what a price-evolution chart actually plots |
 | `fct_margin_alert` | 1 row per decision where `rule_applied = 'cost_protected'` | Factless / accumulating fact | Filter on `fct_price_decision` — the README's own "margin alerts" model |
 
-`dim_market_segment` and a `rule_applied`/`floor_type` junk dimension are explicitly out of scope for this version (§2) — `city`/`neighborhood`/`property_type`/`bedrooms` live directly on `dim_apartment`, `rule_applied`/`floor_type` live directly on the facts.
+`dim_market_segment` and a `rule_applied`/`floor_type` junk dimension are explicitly out of scope for this version (§2) — `city`/`neighborhood` live directly on `dim_apartment`, `rule_applied`/`floor_type` live directly on the facts.
 
 ---
 
 ## 9. Orchestration
 
-**Local/PoC: a tick container**, same shape as `market-ingestor` — a small Python loop calling `dbt run` then `dbt test` on an interval, inside `infra/docker-compose.yml`. No new infrastructure, actually runs and gets verified against the real local stack.
+**Local/PoC: a tick container** (`services/dbt-runner`), same shape as `market-ingestor` — a small Python loop calling `dbt seed`, `dbt run`, then `dbt test` on an interval, inside `infra/docker-compose.yml`. No new infrastructure, actually runs and gets verified against the real local stack.
+
+**Confirmed 2026-08-05: `dbt` is invoked as an external CLI (`subprocess.run(["dbt", ...])`), not dbt-core's Python API.** No `dbt-core` version is compatible with both this workspace's `mypy` pin and `flink-jobs`' `apache-beam` pin under the single shared lockfile (Phase 0) — see [`error-handling/dbt-core-incompatible-with-shared-lockfile-mypy-and-flink-pins.md`](../../../error-handling/dbt-core-incompatible-with-shared-lockfile-mypy-and-flink-pins.md). `dbt-core`/`dbt-duckdb` live in a separate venv baked into `services/dbt-runner`'s Docker image, outside `uv sync`'s resolution entirely.
 
 **Not built this phase, explicitly noted as the production path (pre-spec Decision J):** AWS CodeBuild triggered by EventBridge Scheduler. Rejected for now because CodeBuild's native trigger is a code change, not a cron, and because it's a real AWS service not meaningfully testable against LocalStack Community — same category of deferral as Glue Jobs (§6). Revisit in Phase 7 alongside the real AWS demo deployment.
 
@@ -242,7 +248,7 @@ transform/
 
 | Setting | Value | Why |
 |---|---|---|
-| Iceberg catalog | AWS Glue Data Catalog (`pms_lakehouse` database), via LocalStack locally | Same service used in real AWS — promotion to Phase 7 is a credentials/endpoint change, not a rewrite (pre-spec Decision C) |
+| Iceberg catalog | PyIceberg `SqlCatalog` (SQLite) locally (`pms_lakehouse` database) | **Corrected 2026-08-04:** AWS Glue Data Catalog is Ultimate-tier only in LocalStack, 501s on every call in Community — not available at all, not just Glue Jobs as originally assumed (pre-spec Decision C). `dbt-duckdb` reads the same tables directly via `iceberg_scan()` with `unsafe_enable_version_guessing` (SqlCatalog has no version-hint file for DuckDB to find on its own — live-verified 2026-08-05, see `transform/profiles.yml`). Promotion to Phase 7 real AWS now requires an actual code change (`GlueCatalog`), not just an endpoint/credential swap. |
 | Iceberg warehouse bucket | `pms-lakehouse` (new, separate from Flink's `pms-iceberg` checkpoint bucket) | Different lifecycles — checkpoints are disposable, the lakehouse is the permanent record (pre-spec Decision E) |
 | Partitioning | `days(decided_at)` | Matches the actual query axis (time), low cardinality, leaves room to add `city` later via partition evolution without rewriting (pre-spec Decision B) |
 | Consumer checkpoint table | DynamoDB, `stream_checkpoints`, PK `shard_id` | Same shape as a Kafka consumer group's offsets, hand-rolled because no mature Python KCL exists for DynamoDB Streams |
@@ -300,6 +306,10 @@ Same pyramid Phase 4 established (spec §13):
 - **`pyiceberg` pinned to `0.8.1`, not the latest release** (§6, confirmed 2026-08-04) — `pyiceberg>=0.9` needs `pyarrow>=17`, which conflicts with `flink-jobs`' `apache-beam` pin (`pyarrow<17`) under this workspace's single lockfile. `expire_snapshots` has no equivalent in 0.8.1, so old snapshots/manifests accumulate in `pms-lakehouse` indefinitely — not correctness-critical, revisit if storage growth is actually observed or when `flink-jobs` can tolerate a newer `pyarrow`.
 - **`dim_market_segment` and a `rule_applied`/`floor_type` junk dimension are folded into other tables for now** (§2, §8) — a deliberate scope cut, not an oversight, revisited if a future consumer of the marts needs them as first-class conformed dimensions.
 - **No production-grade orchestrator** — the local tick container is a PoC stand-in for CodeBuild + EventBridge Scheduler (§9), which is Phase 7's job to actually stand up.
+- **`dim_apartment` has no `property_type`/`bedrooms`** (§8, confirmed 2026-08-05) — `price_decision.v1`'s `market_area` field is only `"City/Neighborhood"` (`stage_price_decision.py`); property type and bedroom count live in `apartment_market_segments` (Postgres), which is not a dbt source in this phase (§4 lists only `price_decision_raw`). Would need either Phase 4 forwarding those fields into `price_decision.v1`, or a second dbt source in a future phase.
+- **AWS Glue Data Catalog is Ultimate-tier only in LocalStack** (§10, confirmed 2026-08-04) — not available in Community at all. Local/PoC uses PyIceberg's `SqlCatalog` instead for both the consumer/maintenance services and `dbt-duckdb`'s `iceberg_scan()` (with `unsafe_enable_version_guessing`, since SqlCatalog has no version-hint file). Phase 7's promotion to real `GlueCatalog` is a real code change, not just an endpoint swap.
+- **`dbt-core` is not a resolved dependency of this workspace** (§9, confirmed 2026-08-05) — no version satisfies both this workspace's `mypy` pin and `flink-jobs`' `apache-beam` pin simultaneously. `dbt`/`dbt-duckdb` live in a separate venv inside `services/dbt-runner`'s Docker image and are invoked as an external CLI; a local `uv run mypy` never sees dbt-core's own types (irrelevant here — nothing in this project imports dbt's Python API).
+- **`dbt source freshness`'s "fires when actually stale" behavior confirmed by mechanism, not by observing a real stale transition** (AC-10) — live-verified that the freshness check runs and correctly reports "fresh" against real `ingested_at` timestamps; forcing the warn/error thresholds to actually trip would need the consumer stopped for 20+ real minutes, not exercised in this session.
 
 ---
 
