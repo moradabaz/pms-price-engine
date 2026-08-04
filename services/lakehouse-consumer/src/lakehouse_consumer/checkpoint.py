@@ -4,9 +4,7 @@ from typing import Any
 def get_checkpoint(client: Any, table_name: str, shard_id: str) -> str | None:
     """Reads the last successfully processed sequence_number for a shard.
     Returns None if this shard has never been checkpointed."""
-    resp = client.get_item(
-        TableName=table_name, Key={"shard_id": {"S": shard_id}}
-    )
+    resp = client.get_item(TableName=table_name, Key={"shard_id": {"S": shard_id}})
     item = resp.get("Item")
     return item["sequence_number"]["S"] if item else None
 

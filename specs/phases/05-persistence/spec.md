@@ -169,7 +169,9 @@ A separate scheduled process, `lakehouse-maintenance` — not code inside the co
 ```python
 table = catalog.load_table("pms_lakehouse.price_decision_raw")
 full_data = table.scan().to_arrow()
-table.overwrite(full_data, overwrite_filter=ALWAYS_TRUE)  # delete-all + re-append in one commit
+table.overwrite(
+    full_data, overwrite_filter=ALWAYS_TRUE
+)  # delete-all + re-append in one commit
 ```
 
 `overwrite()` with `ALWAYS_TRUE` deletes every existing data file and re-appends the same rows as freshly-batched Parquet files in a single commit — same net effect AC-06 asks for (identical row count/content, fewer files) without Spark, a second lockfile, or a newer PyIceberg. Simpler than real bin-packing (always rewrites the whole table, not just small files) — acceptable at this PoC's volume (hundreds to low thousands of rows), revisit if/when table size makes a full rewrite too slow for an hourly tick.
