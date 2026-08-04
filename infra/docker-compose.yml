@@ -320,7 +320,36 @@ services:
       - lakehouse_catalog:/data/catalog
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # dbt runner — transforms price_decision_raw (Iceberg) into the Kimball
+  # marts Phase 6 reads (spec 05 §7-9). Tick container, same shape as
+  # market-ingestor/lakehouse-maintenance: dbt seed+run+test on an interval,
+  # not triggered by writes. dbt-core/dbt-duckdb live in their own venv
+  # inside the image (Dockerfile) — see error-handling/dbt-core-
+  # incompatible-with-shared-lockfile-mypy-and-flink-pins.md.
+  # ---------------------------------------------------------------------------
+  dbt-runner:
+    build:
+      context: ..
+      dockerfile: services/dbt-runner/Dockerfile
+    container_name: pms_dbt_runner
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      # DuckDB's s3_endpoint setting wants host:port, no scheme — unlike the
+      # http://localstack:4566 boto3 endpoint_url used by the other services.
+      DBT_S3_ENDPOINT: localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: eu-west-1
+      DBT_DUCKDB_PATH: /data/dbt/pms_lakehouse.duckdb
+    volumes:
+      - dbt_warehouse:/data/dbt
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   localstack_data:
+  dbt_warehouse:
   lakehouse_catalog:

@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  - name: lakehouse
+    description: >
+      Iceberg tables populated by services/lakehouse-consumer's DynamoDB
+      Streams CDC (spec 05 §5, ADR-0006). Read directly via DuckDB's
+      iceberg_scan() — dbt-duckdb's `external_location` mechanism (live-
+      verified 2026-08-04, see transform/profiles.yml) — never through
+      DynamoDB or the Streams API.
+    tables:
+      - name: price_decision_raw
+        description: >
+          Append-only mirror of every price_decision change, merged by
+          decision_id (spec 05 §4). One row per decision currently on
+          record — not a transaction log with duplicates.
+        meta:
+          external_location: "iceberg_scan('s3://pms-lakehouse/warehouse/price_decision_raw')"
+        loaded_at_field: ingested_at
+        freshness:
+          # A stale raw table means the consumer stopped, not that dbt is
+          # broken (spec 05 §8 — same "watchdog concept, repeated in the
+          # transformation layer" as Flink's data_stale side output).
+          # Thresholds sized around the consumer's near-real-time writes
+          # and this project's 15-minute dbt tick (spec 05 §10).
+          warn_after: { count: 20, period: minute }
+          error_after: { count: 60, period: minute }

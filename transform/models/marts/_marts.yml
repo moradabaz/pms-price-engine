@@ -1,0 +1,68 @@
+version: 2
+
+models:
+  - name: dim_apartment
+    description: 1 row per apartment (SCD1).
+    columns:
+      - name: apartment_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_date
+    description: Conformed calendar dimension.
+    columns:
+      - name: date_day
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_price_decision
+    description: 1 row per decision emitted (transaction fact).
+    columns:
+      - name: decision_id
+        tests:
+          - unique
+          - not_null
+      - name: apartment_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_apartment')
+              field: apartment_id
+      - name: target_date
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_day
+
+  - name: fct_daily_price
+    description: 1 row per (apartment, target_date, day) — last known decision that day.
+    columns:
+      - name: apartment_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_apartment')
+              field: apartment_id
+      - name: target_date
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_day
+      - name: decision_id
+        tests:
+          - not_null
+
+  - name: fct_margin_alert
+    description: 1 row per decision where rule_applied = cost_protected (AC-09).
+    columns:
+      - name: decision_id
+        tests:
+          - not_null
+      - name: rule_applied
+        tests:
+          - accepted_values:
+              values: ["cost_protected"]

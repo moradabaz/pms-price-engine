@@ -1,0 +1,13 @@
+month,season_label,multiplier
+1,baja,0.85
+2,baja,0.85
+3,baja,0.85
+4,baja,0.85
+5,media,1.05
+6,media,1.05
+7,alta,1.30
+8,alta,1.30
+9,media,1.05
+10,media,1.05
+11,baja,0.85
+12,baja,0.85
