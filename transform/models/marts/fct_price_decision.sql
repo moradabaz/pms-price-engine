@@ -27,5 +27,9 @@ select
     suggested_price_eur,
     currency,
     effective_margin,
-    below_market_by
+    below_market_by,
+
+    -- used by the dashboard's freshness indicator
+    dynamodb_event_name,
+    ingested_at
 from {{ ref('stg_price_decision') }}
