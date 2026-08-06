@@ -1,4 +1,4 @@
-# Incident: adding a table to an already-running connector's `table.include.list` never snapshots its existing rows
+3# Incident: adding a table to an already-running connector's `table.include.list` never snapshots its existing rows
 
 **Phase:** 4 (Flink processing) — discovered while wiring `apartment_market_segments` into Debezium
 **Component:** `infra/debezium/postgres-connector.json`

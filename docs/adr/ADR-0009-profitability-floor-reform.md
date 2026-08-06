@@ -54,3 +54,41 @@ contribution_floor = ((n×Cv) + Cr) / (1 - Cp)          # no Cf: it's sunk regar
 - `price_decision.v1.json`: `daily_cost_eur` → `Cf`/`Cv`/`Cr`; `calculation` gana `commission_pct`, `floor_type`, `days_to_arrival`. Sin bump de `schema_version` (Fase 4 aún sin consumidor real, igual que ADR-0007).
 - `spec.md` §8 y los fixtures de `price_decision` se reescriben una vez aceptado esto.
 - Fuera de alcance, explícito: estancia real multi-noche y precio por canal — necesitan datos que no existen hoy en ninguna fase.
+
+
+❯ Prepara el pre-spec de decisiones, en ingles. Debe ser sencillo, con pocas palabras, etendible y conciso
+
+En cuanto a iceberg:
+- debemos incluir tests
+- Debemos discutir las columnas o tamaños de partición
+- Debemos discutir donde y en que bucket residirá la información
+- ¿Por que Iceberg y no parquet?
+
+Para dbt, yo estoy mas verde y necesito entender:
+- Como va a ser el pipeline de transformación
+- Quien va a ejecutra las transformaciones. Estaba pensando en un codebuild
+- Aplicar principio de Data modeling de Kimball. Ofreceme varios tipos de tablas de dimensión y hecho y los discutimos
+
+Discute mis preguntas y propuesto desde 5 different assesors
+  - The contrarian 
+  - Pensador de Principios Basicos y fundamentos
+  - Expansionista
+  - Outsider
+  - Executor
+
+1. Iceberg vs. Parquet — la pregunta raíz primero
+
+- Lo haremos por iceberg, utilizaremos decided_at como columna de partición pero necesito mas informacion acerca de añadir la city o el segmento.
+Podemos usar un glue job o pyIceberg que el consumidor lo autocompacte. ¿Podemos explorar las opciones?
+- En cuanto al catalog, quizás sea intersante usar El Glue data Catalog, tal y como dice el expansionista
+
+
+Ahora, con DBT:
+
+- No conozco DuckDB, pero sería interesante de aprenderlo
+- Para el tema de las ejecuciones, te dejo a a ti que leas al consejo y decidas
+
+Para el modelo de datos:
+ - dim_apartment
+ - dim_date
+ - las 3 fact tables

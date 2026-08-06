@@ -348,6 +348,32 @@ services:
       - dbt_warehouse:/data/dbt
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Dashboard — Streamlit, read-only over both paths (spec 06). Hot path:
+  # DynamoDB Query per apartment (never Scan). Cold path: the same DuckDB
+  # file dbt-runner writes, mounted read-only here.
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ..
+      dockerfile: dashboard/Dockerfile
+    container_name: pms_dashboard
+    depends_on:
+      localstack:
+        condition: service_healthy
+      dbt-runner:
+        condition: service_started
+    environment:
+      DASHBOARD_DYNAMODB_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: eu-west-1
+    ports:
+      - "8501:8501"
+    volumes:
+      - dbt_warehouse:/data/dbt:ro
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   localstack_data:
