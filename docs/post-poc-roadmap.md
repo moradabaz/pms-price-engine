@@ -6,6 +6,8 @@ Two items from the stakeholders' profitability model are **explicitly deferred u
 
 **2026-08-30 update:** a much richer external spec ("Profitable Dynamic Pricing Engine") confirmed items 1 and 2 below independently, and surfaced several more concepts with no equivalent in this repo today. ADR-0011 adopts that spec as the target design; §3 below is the full backlog it produced, §4 is a learning note to read before starting on it, and §5 sketches the LOS-aware floor increment (now **Phase 9** — Property Bonus/Malus was picked up first as **Phase 8**, [`specs/phases/08-property-bonus-malus/spec.md`](../specs/phases/08-property-bonus-malus/spec.md), since this repo numbers phases by actual implementation order, not by backlog tier).
 
+**Progress:** backlog #6 (Property Bonus/Malus, Phase 8), #1 (LOS floor matrix, Phase 9), and #4 (Decision Components, [Phase 10](../specs/phases/10-decision-components/spec.md)) are implemented, unit-tested, and live-verified against LocalStack. #5/#7/#9 — all three named by ADR-0011 as blocked on #4's `decision_components` container existing — are now unblocked.
+
 ## 1. Real stay-length pricing (`n` beyond the fixed `1`)
 
 Price a whole candidate stay (several consecutive nights), not one isolated night — so a one-time cost (`Cr`, e.g. cleaning) amortizes correctly across the stay.
@@ -34,12 +36,12 @@ Every concept from the external spec, mapped to what it would extend or replace 
 
 | # | Concept | Current-repo anchor | Tier | Change type |
 |---|---|---|---|---|
-| 1 | LOS / Stay Candidate + floor matrix | `STAY_LENGTH_NIGHTS = 1` in `pricing.py` — this file's item 1 | **Now** | Structural (DynamoDB PK) |
+| 1 | LOS / Stay Candidate + floor matrix | `STAY_LENGTH_NIGHTS = 1` in `pricing.py` — this file's item 1 | **Done** — [Phase 9](../specs/phases/09-los-floor-matrix/spec.md) | Structural (embedded matrix inside the existing decision — no DynamoDB PK change needed, see Phase 9 pre-spec §A) |
 | 2 | Per-channel pricing/commission | Flat `commission_pct`; `market_price.v1.market_context.platform` (always `null`) — this file's item 2 | **Now/Next** | Additive (commission column, `platform` wiring) + structural (fan-out) |
 | 3 | Read `concept` (13 values, incl. `ota_fee`) in cost aggregation | `PaymentLine.concept`, ignored by `cost_aggregation.py` today | **Next** | Additive — zero upstream schema change |
-| 4 | Decision Components / structured reason codes | `rule_applied`/`floor_type` (closed enums), no list field anywhere in `PriceDecision` | **Next** (prerequisite for #5, #7, #9) | Structural — every `PriceDecision` sub-model is `extra="forbid"`, no existing array to extend |
-| 5 | Owner contract / configurable commission base (Total Revenue vs. Revenue−OTA vs. …) | No anchor — no owner/contract entity exists | **Later** | Structural (net-new entity) |
-| 6 | Property Bonus/Malus + Property Reference Price | `market-ingestor/segments.py`'s fixed per-segment multiplier (0.7/1.0/1.45) — not per apartment | **Now** (spec written — [Phase 8](../specs/phases/08-property-bonus-malus/spec.md)) | Structural at the source (mock-app needs new attribute columns), additive in Flink once the data exists |
+| 4 | Decision Components / structured reason codes | `rule_applied`/`floor_type` (closed enums), no list field anywhere in `PriceDecision` | **Done** — [Phase 10](../specs/phases/10-decision-components/spec.md) | Structural — new `decision_components` list on `Calculation`/`LosFloorCandidate`, following Phase 9's list-field precedent |
+| 5 | Owner contract / configurable commission base (Total Revenue vs. Revenue−OTA vs. …) | No anchor — no owner/contract entity exists | **Later → in progress** | Structural (net-new entity) |
+| 6 | Property Bonus/Malus + Property Reference Price | `market-ingestor/segments.py`'s fixed per-segment multiplier (0.7/1.0/1.45) — not per apartment | **Done** — [Phase 8](../specs/phases/08-property-bonus-malus/spec.md) | Structural at the source (mock-app needs new attribute columns), additive in Flink once the data exists |
 | 7 | Layered Revenue Management engine (structural/market/performance/booking-window/inventory/commercial/guardrails) | ADR-0009 D4's antelación tier table — the only existing analog, and only for one layer | **Later** | Structural — rewrite of `pricing.py`'s single if/elif chain into a composable pipeline; the point at which the formulas move into `libs/pricing-formulas` (§6) if that extraction hasn't happened already |
 | 8 | Channel gross-up economics | No anchor; depends on #2 | **Later** | Additive once #2 exists |
 | 9 | Manual Override + audit trail | No anchor — the pipeline is read-only downstream of Flink | **Later** | Structural (new write path) |
