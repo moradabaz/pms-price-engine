@@ -12,6 +12,11 @@ FloorType = Literal[
     "structural_full_margin", "structural_reduced_margin", "contribution"
 ]
 RuleApplied = Literal["market_competitive", "minimum_floor", "cost_protected"]
+# Phase 11 (ADR-0011 backlog #5): which revenue base commission_pct is
+# charged against.
+CommissionBase = Literal[
+    "total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"
+]
 
 # Phase 10 (ADR-0011 backlog #4): closed reason-code vocabulary shared by
 # Calculation.decision_components and LosFloorCandidate.decision_components.
@@ -23,6 +28,9 @@ ReasonCode = Literal[
     "rule_market_competitive",
     "rule_minimum_floor",
     "rule_cost_protected",
+    # Phase 11 (ADR-0011 backlog #5): only on Calculation.decision_components,
+    # never on LosFloorCandidate.decision_components (spec 11 §F/AC-06).
+    "commission_base_netting",
 ]
 
 
@@ -94,6 +102,7 @@ class Calculation(BaseModel):
     minimum_price_eur: float = Field(ge=0)
     floor_type: FloorType
     commission_pct: float = Field(ge=0, le=1)
+    commission_base: CommissionBase
     days_to_arrival: int
     competitiveness_discount: float = Field(ge=0, le=1)
     property_attribute_factor: float = Field(ge=0)

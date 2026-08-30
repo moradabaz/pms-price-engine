@@ -34,6 +34,7 @@ def _sample_new_image(decision_id: str, suggested_price_eur: float) -> dict:
             "minimum_price_eur": 129.27,
             "floor_type": "structural_full_margin",
             "commission_pct": 0.15,
+            "commission_base": "total_revenue",
             "days_to_arrival": 28,
             "competitiveness_discount": 0.1,
             "property_attribute_factor": 1.0,

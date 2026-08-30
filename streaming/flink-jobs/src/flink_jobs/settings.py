@@ -7,6 +7,8 @@ class FlinkJobSettings(BaseSettings):
     kafka_bootstrap_servers: str
     payment_events_topic: str = "payment-events.v1"
     apartment_segments_topic: str = "apartment-market-segments.v1"
+    # Phase 11 (ADR-0011 backlog #5).
+    owner_contracts_topic: str = "owner-contracts.v1"
     kafka_consumer_group_id: str = "flink-price-engine"
 
     # Read via Kafka, not Kinesis directly — no Kinesis connector runs on

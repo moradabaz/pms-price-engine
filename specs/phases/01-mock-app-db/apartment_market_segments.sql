@@ -56,14 +56,6 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     competitiveness_discount NUMERIC(5,4) NOT NULL DEFAULT 0.05
                                   CHECK (competitiveness_discount >= 0 AND competitiveness_discount <= 1),
 
-    -- ADR-0009 (D2): blended OTA + payment-processing commission, in the
-    -- profitability floor's denominator (it scales with the final price, so
-    -- it can't be pre-computed as a fixed euro cost the way Cf/Cv/Cr are).
-    -- 0.15 (15%) is the confirmed default; per-apartment override is already
-    -- supported by this being a real column, same pattern as target_margin.
-    commission_pct       NUMERIC(5,4) NOT NULL DEFAULT 0.15
-                                  CHECK (commission_pct >= 0 AND commission_pct <= 1),
-
     -- Phase 8 (docs/adr/ADR-0011, backlog #6): raw Property Bonus/Malus
     -- attributes. Flink resolves these into a single property_attribute_factor
     -- on CostAggregate (flink_jobs/property_attributes.py) — this table stores
@@ -79,20 +71,21 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     updated_at           TIMESTAMPTZ
 );
 
--- ADR-0009: this table predates commission_pct — ADD COLUMN IF NOT EXISTS so a
--- volume from before this column existed still picks it up (CREATE TABLE IF
--- NOT EXISTS above is a no-op once the table already exists, same concern this
--- file's header already documents for re-running against an existing volume).
-ALTER TABLE public.apartment_market_segments
-    ADD COLUMN IF NOT EXISTS commission_pct NUMERIC(5,4) NOT NULL DEFAULT 0.15;
+-- Phase 11 (docs/adr/ADR-0011, backlog #5): commission_pct moves to
+-- owner_contracts.commission_pct (owner_contracts.sql) — a real removal, not
+-- another additive column, since keeping the same number in two tables would
+-- be the kind of dual-source-of-truth drift this project's SOLID/DRY
+-- guidance rules out. Drops the constraint first (DROP COLUMN cascades it
+-- anyway, but explicit is safer against a constraint left orphaned by a
+-- partial prior run).
 ALTER TABLE public.apartment_market_segments
     DROP CONSTRAINT IF EXISTS apartment_market_segments_commission_pct_check;
 ALTER TABLE public.apartment_market_segments
-    ADD CONSTRAINT apartment_market_segments_commission_pct_check
-        CHECK (commission_pct >= 0 AND commission_pct <= 1);
+    DROP COLUMN IF EXISTS commission_pct;
 
--- Phase 8: same ADD COLUMN IF NOT EXISTS pattern as commission_pct above, so
--- a volume from before this phase still picks up sane defaults.
+-- Phase 8: ADD COLUMN IF NOT EXISTS so a volume from before this phase still
+-- picks up sane defaults (same idempotent-migration convention this file's
+-- header already documents).
 ALTER TABLE public.apartment_market_segments
     ADD COLUMN IF NOT EXISTS quality_tier TEXT NOT NULL DEFAULT 'standard';
 ALTER TABLE public.apartment_market_segments

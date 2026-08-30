@@ -29,8 +29,6 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     competitiveness_discount NUMERIC(5,4) NOT NULL DEFAULT 0.05
                                   CHECK (competitiveness_discount >= 0
                                          AND competitiveness_discount <= 1),
-    commission_pct        NUMERIC(5,4) NOT NULL DEFAULT 0.15
-                                  CHECK (commission_pct >= 0 AND commission_pct <= 1),
     quality_tier         TEXT NOT NULL DEFAULT 'standard'
                                   CHECK (quality_tier IN
                                       ('basic', 'standard', 'premium', 'luxury')),
@@ -42,13 +40,16 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     updated_at           TIMESTAMPTZ
 );
 
-ALTER TABLE public.apartment_market_segments
-    ADD COLUMN IF NOT EXISTS commission_pct NUMERIC(5,4) NOT NULL DEFAULT 0.15;
+-- Phase 11 (docs/adr/ADR-0011, backlog #5): commission_pct moves to
+-- owner_contracts.commission_pct — a real removal, not another additive
+-- column, since this project's SOLID/DRY guidance rules out two sources of
+-- truth for the same number. Drops the constraint first (DROP COLUMN would
+-- cascade-drop it anyway, but explicit is safer against a constraint left
+-- orphaned by a partial prior run).
 ALTER TABLE public.apartment_market_segments
     DROP CONSTRAINT IF EXISTS apartment_market_segments_commission_pct_check;
 ALTER TABLE public.apartment_market_segments
-    ADD CONSTRAINT apartment_market_segments_commission_pct_check
-        CHECK (commission_pct >= 0 AND commission_pct <= 1);
+    DROP COLUMN IF EXISTS commission_pct;
 
 ALTER TABLE public.apartment_market_segments
     ADD COLUMN IF NOT EXISTS quality_tier TEXT NOT NULL DEFAULT 'standard';
@@ -104,4 +105,76 @@ END $$;
 def ensure_apartment_market_segments_schema(conn: Any) -> None:
     with conn.cursor() as cur:
         cur.execute(_ENSURE_APARTMENT_MARKET_SEGMENTS_SQL)
+    conn.commit()
+
+
+# Phase 11 (ADR-0011 backlog #5): byte-identical (schema-wise) to
+# specs/phases/01-mock-app-db/owners.sql — same "kept in sync by hand,
+# runs unconditionally at every startup" convention as
+# _ENSURE_APARTMENT_MARKET_SEGMENTS_SQL above. Not CDC-captured (nothing
+# downstream needs owner_name) — plain Postgres dimension only.
+_ENSURE_OWNERS_SQL = """
+CREATE TABLE IF NOT EXISTS public.owners (
+    owner_id    TEXT PRIMARY KEY,
+    owner_name  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
+
+def ensure_owners_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_OWNERS_SQL)
+    conn.commit()
+
+
+# Phase 11: byte-identical (schema-wise) to
+# specs/phases/01-mock-app-db/owner_contracts.sql. Reuses the existing
+# dbz_publication/connector (spec 11 pre-spec §B) — no new connector, slot,
+# or publication, one more captured table on the one already there.
+_ENSURE_OWNER_CONTRACTS_SQL = """
+CREATE TABLE IF NOT EXISTS public.owner_contracts (
+    apartment_id     TEXT PRIMARY KEY
+                          REFERENCES public.apartment_market_segments(apartment_id),
+    owner_id         TEXT NOT NULL REFERENCES public.owners(owner_id),
+    commission_base  TEXT NOT NULL DEFAULT 'total_revenue'
+                          CHECK (commission_base IN
+                              ('total_revenue', 'revenue_minus_ota',
+                               'revenue_minus_ota_minus_cleaning')),
+    commission_pct   NUMERIC(5,4) NOT NULL DEFAULT 0.15
+                          CHECK (commission_pct >= 0 AND commission_pct <= 1),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ
+);
+
+CREATE OR REPLACE FUNCTION public.set_owner_contract_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_owner_contracts_updated_at
+    BEFORE UPDATE ON public.owner_contracts
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_owner_contract_updated_at();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'dbz_publication'
+          AND schemaname = 'public'
+          AND tablename = 'owner_contracts'
+    ) THEN
+        ALTER PUBLICATION dbz_publication ADD TABLE public.owner_contracts;
+    END IF;
+END $$;
+"""
+
+
+def ensure_owner_contracts_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_OWNER_CONTRACTS_SQL)
     conn.commit()

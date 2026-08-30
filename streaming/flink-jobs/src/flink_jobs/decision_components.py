@@ -11,15 +11,18 @@ PropertyReasonCode = Literal[
 RuleReasonCode = Literal[
     "rule_market_competitive", "rule_minimum_floor", "rule_cost_protected"
 ]
-ReasonCode = PropertyReasonCode | RuleReasonCode
+# Phase 11 (ADR-0011 backlog #5, spec 11 §4): emitted only when a
+# non-total_revenue commission_base nets a non-zero amount.
+CommissionReasonCode = Literal["commission_base_netting"]
+ReasonCode = PropertyReasonCode | RuleReasonCode | CommissionReasonCode
 
 
 @dataclass(frozen=True)
 class DecisionComponent:
     """One structured reason code explaining part of a pricing decision.
     impact's unit is contextual to code's family: a signed adjustment
-    fraction for property_* codes, a signed EUR gap for rule_* codes
-    (spec 10 §3)."""
+    fraction for property_* codes, a signed EUR gap for rule_*/commission_*
+    codes (spec 10 §3, spec 11 §4)."""
 
     code: ReasonCode
     label: str

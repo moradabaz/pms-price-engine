@@ -1,8 +1,10 @@
 from flink_jobs.decision_components import DecisionComponent
 from flink_jobs.pricing import (
     LOS_CANDIDATES,
+    commission_base_netting_component,
     decide_price,
     decide_price_los_matrix,
+    netted_commission_amount,
     rule_decision_component,
 )
 
@@ -405,3 +407,163 @@ def test_decide_price_los_matrix_candidates_carry_only_their_own_rule_component(
     for candidate in matrix:
         assert len(candidate.decision_components) == 1
         assert candidate.decision_components[0].code == f"rule_{candidate.rule_applied}"
+
+
+def test_netted_commission_amount_per_base():
+    assert netted_commission_amount("total_revenue", 45.0, 25.0) == 0.0
+    assert netted_commission_amount("revenue_minus_ota", 45.0, 25.0) == 45.0
+    assert (
+        netted_commission_amount("revenue_minus_ota_minus_cleaning", 45.0, 25.0)
+        == 70.0
+    )
+
+
+def test_commission_base_netting_component_absent_when_net_is_zero():
+    # AC-05: no component at total_revenue, nor for a netting base whose
+    # underlying amount happens to be zero this period (no noise for no
+    # information gain, spec 11 §F).
+    assert commission_base_netting_component("total_revenue", 0.15, 0.0) is None
+    assert (
+        commission_base_netting_component("revenue_minus_ota", 0.15, 0.0) is None
+    )
+
+
+def test_commission_base_netting_component_present_when_net_is_positive():
+    component = commission_base_netting_component("revenue_minus_ota", 0.15, 45.0)
+    assert component is not None
+    assert component.code == "commission_base_netting"
+    assert component.impact == -6.75
+
+
+def test_decide_price_commission_base_netting_reduces_the_floor():
+    # AC-03: worked example (spec 11 §4) — Cf=20 (incl. channel_manager=15),
+    # Cv=100 (incl. ota_fee=30, cleaning=25), margin=0.05, commission=0.15.
+    common = dict(
+        fixed_cost_eur=20.0,
+        variable_cost_eur=100.0,
+        one_time_cost_eur=0.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=1000.0,  # floor always wins
+        competitiveness_discount=0.0,
+        days_to_arrival=45,
+    )
+    total_revenue = decide_price(commission_netting_eur=0.0, **common)
+    revenue_minus_ota = decide_price(commission_netting_eur=6.75, **common)
+    revenue_minus_ota_minus_cleaning = decide_price(
+        commission_netting_eur=10.50, **common
+    )
+
+    assert total_revenue.minimum_price_eur == 150.0
+    assert revenue_minus_ota.minimum_price_eur == 141.56
+    assert revenue_minus_ota_minus_cleaning.minimum_price_eur == 136.88
+    # Narrower base -> lower floor, all else equal (sign-correctness check).
+    assert (
+        total_revenue.minimum_price_eur
+        > revenue_minus_ota.minimum_price_eur
+        > revenue_minus_ota_minus_cleaning.minimum_price_eur
+    )
+
+
+def test_decide_price_commission_netting_applies_to_all_three_floor_tiers():
+    # AC-04: the same netting term appears in structural_full_margin,
+    # structural_reduced_margin, and contribution alike.
+    common = dict(
+        fixed_cost_eur=20.0,
+        variable_cost_eur=100.0,
+        one_time_cost_eur=0.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=1000.0,
+        competitiveness_discount=0.0,
+    )
+    for days_to_arrival, floor_type in (
+        (45, "structural_full_margin"),
+        (20, "structural_reduced_margin"),
+        (5, "contribution"),
+    ):
+        without_netting = decide_price(
+            days_to_arrival=days_to_arrival, commission_netting_eur=0.0, **common
+        )
+        with_netting = decide_price(
+            days_to_arrival=days_to_arrival, commission_netting_eur=6.75, **common
+        )
+        assert without_netting.floor_type == floor_type
+        assert with_netting.minimum_price_eur < without_netting.minimum_price_eur
+
+
+def test_decide_price_default_commission_netting_is_a_pure_regression():
+    # AC-02: commission_netting_eur=0.0 (the default) reproduces every
+    # pre-Phase-11 worked example unchanged.
+    common = dict(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=120.5,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert decide_price(**common) == decide_price(commission_netting_eur=0.0, **common)
+
+
+def test_decide_price_commission_component_appended_after_property_and_before_rule():
+    property_components = [
+        DecisionComponent(code="property_quality_tier", label="x", impact=0.0),
+    ]
+    commission_component = commission_base_netting_component(
+        "revenue_minus_ota", 0.15, 45.0
+    )
+    result = decide_price(
+        fixed_cost_eur=20.0,
+        variable_cost_eur=100.0,
+        one_time_cost_eur=0.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=1000.0,
+        competitiveness_discount=0.0,
+        days_to_arrival=45,
+        commission_netting_eur=6.75,
+        property_decision_components=property_components,
+        commission_decision_components=[commission_component],
+    )
+    assert [c.code for c in result.decision_components] == [
+        "property_quality_tier",
+        "commission_base_netting",
+        "rule_market_competitive",
+    ]
+
+
+def test_decide_price_los_matrix_never_carries_commission_component():
+    # AC-06: commission_netting_eur applies to every candidate's price, but
+    # commission_base_netting is never duplicated per candidate — only the
+    # top-level calculation carries it (spec 11 §F, mirrors Phase 10's own
+    # property-component suppression).
+    without_netting = decide_price_los_matrix(
+        fixed_cost_eur=20.0,
+        variable_cost_eur=100.0,
+        one_time_cost_eur=0.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=1000.0,
+        competitiveness_discount=0.0,
+        days_to_arrival=45,
+        commission_netting_eur=0.0,
+    )
+    with_netting = decide_price_los_matrix(
+        fixed_cost_eur=20.0,
+        variable_cost_eur=100.0,
+        one_time_cost_eur=0.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=1000.0,
+        competitiveness_discount=0.0,
+        days_to_arrival=45,
+        commission_netting_eur=6.75,
+    )
+    for candidate in with_netting:
+        assert len(candidate.decision_components) == 1
+        assert candidate.decision_components[0].code == f"rule_{candidate.rule_applied}"
+    for baseline, netted in zip(without_netting, with_netting, strict=True):
+        assert netted.minimum_price_eur < baseline.minimum_price_eur

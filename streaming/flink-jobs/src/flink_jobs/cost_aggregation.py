@@ -4,6 +4,13 @@ from datetime import date
 
 from shared_schemas.payment_line import PaymentLine
 
+# Phase 11 (ADR-0011 backlog #5, spec 11 §4): the minimal slice of backlog
+# #3 (reading PaymentLine.concept) a netted commission base needs — not a
+# general 13-concept breakdown, just enough to net "OTA-related" and
+# "cleaning" amounts out of the commission base in pricing.py.
+OTA_RELATED_CONCEPTS = frozenset({"ota_fee", "channel_manager"})
+CLEANING_CONCEPTS = frozenset({"cleaning"})
+
 
 def retained_billing_period_ends(
     period_ends: Iterable[date], keep: int = 2
@@ -23,6 +30,8 @@ class CostAggregationResult:
     fixed_cost_eur: float
     variable_cost_eur: float
     one_time_cost_eur: float
+    ota_related_cost_eur: float
+    cleaning_cost_eur: float
 
 
 def aggregate_cost(
@@ -66,6 +75,24 @@ def aggregate_cost(
         else 0.0
     )
 
+    # Phase 11 (ADR-0011 backlog #5): both amounts are already fully counted
+    # inside fixed_cost_eur/variable_cost_eur above (ota_fee/cleaning are
+    # cost_type=variable, channel_manager is cost_type=fixed in mock-pm-app's
+    # synthetic data) — these are additional breakdowns for pricing.py's
+    # commission-base netting, not new costs.
+    ota_related_total = sum(
+        line.amount_gross for line in matching if line.concept in OTA_RELATED_CONCEPTS
+    )
+    cleaning_total = sum(
+        line.amount_gross for line in matching if line.concept in CLEANING_CONCEPTS
+    )
+    ota_related_cost_eur = (
+        round(ota_related_total / available_days, 2) if available_days > 0 else 0.0
+    )
+    cleaning_cost_eur = (
+        round(cleaning_total / available_days, 2) if available_days > 0 else 0.0
+    )
+
     return CostAggregationResult(
         billing_period_start=period_start,
         billing_period_end=current_end,
@@ -75,4 +102,6 @@ def aggregate_cost(
         fixed_cost_eur=fixed_cost_eur,
         variable_cost_eur=variable_cost_eur,
         one_time_cost_eur=one_time_cost_eur,
+        ota_related_cost_eur=ota_related_cost_eur,
+        cleaning_cost_eur=cleaning_cost_eur,
     )

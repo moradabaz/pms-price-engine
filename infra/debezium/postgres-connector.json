@@ -10,7 +10,7 @@
     "database.dbname": "pms_db",
 
     "topic.prefix": "pms",
-    "table.include.list": "public.payment_lines,public.apartment_market_segments",
+    "table.include.list": "public.payment_lines,public.apartment_market_segments,public.owner_contracts",
 
     "slot.name": "debezium_payment_lines",
     "plugin.name": "pgoutput",
@@ -27,7 +27,7 @@
     "dates.type": "com.pms.debezium.DateStringConverter",
     "dates.format.date": "yyyy-MM-dd",
 
-    "transforms": "unwrap,routePayments,routeSegments",
+    "transforms": "unwrap,routePayments,routeSegments,routeOwnerContracts",
     "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
     "transforms.unwrap.drop.tombstones": "true",
     "transforms.unwrap.delete.handling.mode": "drop",
@@ -37,6 +37,9 @@
     "transforms.routeSegments.type": "org.apache.kafka.connect.transforms.RegexRouter",
     "transforms.routeSegments.regex": "pms\\.public\\.apartment_market_segments",
     "transforms.routeSegments.replacement": "apartment-market-segments.v1",
+    "transforms.routeOwnerContracts.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeOwnerContracts.regex": "pms\\.public\\.owner_contracts",
+    "transforms.routeOwnerContracts.replacement": "owner-contracts.v1",
 
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",
     "key.converter.schemas.enable": "false",

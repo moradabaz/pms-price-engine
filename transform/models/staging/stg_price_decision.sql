@@ -29,6 +29,7 @@ select
     calculation.minimum_price_eur,
     calculation.floor_type,
     calculation.commission_pct,
+    calculation.commission_base,
     calculation.days_to_arrival,
     calculation.competitiveness_discount,
     calculation.property_attribute_factor,

@@ -56,7 +56,7 @@ def test_emits_cost_aggregate_after_segment_arrives():
 
     fn.process_broadcast_element(
         ApartmentSegmentRow(
-            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05, 0.15
+            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05
         ),
         broadcast_ctx,
     )
@@ -72,7 +72,13 @@ def test_emits_cost_aggregate_after_segment_arrives():
     assert aggregate.city == "Barcelona"
     assert aggregate.variable_cost_eur == round(100.0 / 30, 2)
     assert aggregate.fixed_cost_eur == 0.0
+    # Phase 11 (ADR-0011 backlog #5): Stage A no longer resolves
+    # commission_pct at all — SegmentAssignment doesn't carry it any more.
+    # This CostAggregate hasn't reached Stage A2 yet, so it still carries
+    # CostAggregate's own pre-Stage-A2 default (spec 11 §3), not a resolved
+    # value.
     assert aggregate.commission_pct == 0.15
+    assert aggregate.commission_base == "total_revenue"
     # Default attributes (standard/4.0/no view/no parking) -> neutral factor.
     assert aggregate.property_attribute_factor == 1.0
 
@@ -89,7 +95,6 @@ def test_property_attribute_factor_resolved_from_broadcast_attributes():
             0,
             0.05,
             0.05,
-            0.15,
             quality_tier="luxury",
             rating=4.8,
             has_view=True,
@@ -121,7 +126,6 @@ def test_property_decision_components_resolved_from_broadcast_attributes():
             0,
             0.05,
             0.05,
-            0.15,
             quality_tier="luxury",
             rating=4.8,
             has_view=True,
@@ -141,12 +145,48 @@ def test_property_decision_components_resolved_from_broadcast_attributes():
     assert list(results[0].property_decision_components) == expected
 
 
+def test_ota_related_and_cleaning_sub_totals_pass_through_from_aggregation():
+    # Phase 11 (ADR-0011 backlog #5): Stage A passes cost_aggregation.py's
+    # new sub-totals onto CostAggregate unchanged.
+    fn, broadcast_state = _make_function()
+    read_ctx = FakeReadOnlyContext(broadcast_state)
+    fn.process_broadcast_element(
+        ApartmentSegmentRow(
+            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05
+        ),
+        FakeBroadcastContext(broadcast_state),
+    )
+    line = PaymentLine.model_validate(
+        {
+            "event_id": "00000000-0000-0000-0000-000000000001",
+            "schema_version": "1.0",
+            "apartment_id": "BCN-001",
+            "apartment_reference": "BCN-001",
+            "concept": "ota_fee",
+            "cost_type": "variable",
+            "description": "test",
+            "amount_gross": 300.0,
+            "vat_rate": 0.21,
+            "currency": "EUR",
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "payment_status": "paid",
+            "source": "synthetic",
+            "created_at": "2026-07-01T00:00:00Z",
+        }
+    )
+    results = list(fn.process_element(line, read_ctx))
+
+    assert results[0].ota_related_cost_eur == round(300.0 / 30, 2)
+    assert results[0].cleaning_cost_eur == 0.0
+
+
 def test_upsert_by_event_id_does_not_double_count():
     fn, broadcast_state = _make_function()
     read_ctx = FakeReadOnlyContext(broadcast_state)
     fn.process_broadcast_element(
         ApartmentSegmentRow(
-            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05, 0.15
+            "BCN-001", "Barcelona", "Eixample", "studio", 0, 0.05, 0.05
         ),
         FakeBroadcastContext(broadcast_state),
     )

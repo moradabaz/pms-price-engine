@@ -55,8 +55,11 @@ docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
   --topic apartment-market-segments.v1 --partitions 1 --replication-factor 1
 docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
   --topic market-price-bridge.v1 --partitions 4 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic owner-contracts.v1 --partitions 1 --replication-factor 1
 
-# 4. Register the Debezium connector (one-time — reads payment_lines + apartment_market_segments)
+# 4. Register the Debezium connector (one-time — reads payment_lines +
+# apartment_market_segments + owner_contracts, Phase 11 ADR-0011 backlog #5)
 curl -X POST -H "Content-Type: application/json" \
   --data @infra/debezium/postgres-connector.json \
   http://localhost:8083/connectors
@@ -89,7 +92,7 @@ Open the dashboard: **http://localhost:8501**
 
 | Service | Port | Role |
 |---|---|---|
-| `postgres` | `5432` | Source DB — `payment_lines`, `apartment_market_segments` |
+| `postgres` | `5432` | Source DB — `payment_lines`, `apartment_market_segments`, `owners`, `owner_contracts` |
 | `mock-pm-app` | — | Seeds + continuously writes synthetic cost rows |
 | `zookeeper` | `2181` | Kafka coordination |
 | `kafka` | `9092` | Event bus for `payment-events.v1` |

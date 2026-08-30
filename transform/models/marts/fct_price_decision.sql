@@ -20,6 +20,7 @@ select
     minimum_price_eur,
     floor_type,
     commission_pct,
+    commission_base,
     days_to_arrival,
     competitiveness_discount,
     property_attribute_factor,

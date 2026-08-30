@@ -89,6 +89,57 @@ def build_apartment_pool(
     return apartments
 
 
+# Phase 11 (docs/adr/ADR-0011, backlog #5): a small pool, so several
+# apartments genuinely share the same owner — the actual point of a real
+# owner entity instead of a flat per-apartment column (spec 11 pre-spec §A).
+_OWNER_COUNT = 6
+_COMMISSION_BASES = [
+    "total_revenue",
+    "revenue_minus_ota",
+    "revenue_minus_ota_minus_cleaning",
+]
+
+
+@dataclass(frozen=True)
+class Owner:
+    owner_id: str
+    owner_name: str
+
+
+def build_owner_pool(count: int = _OWNER_COUNT) -> list[Owner]:
+    return [
+        Owner(owner_id=f"OWN-{i + 1:03d}", owner_name=f"Owner {i + 1}")
+        for i in range(count)
+    ]
+
+
+@dataclass(frozen=True)
+class OwnerContract:
+    apartment_id: str
+    owner_id: str
+    commission_base: str
+    commission_pct: float
+
+
+def build_owner_contracts(
+    apartments: list[Apartment], owners: list[Owner], rng: random.Random | None = None
+) -> list[OwnerContract]:
+    """Assigns each apartment round-robin to an owner, then a randomized
+    commission_base/commission_pct — deliberately not all total_revenue, so
+    the netted-base formula (pricing.py) is actually exercised by seeded
+    data, not just by unit tests. Returns one contract per apartment."""
+    rng = rng or random.Random()
+    return [
+        OwnerContract(
+            apartment_id=apartment.apartment_id,
+            owner_id=owners[i % len(owners)].owner_id,
+            commission_base=rng.choice(_COMMISSION_BASES),
+            commission_pct=round(rng.uniform(0.10, 0.20), 4),
+        )
+        for i, apartment in enumerate(apartments)
+    ]
+
+
 @dataclass(frozen=True)
 class ConceptProfile:
     concept: str

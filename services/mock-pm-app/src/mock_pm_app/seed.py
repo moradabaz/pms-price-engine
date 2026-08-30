@@ -2,7 +2,7 @@ import random
 from datetime import date, timedelta
 from typing import Any
 
-from mock_pm_app.data import CONCEPT_PROFILES, Apartment
+from mock_pm_app.data import CONCEPT_PROFILES, Apartment, Owner, OwnerContract
 from mock_pm_app.rows import build_historical_row, insert_row
 from mock_pm_app.settings import MockAppSettings
 
@@ -17,6 +17,20 @@ def already_seeded(conn: Any) -> bool:
 def already_seeded_segments(conn: Any) -> bool:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM apartment_market_segments")
+        (count,) = cur.fetchone()
+    return bool(count > 0)
+
+
+def already_seeded_owners(conn: Any) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM owners")
+        (count,) = cur.fetchone()
+    return bool(count > 0)
+
+
+def already_seeded_owner_contracts(conn: Any) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM owner_contracts")
         (count,) = cur.fetchone()
     return bool(count > 0)
 
@@ -57,6 +71,49 @@ def seed_apartment_market_segments(conn: Any, apartments: list[Apartment]) -> in
             )
     conn.commit()
     return len(apartments)
+
+
+def seed_owners(conn: Any, owners: list[Owner]) -> int:
+    # Phase 11 (ADR-0011 backlog #5): seeded once, deterministically, from
+    # data.py's build_owner_pool() — same shape as seed_apartment_market_segments.
+    with conn.cursor() as cur:
+        for owner in owners:
+            cur.execute(
+                """
+                INSERT INTO owners (owner_id, owner_name)
+                VALUES (%(owner_id)s, %(owner_name)s)
+                ON CONFLICT (owner_id) DO NOTHING
+                """,
+                {"owner_id": owner.owner_id, "owner_name": owner.owner_name},
+            )
+    conn.commit()
+    return len(owners)
+
+
+def seed_owner_contracts(conn: Any, contracts: list[OwnerContract]) -> int:
+    # Phase 11 (ADR-0011 backlog #5): one contract per apartment, from
+    # data.py's build_owner_contracts() — must run after both
+    # seed_apartment_market_segments (FK to apartment_id) and seed_owners
+    # (FK to owner_id).
+    with conn.cursor() as cur:
+        for contract in contracts:
+            cur.execute(
+                """
+                INSERT INTO owner_contracts
+                    (apartment_id, owner_id, commission_base, commission_pct)
+                VALUES (%(apartment_id)s, %(owner_id)s, %(commission_base)s,
+                        %(commission_pct)s)
+                ON CONFLICT (apartment_id) DO NOTHING
+                """,
+                {
+                    "apartment_id": contract.apartment_id,
+                    "owner_id": contract.owner_id,
+                    "commission_base": contract.commission_base,
+                    "commission_pct": contract.commission_pct,
+                },
+            )
+    conn.commit()
+    return len(contracts)
 
 
 def _month_bounds(months_ago: int, today: date) -> tuple[date, date]:

@@ -68,3 +68,18 @@ def test_row_from_new_image_defaults_missing_decision_components_to_empty_list(
 
     assert row["calculation"]["decision_components"] == []
     assert row["calculation"]["los_floor_matrix"][0]["decision_components"] == []
+
+
+def test_row_from_new_image_defaults_missing_commission_base_to_total_revenue(
+    sample_new_image,
+):
+    # Regression test: a record predating Phase 11 (ADR-0011 backlog #5) has
+    # no commission_base at all — total_revenue is the true pre-Phase-11
+    # value (decide_price()'s own default), not a fabricated one.
+    image = sample_new_image("55555555-5555-5555-5555-555555555555", 132.0)
+    del image["calculation"]["commission_base"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["calculation"]["commission_base"] == "total_revenue"

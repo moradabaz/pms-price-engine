@@ -119,6 +119,9 @@ ICEBERG_SCHEMA = Schema(
                     element_required=True,
                 ),
             ),
+            # Phase 11 (ADR-0011 backlog #5): a cheap scalar addition, not a
+            # new shape (a string, like floor_type/rule_applied already are).
+            NestedField(59, "commission_base", StringType()),
         ),
     ),
     NestedField(

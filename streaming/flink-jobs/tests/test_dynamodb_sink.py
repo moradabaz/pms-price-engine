@@ -52,6 +52,7 @@ def _decision() -> PriceDecision:
             minimum_price_eur=50.0,
             floor_type="structural_full_margin",
             commission_pct=0.15,
+            commission_base="total_revenue",
             days_to_arrival=45,
             competitiveness_discount=0.05,
             property_attribute_factor=1.0,

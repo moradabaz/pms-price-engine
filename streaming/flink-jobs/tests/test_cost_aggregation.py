@@ -5,14 +5,21 @@ from flink_jobs.cost_aggregation import aggregate_cost, retained_billing_period_
 from shared_schemas.payment_line import PaymentLine
 
 
-def _line(event_id, amount, period_start, period_end, cost_type="variable"):
+def _line(
+    event_id,
+    amount,
+    period_start,
+    period_end,
+    cost_type="variable",
+    concept="electricity",
+):
     return PaymentLine.model_validate(
         {
             "event_id": event_id,
             "schema_version": "1.0",
             "apartment_id": "BCN-001",
             "apartment_reference": "BCN-001",
-            "concept": "electricity",
+            "concept": concept,
             "cost_type": cost_type,
             "description": "test",
             "amount_gross": amount,
@@ -115,6 +122,61 @@ def test_no_one_time_lines_yields_zero():
     ]
     result = aggregate_cost(lines)
     assert result.one_time_cost_eur == 0.0
+
+
+def test_ota_related_and_cleaning_sub_totals_are_split_from_concept():
+    # Phase 11 (ADR-0011 backlog #5, spec 11 §4): the minimal slice of
+    # backlog #3 this phase needs — ota_fee/channel_manager -> ota_related,
+    # cleaning -> cleaning, both still fully counted in fixed/variable above.
+    lines = [
+        _line(
+            "00000000-0000-0000-0000-000000000001",
+            300.0,
+            "2026-06-01",
+            "2026-06-30",
+            cost_type="variable",
+            concept="ota_fee",
+        ),
+        _line(
+            "00000000-0000-0000-0000-000000000002",
+            150.0,
+            "2026-06-01",
+            "2026-06-30",
+            cost_type="fixed",
+            concept="channel_manager",
+        ),
+        _line(
+            "00000000-0000-0000-0000-000000000003",
+            120.0,
+            "2026-06-01",
+            "2026-06-30",
+            cost_type="variable",
+            concept="cleaning",
+        ),
+        _line(
+            "00000000-0000-0000-0000-000000000004",
+            60.0,
+            "2026-06-01",
+            "2026-06-30",
+            cost_type="variable",
+            concept="electricity",
+        ),
+    ]
+    result = aggregate_cost(lines)
+    assert result.ota_related_cost_eur == 15.0  # (300 + 150) / 30 days
+    assert result.cleaning_cost_eur == 4.0  # 120 / 30 days
+    # Still fully counted in the existing cost_type totals — not removed.
+    assert result.fixed_cost_eur == 5.0  # 150 / 30
+    assert result.variable_cost_eur == 16.0  # (300 + 120 + 60) / 30
+
+
+def test_no_ota_or_cleaning_lines_yields_zero_sub_totals():
+    lines = [
+        _line("00000000-0000-0000-0000-000000000001", 100.0, "2026-06-01", "2026-06-30")
+    ]
+    result = aggregate_cost(lines)
+    assert result.ota_related_cost_eur == 0.0
+    assert result.cleaning_cost_eur == 0.0
 
 
 def test_retained_billing_period_ends_keeps_top_two():

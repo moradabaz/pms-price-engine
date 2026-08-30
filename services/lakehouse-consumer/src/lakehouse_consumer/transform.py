@@ -124,6 +124,11 @@ def row_from_new_image(
             "decision_components": _decision_components(
                 calculation.get("decision_components", [])
             ),
+            # Phase 11 (ADR-0011 backlog #5): a record predating this phase
+            # has no commission_base at all — total_revenue is the true
+            # pre-Phase-11 value (decide_price()'s own default), not a
+            # fabricated one.
+            "commission_base": calculation.get("commission_base", "total_revenue"),
         },
         "output": {
             "suggested_price_eur": _num(output["suggested_price_eur"]),

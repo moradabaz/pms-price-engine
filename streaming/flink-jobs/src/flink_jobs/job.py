@@ -13,11 +13,15 @@ from shared_schemas.market_price import MarketPrice
 from shared_schemas.payment_line import PaymentLine
 
 from flink_jobs.dynamodb_sink import DynamoDbSinkFunction
-from flink_jobs.models import ApartmentSegmentRow
+from flink_jobs.models import ApartmentSegmentRow, OwnerContractRow
 from flink_jobs.settings import FlinkJobSettings
 from flink_jobs.stage_cost_enrichment import (
     SEGMENT_BROADCAST_DESCRIPTOR,
     CostEnrichmentFunction,
+)
+from flink_jobs.stage_owner_contract_enrichment import (
+    OWNER_CONTRACT_BROADCAST_DESCRIPTOR,
+    OwnerContractEnrichmentFunction,
 )
 from flink_jobs.stage_price_decision import DATA_STALE_TAG, PriceDecisionFunction
 
@@ -38,17 +42,19 @@ def _configure_checkpointing(env, settings: FlinkJobSettings) -> None:
     env.configure(config)
 
 
-# ADR-0009: same default as the DB column — this source replays from the
-# earliest offset (job.py below), so CDC messages predating commission_pct's
-# addition to apartment_market_segments don't carry the field at all.
-_DEFAULT_COMMISSION_PCT = 0.15
-
-# Phase 8 (ADR-0011 backlog #6): same defensive-default pattern for the four
+# Phase 8 (ADR-0011 backlog #6): defensive-default pattern for the four
 # Bonus/Malus columns added after this topic already had history.
 _DEFAULT_QUALITY_TIER = "standard"
 _DEFAULT_RATING = 4.0
 _DEFAULT_HAS_VIEW = False
 _DEFAULT_HAS_PARKING = False
+
+# Phase 11 (ADR-0011 backlog #5): same defaults owner_contracts' own columns
+# use — a CDC message predating this phase's column additions can't occur
+# for a topic this phase itself introduces, but kept for symmetry with every
+# other parser here and as a safety net against a partially-seeded row.
+_DEFAULT_COMMISSION_BASE = "total_revenue"
+_DEFAULT_COMMISSION_PCT = 0.15
 
 
 def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
@@ -62,11 +68,22 @@ def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
         bedrooms=data["bedrooms"],
         target_margin=float(data["target_margin"]),
         competitiveness_discount=float(data["competitiveness_discount"]),
-        commission_pct=float(data.get("commission_pct", _DEFAULT_COMMISSION_PCT)),
         quality_tier=data.get("quality_tier", _DEFAULT_QUALITY_TIER),
         rating=float(data.get("rating", _DEFAULT_RATING)),
         has_view=bool(data.get("has_view", _DEFAULT_HAS_VIEW)),
         has_parking=bool(data.get("has_parking", _DEFAULT_HAS_PARKING)),
+    )
+
+
+def _parse_owner_contract_row(raw: str) -> OwnerContractRow:
+    """Parses one owner_contracts CDC message (Phase 11, ADR-0011 backlog
+    #5). Returns a row."""
+    data = json.loads(raw)
+    return OwnerContractRow(
+        apartment_id=data["apartment_id"],
+        owner_id=data["owner_id"],
+        commission_base=data.get("commission_base", _DEFAULT_COMMISSION_BASE),
+        commission_pct=float(data.get("commission_pct", _DEFAULT_COMMISSION_PCT)),
     )
 
 
@@ -117,6 +134,31 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         CostEnrichmentFunction()
     )
 
+    # Phase 11 (ADR-0011 backlog #5, spec 11 §C): Stage A2, chained after
+    # Stage A rather than a second broadcast input on CostEnrichmentFunction
+    # — PyFlink's KeyedStream.connect() accepts exactly one broadcast stream
+    # per process() call.
+    owner_contract_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.owner_contracts_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
+    owner_contract_stream = env.from_source(
+        owner_contract_source, WatermarkStrategy.no_watermarks(), "owner-contracts"
+    ).map(_parse_owner_contract_row)
+    broadcast_owner_contract_stream = owner_contract_stream.broadcast(
+        OWNER_CONTRACT_BROADCAST_DESCRIPTOR
+    )
+    cost_aggregates_with_commission = (
+        cost_aggregates.key_by(lambda ca: ca.apartment_id)
+        .connect(broadcast_owner_contract_stream)
+        .process(OwnerContractEnrichmentFunction())
+    )
+
     market_source = (
         KafkaSource.builder()
         .set_bootstrap_servers(settings.kafka_bootstrap_servers)
@@ -141,7 +183,9 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         )
     )
 
-    keyed_cost_aggregates = cost_aggregates.key_by(lambda ca: ca.segment_key)
+    keyed_cost_aggregates = cost_aggregates_with_commission.key_by(
+        lambda ca: ca.segment_key
+    )
     price_decisions = keyed_cost_aggregates.connect(market_stream).process(
         PriceDecisionFunction()
     )

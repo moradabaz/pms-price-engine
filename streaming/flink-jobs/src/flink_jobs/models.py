@@ -2,11 +2,17 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from flink_jobs.decision_components import DecisionComponent
+from flink_jobs.pricing import CommissionBase
 
 
 @dataclass(frozen=True)
 class SegmentAssignment:
-    """An apartment's segment and pricing config, as stored in broadcast state."""
+    """An apartment's segment and pricing config, as stored in broadcast state.
+
+    Phase 11 (ADR-0011 backlog #5): commission_pct moved to
+    OwnerContractAssignment — this class no longer carries it at all, the
+    same real removal (not another additive field) spec 11 §3 documents for
+    apartment_market_segments itself."""
 
     city: str
     neighborhood: str
@@ -14,7 +20,6 @@ class SegmentAssignment:
     bedrooms: int
     target_margin: float
     competitiveness_discount: float
-    commission_pct: float
     # Phase 8 (ADR-0011 backlog #6): raw Property Bonus/Malus attributes.
     # Defaults match apartment_market_segments' own column defaults, for CDC
     # messages predating this phase (same pattern commission_pct established).
@@ -35,7 +40,6 @@ class ApartmentSegmentRow:
     bedrooms: int
     target_margin: float
     competitiveness_discount: float
-    commission_pct: float
     quality_tier: str = "standard"
     rating: float = 4.0
     has_view: bool = False
@@ -50,11 +54,38 @@ class ApartmentSegmentRow:
             bedrooms=self.bedrooms,
             target_margin=self.target_margin,
             competitiveness_discount=self.competitiveness_discount,
-            commission_pct=self.commission_pct,
             quality_tier=self.quality_tier,
             rating=self.rating,
             has_view=self.has_view,
             has_parking=self.has_parking,
+        )
+
+
+@dataclass(frozen=True)
+class OwnerContractAssignment:
+    """An apartment's commission config, as stored in Stage A2's broadcast
+    state (Phase 11, ADR-0011 backlog #5)."""
+
+    commission_base: CommissionBase
+    commission_pct: float
+
+
+@dataclass(frozen=True)
+class OwnerContractRow:
+    """One owner_contracts CDC row, as received from Kafka."""
+
+    apartment_id: str
+    owner_id: str
+    commission_base: CommissionBase
+    commission_pct: float
+
+    def to_assignment(self) -> OwnerContractAssignment:
+        """Drops apartment_id (used as the map key) and owner_id (unused
+        downstream of this table — decide_price() only needs the resolved
+        commission_base/commission_pct pair, spec 11 §2)."""
+        return OwnerContractAssignment(
+            commission_base=self.commission_base,
+            commission_pct=self.commission_pct,
         )
 
 
@@ -78,7 +109,6 @@ class CostAggregate:
     billing_period_end: date
     target_margin: float
     competitiveness_discount: float
-    commission_pct: float
     updated_at: datetime
     # Phase 8 (ADR-0011 backlog #6): resolved once in Stage A from the
     # apartment's raw Bonus/Malus attributes (property_attributes.py) — Stage B
@@ -91,6 +121,20 @@ class CostAggregate:
     property_decision_components: tuple[DecisionComponent, ...] = field(
         default_factory=tuple
     )
+    # Phase 11 (ADR-0011 backlog #5): resolved by Stage A2
+    # (OwnerContractEnrichmentFunction), not Stage A — these two defaults are
+    # only ever observed on a CostAggregate that hasn't reached Stage A2 yet
+    # (e.g. in a test constructing one directly); every CostAggregate Stage B
+    # actually sees has already passed through Stage A2's broadcast join.
+    # 0.15/"total_revenue" match owner_contracts' own column defaults.
+    commission_pct: float = 0.15
+    commission_base: CommissionBase = "total_revenue"
+    # Phase 11: resolved once in Stage A from cost_aggregation.py's new
+    # concept-based sub-totals — already fully counted inside
+    # fixed_cost_eur/variable_cost_eur above, these are additional
+    # breakdowns for decide_price()'s commission-base netting, not new costs.
+    ota_related_cost_eur: float = 0.0
+    cleaning_cost_eur: float = 0.0
 
     @property
     def segment_key(self) -> tuple[str, str, str, int]:

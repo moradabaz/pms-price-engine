@@ -67,8 +67,14 @@ class CostEnrichmentFunction(KeyedBroadcastProcessFunction):
             billing_period_end=aggregation.billing_period_end,
             target_margin=assignment.target_margin,
             competitiveness_discount=assignment.competitiveness_discount,
-            commission_pct=assignment.commission_pct,
             updated_at=datetime.now(UTC),
+            # Phase 11 (ADR-0011 backlog #5): commission_pct/commission_base
+            # are no longer resolved here — SegmentAssignment doesn't carry
+            # commission_pct any more (spec 11 §3). CostAggregate's own
+            # defaults apply until Stage A2 (OwnerContractEnrichmentFunction)
+            # resolves the real values.
+            ota_related_cost_eur=aggregation.ota_related_cost_eur,
+            cleaning_cost_eur=aggregation.cleaning_cost_eur,
             property_attribute_factor=property_attribute_factor(
                 quality_tier=assignment.quality_tier,
                 rating=assignment.rating,

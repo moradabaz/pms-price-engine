@@ -26,7 +26,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_cost_protected"],
+          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_cost_protected", "commission_base_netting"],
           "description": "Stable across specific attribute values — the specific value observed (which tier, which rating) lives in label, not in a proliferating enum."
         },
         "label": { "type": "string", "description": "Human-readable, carries the specific value (e.g. \"Rating 4.8 vs baseline 4.0\")." },
@@ -125,7 +125,7 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components"],
+      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
@@ -148,7 +148,12 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Cp: blended OTA/payment-processing commission, set per apartment (default 0.15). In the floor's denominator — it scales with the final price (ADR-0009)."
+          "description": "Cp: blended OTA/payment-processing commission, set per apartment contract (default 0.15). In the floor's denominator — it scales with the final price (ADR-0009)."
+        },
+        "commission_base": {
+          "type": "string",
+          "enum": ["total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"],
+          "description": "Which revenue base commission_pct is charged against (ADR-0011 backlog #5, owner_contracts). total_revenue reproduces this project's pre-Phase-11 behavior exactly; the other two net ota_fee/channel_manager (and cleaning) out of the base, reducing minimum_price_eur — see calculation.decision_components' commission_base_netting entry when this happens."
         },
         "days_to_arrival": {
           "type": "integer",

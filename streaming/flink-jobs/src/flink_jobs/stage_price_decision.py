@@ -23,7 +23,12 @@ from flink_jobs.eviction import (
     oldest_key_by_updated_at,
 )
 from flink_jobs.models import CostAggregate, MarketSnapshot
-from flink_jobs.pricing import decide_price, decide_price_los_matrix
+from flink_jobs.pricing import (
+    commission_base_netting_component,
+    decide_price,
+    decide_price_los_matrix,
+    netted_commission_amount,
+)
 from flink_jobs.staleness import is_safe_to_overwrite
 from flink_jobs.watchdog import expired_keys, next_deadline_millis
 
@@ -135,6 +140,21 @@ def _build_price_decision(
     """Applies the pricing formula and assembles a PriceDecision. Returns it."""
     decided_at = datetime.now(UTC)
     days_to_arrival = (target_date - decided_at.date()).days
+
+    # Phase 11 (ADR-0011 backlog #5): the netting amount and its EUR floor
+    # adjustment don't vary with stay_length (same as property attributes,
+    # spec 09 §A) — computed once here, forwarded to every decide_price()
+    # call for the correct floor, but the explaining decision_component is
+    # only attached to the top-level calculation (spec 11 §F/AC-06).
+    net = netted_commission_amount(
+        cost.commission_base, cost.ota_related_cost_eur, cost.cleaning_cost_eur
+    )
+    commission_netting_eur = round(cost.commission_pct * net, 2)
+    commission_component = commission_base_netting_component(
+        cost.commission_base, cost.commission_pct, net
+    )
+    commission_components = [commission_component] if commission_component else []
+
     calc = decide_price(
         fixed_cost_eur=cost.fixed_cost_eur,
         variable_cost_eur=cost.variable_cost_eur,
@@ -145,7 +165,9 @@ def _build_price_decision(
         competitiveness_discount=cost.competitiveness_discount,
         days_to_arrival=days_to_arrival,
         property_attribute_factor=cost.property_attribute_factor,
+        commission_netting_eur=commission_netting_eur,
         property_decision_components=cost.property_decision_components,
+        commission_decision_components=commission_components,
     )
     los_matrix = decide_price_los_matrix(
         fixed_cost_eur=cost.fixed_cost_eur,
@@ -157,6 +179,7 @@ def _build_price_decision(
         competitiveness_discount=cost.competitiveness_discount,
         days_to_arrival=days_to_arrival,
         property_attribute_factor=cost.property_attribute_factor,
+        commission_netting_eur=commission_netting_eur,
     )
     return PriceDecision(
         decision_id=uuid4(),
@@ -192,6 +215,10 @@ def _build_price_decision(
             minimum_price_eur=calc.minimum_price_eur,
             floor_type=calc.floor_type,
             commission_pct=cost.commission_pct,
+            # Phase 11 (ADR-0011 backlog #5): set directly from cost, same as
+            # commission_pct above — decide_price() doesn't need to know
+            # commission_base itself, only the already-netted EUR amount.
+            commission_base=cost.commission_base,
             days_to_arrival=days_to_arrival,
             competitiveness_discount=cost.competitiveness_discount,
             property_attribute_factor=calc.property_attribute_factor,
