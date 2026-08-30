@@ -1,0 +1,31 @@
+# ADR-0011 — External profitability pricing spec as target design
+
+**Date:** 2026-08-30
+**Status:** Accepted
+
+## Context
+
+An external functional/algorithmic spec, "Profitable Dynamic Pricing Engine" (v1.0, Aug 2026), was shared describing a full-featured revenue-management pricing engine: a Property Pricing Profile with Bonus/Malus attribute factors (Property Reference Price = Market Reference Price × Property Attribute Factor), a multi-dimensional cost model (scope/behavior/trigger/calculation-base/recurrence/allocation-rule/validity), a Stay Candidate unit with an LOS-aware Break-Even/Profitable-Floor matrix, owner contract models with a configurable commission calculation base, a layered Revenue Management engine (structural/market/performance/booking-window/inventory/commercial/guardrails), channel gross-up economics, a Hard/Soft floor policy, structured Decision Components (reason codes) for explainability, and audited Manual Overrides.
+
+This project's own pricing engine (`streaming/flink-jobs/src/flink_jobs/pricing.py`) already implements a validated subset of the same central idea, arrived at independently: ADR-0009 (2026-08-03) fixed a division-vs-multiplication margin bug, added a commission term, and introduced a two-tier floor (structural vs. contribution) keyed by lead time — the same shape as the external spec's Break-Even/Profitable-Floor split. ADR-0009 also already named and deferred, in `docs/post-poc-roadmap.md`, two of that spec's largest remaining concepts: real length-of-stay pricing (D5) and per-channel pricing (D6). Reviewing the external spec confirms those two deferrals were the right call, rather than surfacing them as new findings.
+
+The rest of that model — property attribute adjustment, owner contract commission bases, a layered rule engine, structured decision components, and audited overrides — has no equivalent anywhere in this repo today (confirmed by full-repo review: pricing formula, cost schema, market segment data, dbt marts, dashboard, and the `PriceDecision` schema).
+
+## Decision
+
+Adopt this model as the target design for this engine's future evolution, not as a spec to implement wholesale. `docs/post-poc-roadmap.md` becomes the full prioritized backlog mapping every concept from it to a concrete anchor in this repo (or the absence of one) and a priority tier. Any future ADR that touches pricing should note which of these concepts it advances, so the backlog and the ADR trail stay in sync.
+
+Three points of tension with existing ADRs are worth recording explicitly, rather than letting the richer target model silently reinterpret a decision already made:
+
+1. **Owner contract commission base (target model) vs. flat `commission_pct` (ADR-0009 D2).** The target model's commission is computed against a configurable revenue base (Total Revenue / Revenue − OTA / Revenue − OTA − Cleaning / etc.), solved algebraically or via a solver. `commission_pct` today is a single scalar with no stated base at all — it behaves as if the base were Total Revenue, but that's an implicit assumption, not a modeled one. **Stance:** defer (backlog #5, tier Later) — this needs a net-new owner/contract entity that doesn't exist in any form today, not a schema tweak. Recorded here so a future reader doesn't mistake the current field for "commission, fully modeled."
+2. **Channel gross-up (target model) vs. ADR-0009 D6.** Not a real conflict — D6 already rejected per-channel commission "for now" with the same reasoning the target model's own gross-up section implies (no per-channel market rate exists to gross up against). The one new fact ADR-0009 didn't have: `market_price.v1`'s `market_context.platform` field already exists in the schema and is always `null` in practice (`market-ingestor` never populates it) — the cheapest first step toward this concept is wiring up a field that's already there, not adding one.
+3. **LOS floor matrix (target model) vs. ADR-0009 D5.** Also not a conflict of intent — D5 already deferred stay-length pricing. What D5's text didn't spell out: doing it for real means changing `price_decision`'s effective key from `(apartment_id, target_date)` to `(apartment_id, target_date, stay_length)`, which changes the DynamoDB table's primary key (`infra/localstack/init-aws.sh`), and ripples into Phase 5's Iceberg mirror and Phase 6's dashboard queries. This ADR amends D5 with that consequence, made explicit for whoever picks up backlog #1.
+
+One structural fact worth naming even though no ADR mandated it: every sub-model of `PriceDecision` (`libs/shared-schemas/src/shared_schemas/price_decision.py`) is declared with `extra="forbid"`, and none of them holds a list/array field. Adding target-model-style Decision Components (a list of structured reason codes) is therefore not a cheap column addition the way `commission_pct` was in ADR-0009 — it needs a new top-level model. This is why explainability sits at backlog tier "Next" rather than "cheap to add whenever," and why it's sequenced as a prerequisite for the layered rule engine (backlog #7) and manual overrides (backlog #9): both need somewhere to record which rule fired, and building them before that container exists means redoing this same schema change twice.
+
+## Consequences
+
+- `docs/post-poc-roadmap.md` is extended into the full backlog (11 items) rather than staying a 2-item list; its existing items 1 and 2 (LOS, channel) are kept as-is and cross-referenced, not rewritten.
+- A future Phase 8 spec (LOS-aware floor) is named and outlined at a high level in the roadmap doc, but not written yet — consistent with this repo's practice of writing phase specs immediately before implementation, not speculatively.
+- No code changes follow from this ADR by itself. It is a documentation-only decision record; implementation of any backlog item gets its own ADR and/or phase spec when picked up.
+- If a future increment (e.g. LOS) requires breaking an existing schema or primary key, that is treated as an acceptable, planned remodel — not something to work around with a backward-compatible patch — since the project is a PoC with no production consumers yet (the same reasoning ADR-0007/ADR-0009 already used to change `price_decision.v1` without a `schema_version` bump).
