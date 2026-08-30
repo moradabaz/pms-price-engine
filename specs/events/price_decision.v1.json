@@ -17,6 +17,23 @@
     "output"
   ],
   "additionalProperties": false,
+  "$defs": {
+    "decision_component": {
+      "type": "object",
+      "required": ["code", "label", "impact"],
+      "additionalProperties": false,
+      "description": "One structured reason code explaining part of a pricing decision (ADR-0011 backlog #4).",
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_cost_protected"],
+          "description": "Stable across specific attribute values — the specific value observed (which tier, which rating) lives in label, not in a proliferating enum."
+        },
+        "label": { "type": "string", "description": "Human-readable, carries the specific value (e.g. \"Rating 4.8 vs baseline 4.0\")." },
+        "impact": { "type": "number", "description": "Signed magnitude; unit is contextual to code's family — a signed adjustment fraction for property_* codes (e.g. +0.30 for luxury), a signed EUR gap for rule_* codes (e.g. the amount the cost floor exceeds the property reference price for rule_cost_protected)." }
+      }
+    }
+  },
   "properties": {
 
     "decision_id": {
@@ -108,7 +125,7 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix"],
+      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
@@ -169,7 +186,7 @@
           "description": "The same decide_price() evaluation at other candidate stay lengths (ADR-0011 backlog #1) — property_attribute_factor/property_reference_price_eur/market_reference_price_eur/below_market_by are identical across every entry (they never depend on stay_length), so they aren't repeated here. The stay_length=1 entry matches this calculation's own minimum_price_eur/floor_type/rule_applied and the top-level output's suggested_price_eur/effective_margin exactly.",
           "items": {
             "type": "object",
-            "required": ["stay_length", "minimum_price_eur", "floor_type", "rule_applied", "suggested_price_eur", "effective_margin"],
+            "required": ["stay_length", "minimum_price_eur", "floor_type", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
             "additionalProperties": false,
             "properties": {
               "stay_length": { "type": "integer", "minimum": 1, "description": "Candidate LOS this entry evaluates, in nights." },
@@ -177,9 +194,21 @@
               "floor_type": { "type": "string", "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"], "description": "Unaffected by stay_length — selected by days_to_arrival, same for every entry in one decision." },
               "rule_applied": { "type": "string", "enum": ["market_competitive", "minimum_floor", "cost_protected"], "description": "Can genuinely differ per entry — a longer stay's diluted floor can flip cost_protected into market_competitive." },
               "suggested_price_eur": { "type": "number", "minimum": 0, "description": "What this LOS candidate would be priced at." },
-              "effective_margin": { "type": "number", "description": "Varies per entry — the per-night total cost this margin is computed against changes with stay_length." }
+              "effective_margin": { "type": "number", "description": "Varies per entry — the per-night total cost this margin is computed against changes with stay_length." },
+              "decision_components": {
+                "type": "array",
+                "minItems": 1,
+                "description": "This candidate's own rule-decision component only (ADR-0011 backlog #4) — never the property Bonus/Malus block, which doesn't vary with stay_length and already lives once on the top-level calculation.decision_components.",
+                "items": { "$ref": "#/$defs/decision_component" }
+              }
             }
           }
+        },
+        "decision_components": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Structured reason codes explaining this decision (ADR-0011 backlog #4): the four Property Bonus/Malus contributions plus the one rule-decision component for this stay_length=1 calculation.",
+          "items": { "$ref": "#/$defs/decision_component" }
         }
       }
     },

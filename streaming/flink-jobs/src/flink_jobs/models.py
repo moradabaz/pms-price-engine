@@ -1,5 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
+
+from flink_jobs.decision_components import DecisionComponent
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,11 @@ class CostAggregate:
     # Default 1.0 (neutral) keeps every pre-Phase-8 CostAggregate construction
     # (tests included) valid without change.
     property_attribute_factor: float = 1.0
+    # Phase 10 (ADR-0011 backlog #4): the four attribute contributions behind
+    # property_attribute_factor, resolved once in Stage A alongside it.
+    property_decision_components: tuple[DecisionComponent, ...] = field(
+        default_factory=tuple
+    )
 
     @property
     def segment_key(self) -> tuple[str, str, str, int]:

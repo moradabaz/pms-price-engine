@@ -6,11 +6,24 @@ from shared_schemas.price_decision import (
     BillingPeriod,
     Calculation,
     CostInputs,
+    DecisionComponent,
     LosFloorCandidate,
     MarketInputs,
     Output,
     PriceDecision,
 )
+
+_RULE_COMPONENT = [
+    DecisionComponent(
+        code="rule_market_competitive", label="test", impact=45.0
+    )
+]
+_PROPERTY_COMPONENTS = [
+    DecisionComponent(code="property_quality_tier", label="test", impact=0.0),
+    DecisionComponent(code="property_rating", label="test", impact=0.0),
+    DecisionComponent(code="property_view", label="test", impact=0.0),
+    DecisionComponent(code="property_parking", label="test", impact=0.0),
+]
 
 
 def _decision() -> PriceDecision:
@@ -53,9 +66,11 @@ def _decision() -> PriceDecision:
                     rule_applied="market_competitive",
                     suggested_price_eur=95.0,
                     effective_margin=0.9,
+                    decision_components=_RULE_COMPONENT,
                 )
                 for n in (1, 2, 3, 7, 14)
             ],
+            decision_components=_PROPERTY_COMPONENTS + _RULE_COMPONENT,
         ),
         output=Output(
             suggested_price_eur=95.0, effective_margin=0.9, below_market_by=5.0
@@ -80,3 +95,20 @@ def test_to_dynamodb_item_serializes_los_floor_matrix_without_raising():
     assert len(matrix) == 5
     assert matrix[0]["M"]["stay_length"] == {"N": "1"}
     assert matrix[0]["M"]["rule_applied"] == {"S": "market_competitive"}
+
+
+def test_to_dynamodb_item_serializes_decision_components_nested_in_los_floor_matrix():
+    # Phase 10 (ADR-0011 backlog #4): a list nested inside los_floor_matrix's
+    # own list — the one genuinely new shape per spec 10 §F/AC-07, even
+    # though flat lists-of-dicts were already proven by Phase 9.
+    item = _to_dynamodb_item(_decision())
+    calculation = item["calculation"]["M"]
+    top_level_components = calculation["decision_components"]["L"]
+    assert len(top_level_components) == 5
+    assert top_level_components[0]["M"]["code"] == {"S": "property_quality_tier"}
+    assert top_level_components[4]["M"]["code"] == {"S": "rule_market_competitive"}
+
+    matrix = calculation["los_floor_matrix"]["L"]
+    candidate_components = matrix[0]["M"]["decision_components"]["L"]
+    assert len(candidate_components) == 1
+    assert candidate_components[0]["M"]["code"] == {"S": "rule_market_competitive"}

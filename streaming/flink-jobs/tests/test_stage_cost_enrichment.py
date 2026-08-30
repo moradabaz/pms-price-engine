@@ -5,6 +5,7 @@ from fakes import (
     FakeRuntimeContext,
 )
 from flink_jobs.models import ApartmentSegmentRow
+from flink_jobs.property_attributes import property_attribute_components
 from flink_jobs.stage_cost_enrichment import CostEnrichmentFunction
 from shared_schemas.payment_line import PaymentLine
 
@@ -104,6 +105,40 @@ def test_property_attribute_factor_resolved_from_broadcast_attributes():
 
     # 0.30 (luxury) + 0.08 (rating) + 0.05 (view) + 0.04 (parking) = 1.47
     assert results[0].property_attribute_factor == 1.47
+
+
+def test_property_decision_components_resolved_from_broadcast_attributes():
+    # Phase 10 (ADR-0011 backlog #4): Stage A resolves the component
+    # breakdown alongside the plain factor, from the same broadcast state.
+    fn, broadcast_state = _make_function()
+    read_ctx = FakeReadOnlyContext(broadcast_state)
+    fn.process_broadcast_element(
+        ApartmentSegmentRow(
+            "BCN-001",
+            "Barcelona",
+            "Eixample",
+            "studio",
+            0,
+            0.05,
+            0.05,
+            0.15,
+            quality_tier="luxury",
+            rating=4.8,
+            has_view=True,
+            has_parking=True,
+        ),
+        FakeBroadcastContext(broadcast_state),
+    )
+    results = list(
+        fn.process_element(
+            _line("00000000-0000-0000-0000-000000000001", 100.0), read_ctx
+        )
+    )
+
+    expected = property_attribute_components(
+        quality_tier="luxury", rating=4.8, has_view=True, has_parking=True
+    )
+    assert list(results[0].property_decision_components) == expected
 
 
 def test_upsert_by_event_id_does_not_double_count():

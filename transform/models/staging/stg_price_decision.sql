@@ -36,6 +36,7 @@ select
     calculation.market_reference_price_eur,
     calculation.rule_applied,
     calculation.los_floor_matrix,
+    calculation.decision_components,
 
     output.suggested_price_eur,
     output.currency,

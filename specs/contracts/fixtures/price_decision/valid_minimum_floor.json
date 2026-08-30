@@ -37,11 +37,108 @@
     "market_reference_price_eur": 142.5,
     "rule_applied": "minimum_floor",
     "los_floor_matrix": [
-      { "stay_length": 1, "minimum_price_eur": 147.5, "floor_type": "structural_full_margin", "rule_applied": "minimum_floor", "suggested_price_eur": 147.5, "effective_margin": 0.25 },
-      { "stay_length": 2, "minimum_price_eur": 141.25, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 142.5, "effective_margin": 0.2611 },
-      { "stay_length": 3, "minimum_price_eur": 139.17, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 142.5, "effective_margin": 0.2799 },
-      { "stay_length": 7, "minimum_price_eur": 136.79, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 142.5, "effective_margin": 0.3022 },
-      { "stay_length": 14, "minimum_price_eur": 135.89, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 142.5, "effective_margin": 0.3108 }
+      {
+        "stay_length": 1,
+        "minimum_price_eur": 147.5,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "minimum_floor",
+        "suggested_price_eur": 147.5,
+        "effective_margin": 0.25,
+        "decision_components": [
+          {
+            "code": "rule_minimum_floor",
+            "label": "Cost floor (147.5) exceeds market reference (142.5) by 5.0 EUR but stays within property reference (150.0)",
+            "impact": 5.0
+          }
+        ]
+      },
+      {
+        "stay_length": 2,
+        "minimum_price_eur": 141.25,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 142.5,
+        "effective_margin": 0.2611,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (142.5) clears the cost floor (141.25) by 1.25 EUR",
+            "impact": 1.25
+          }
+        ]
+      },
+      {
+        "stay_length": 3,
+        "minimum_price_eur": 139.17,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 142.5,
+        "effective_margin": 0.2799,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (142.5) clears the cost floor (139.17) by 3.33 EUR",
+            "impact": 3.33
+          }
+        ]
+      },
+      {
+        "stay_length": 7,
+        "minimum_price_eur": 136.79,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 142.5,
+        "effective_margin": 0.3022,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (142.5) clears the cost floor (136.79) by 5.71 EUR",
+            "impact": 5.71
+          }
+        ]
+      },
+      {
+        "stay_length": 14,
+        "minimum_price_eur": 135.89,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 142.5,
+        "effective_margin": 0.3108,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (142.5) clears the cost floor (135.89) by 6.61 EUR",
+            "impact": 6.61
+          }
+        ]
+      }
+    ],
+    "decision_components": [
+      {
+        "code": "property_quality_tier",
+        "label": "Quality tier 'standard' (+0%)",
+        "impact": 0.0
+      },
+      {
+        "code": "property_rating",
+        "label": "Rating 4.0 vs baseline 4.0",
+        "impact": 0.0
+      },
+      {
+        "code": "property_view",
+        "label": "No view",
+        "impact": 0.0
+      },
+      {
+        "code": "property_parking",
+        "label": "No parking",
+        "impact": 0.0
+      },
+      {
+        "code": "rule_minimum_floor",
+        "label": "Cost floor (147.5) exceeds market reference (142.5) by 5.0 EUR but stays within property reference (150.0)",
+        "impact": 5.0
+      }
     ]
   },
   "output": {

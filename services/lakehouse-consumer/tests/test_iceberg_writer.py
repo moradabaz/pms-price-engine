@@ -8,6 +8,8 @@ from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.schema import Schema
 from pyiceberg.types import (
     DoubleType,
+    IntegerType,
+    ListType,
     NestedField,
     StringType,
     StructType,
@@ -141,6 +143,75 @@ def test_ensure_table_migrates_an_existing_table_missing_newer_fields(tmp_path):
     field_names = {f.name for f in calculation_field.field_type.fields}
     assert "los_floor_matrix" in field_names
     assert "property_reference_price_eur" in field_names
+
+
+_PRE_PHASE_10_SCHEMA = Schema(
+    NestedField(1, "decision_id", StringType(), required=True),
+    NestedField(2, "apartment_id", StringType(), required=True),
+    NestedField(5, "decided_at", TimestampType(), required=True),
+    NestedField(10, "dynamodb_event_name", StringType(), required=True),
+    NestedField(11, "ingested_at", TimestampType(), required=True),
+    NestedField(
+        8,
+        "calculation",
+        StructType(
+            NestedField(34, "rule_applied", StringType()),
+            NestedField(35, "property_attribute_factor", DoubleType()),
+            NestedField(
+                41,
+                "los_floor_matrix",
+                ListType(
+                    element_id=42,
+                    element_type=StructType(
+                        NestedField(43, "stay_length", IntegerType()),
+                        NestedField(44, "minimum_price_eur", DoubleType()),
+                        NestedField(45, "floor_type", StringType()),
+                        NestedField(46, "rule_applied", StringType()),
+                        NestedField(47, "suggested_price_eur", DoubleType()),
+                        NestedField(48, "effective_margin", DoubleType()),
+                    ),
+                    element_required=True,
+                ),
+            ),
+        ),
+    ),
+)
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_ensure_table_migrates_a_table_missing_decision_components_at_both_levels(
+    tmp_path,
+):
+    # Regression test (Phase 10, ADR-0011 backlog #4): a table created before
+    # this phase has los_floor_matrix (Phase 9) but no decision_components at
+    # either nesting level — the nested case (inside los_floor_matrix's own
+    # struct) is the one genuinely new shape this phase adds (spec 10 §F).
+    catalog = _build_catalog(tmp_path)
+    settings = _build_settings(tmp_path)
+    catalog.create_namespace_if_not_exists(settings.glue_database)
+    catalog.create_table_if_not_exists(
+        settings.iceberg_identifier,
+        schema=_PRE_PHASE_10_SCHEMA,
+        location=f"{settings.iceberg_warehouse}/{settings.iceberg_table_name}",
+    )
+
+    table = ensure_table(catalog, settings)
+
+    calculation_field = next(
+        f for f in table.schema().fields if f.name == "calculation"
+    )
+    field_names = {f.name for f in calculation_field.field_type.fields}
+    assert "decision_components" in field_names
+
+    los_floor_matrix_field = next(
+        f
+        for f in calculation_field.field_type.fields
+        if f.name == "los_floor_matrix"
+    )
+    candidate_field_names = {
+        f.name for f in los_floor_matrix_field.field_type.element_type.fields
+    }
+    assert "decision_components" in candidate_field_names
 
 
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")

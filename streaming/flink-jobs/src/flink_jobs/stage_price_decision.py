@@ -10,6 +10,7 @@ from shared_schemas.price_decision import (
     BillingPeriod,
     Calculation,
     CostInputs,
+    DecisionComponent,
     LosFloorCandidate,
     MarketInputs,
     Output,
@@ -144,6 +145,7 @@ def _build_price_decision(
         competitiveness_discount=cost.competitiveness_discount,
         days_to_arrival=days_to_arrival,
         property_attribute_factor=cost.property_attribute_factor,
+        property_decision_components=cost.property_decision_components,
     )
     los_matrix = decide_price_los_matrix(
         fixed_cost_eur=cost.fixed_cost_eur,
@@ -204,8 +206,18 @@ def _build_price_decision(
                     rule_applied=candidate.rule_applied,
                     suggested_price_eur=candidate.suggested_price_eur,
                     effective_margin=candidate.effective_margin,
+                    decision_components=[
+                        DecisionComponent(
+                            code=c.code, label=c.label, impact=c.impact
+                        )
+                        for c in candidate.decision_components
+                    ],
                 )
                 for candidate in los_matrix
+            ],
+            decision_components=[
+                DecisionComponent(code=c.code, label=c.label, impact=c.impact)
+                for c in calc.decision_components
             ],
         ),
         output=Output(

@@ -48,7 +48,25 @@ def _sample_new_image(decision_id: str, suggested_price_eur: float) -> dict:
                     "rule_applied": "market_competitive",
                     "suggested_price_eur": suggested_price_eur,
                     "effective_margin": 0.25,
+                    "decision_components": [
+                        {
+                            "code": "rule_market_competitive",
+                            "label": "test",
+                            "impact": 1.23,
+                        }
+                    ],
                 }
+            ],
+            "decision_components": [
+                {"code": "property_quality_tier", "label": "test", "impact": 0.0},
+                {"code": "property_rating", "label": "test", "impact": 0.0},
+                {"code": "property_view", "label": "test", "impact": 0.0},
+                {"code": "property_parking", "label": "test", "impact": 0.0},
+                {
+                    "code": "rule_market_competitive",
+                    "label": "test",
+                    "impact": 1.23,
+                },
             ],
         },
         "output": {

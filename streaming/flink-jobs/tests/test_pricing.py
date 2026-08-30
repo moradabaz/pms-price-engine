@@ -1,4 +1,10 @@
-from flink_jobs.pricing import LOS_CANDIDATES, decide_price, decide_price_los_matrix
+from flink_jobs.decision_components import DecisionComponent
+from flink_jobs.pricing import (
+    LOS_CANDIDATES,
+    decide_price,
+    decide_price_los_matrix,
+    rule_decision_component,
+)
 
 
 def test_division_not_multiplication_for_the_floor():
@@ -295,3 +301,107 @@ def test_decide_price_los_matrix_rule_applied_can_differ_across_candidates():
     for n in (3, 7, 14):
         assert by_stay_length[n].rule_applied == "market_competitive"
         assert by_stay_length[n].suggested_price_eur == 85.5
+
+
+def test_rule_decision_component_market_competitive():
+    # spec 10 §3: impact is the headroom, market reference minus floor.
+    component = rule_decision_component(
+        "market_competitive",
+        minimum_price_eur=21.03,
+        market_reference_price_eur=114.47,
+        property_reference_price_eur=120.5,
+    )
+    assert component.code == "rule_market_competitive"
+    assert component.impact == 93.44
+
+
+def test_rule_decision_component_minimum_floor():
+    # impact is how far the floor sits above market, while still <= property
+    # reference (property_reference=200.0 > minimum_price=195.0).
+    component = rule_decision_component(
+        "minimum_floor",
+        minimum_price_eur=195.0,
+        market_reference_price_eur=190.0,
+        property_reference_price_eur=200.0,
+    )
+    assert component.code == "rule_minimum_floor"
+    assert component.impact == 5.0
+
+
+def test_rule_decision_component_cost_protected():
+    # impact is how far the floor exceeds the apartment's own reference.
+    component = rule_decision_component(
+        "cost_protected",
+        minimum_price_eur=210.0,
+        market_reference_price_eur=190.0,
+        property_reference_price_eur=200.0,
+    )
+    assert component.code == "rule_cost_protected"
+    assert component.impact == 10.0
+
+
+def test_decide_price_default_decision_components_is_rule_only():
+    # AC-04: no property_decision_components passed -> exactly one entry.
+    result = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=120.5,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert len(result.decision_components) == 1
+    component = result.decision_components[0]
+    assert component.code == "rule_market_competitive"
+    assert component.impact == round(
+        result.market_reference_price_eur - result.minimum_price_eur, 2
+    )
+
+
+def test_decide_price_prepends_property_components_before_rule_component():
+    # AC-04: property components, when passed, come first, in order, followed
+    # by exactly one rule component — spec 08/10's two-apartment example.
+    property_components = [
+        DecisionComponent(code="property_quality_tier", label="x", impact=0.30),
+        DecisionComponent(code="property_rating", label="x", impact=0.08),
+        DecisionComponent(code="property_view", label="x", impact=0.05),
+        DecisionComponent(code="property_parking", label="x", impact=0.04),
+    ]
+    result = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=0.0,
+        one_time_cost_eur=199.5,
+        target_margin=0.05,
+        commission_pct=0.0,
+        avg_nightly_rate_eur=200.0,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+        property_attribute_factor=1.47,
+        property_decision_components=property_components,
+    )
+    assert result.decision_components[:4] == property_components
+    assert result.decision_components[4].code == "rule_market_competitive"
+    assert len(result.decision_components) == 5
+
+
+def test_decide_price_los_matrix_candidates_carry_only_their_own_rule_component():
+    # AC-05: every LosFloorCandidate.decision_components has exactly 1 entry,
+    # matching its own rule_applied — never a property_* component, even
+    # though property_attribute_factor=1.1 is non-neutral here.
+    matrix = decide_price_los_matrix(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=0.0,
+        one_time_cost_eur=110.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=90.0,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+        property_attribute_factor=1.1,
+        stay_lengths=(1, 3, 7, 14),
+    )
+    for candidate in matrix:
+        assert len(candidate.decision_components) == 1
+        assert candidate.decision_components[0].code == f"rule_{candidate.rule_applied}"

@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 
 from fakes import FakeReadOnlyContext, FakeRuntimeContext
+from flink_jobs.decision_components import DecisionComponent
 from flink_jobs.models import CostAggregate
 from flink_jobs.stage_price_decision import DATA_STALE_TAG, PriceDecisionFunction
 from shared_schemas.market_price import (
@@ -12,7 +13,12 @@ from shared_schemas.market_price import (
 )
 
 
-def _cost(apartment_id="BCN-001", variable_cost=100.0, updated_at=None):
+def _cost(
+    apartment_id="BCN-001",
+    variable_cost=100.0,
+    updated_at=None,
+    property_decision_components=(),
+):
     return CostAggregate(
         apartment_id=apartment_id,
         apartment_reference=apartment_id,
@@ -32,6 +38,7 @@ def _cost(apartment_id="BCN-001", variable_cost=100.0, updated_at=None):
         competitiveness_discount=0.05,
         commission_pct=0.15,
         updated_at=updated_at or datetime.now(UTC),
+        property_decision_components=property_decision_components,
     )
 
 
@@ -76,6 +83,41 @@ def test_los_floor_matrix_stay_length_1_matches_top_level_calculation():
     assert los_1.rule_applied == calc.rule_applied
     assert los_1.suggested_price_eur == results[0].output.suggested_price_eur
     assert los_1.effective_margin == results[0].output.effective_margin
+
+
+def test_decision_components_property_block_on_top_level_only():
+    # Phase 10 (ADR-0011 backlog #4): calculation.decision_components carries
+    # the property block + rule component; every los_floor_matrix candidate
+    # carries only its own rule component, never the property block.
+    property_components = (
+        DecisionComponent(code="property_quality_tier", label="x", impact=0.30),
+        DecisionComponent(code="property_rating", label="x", impact=0.08),
+        DecisionComponent(code="property_view", label="x", impact=0.05),
+        DecisionComponent(code="property_parking", label="x", impact=0.04),
+    )
+    fn, ctx = _make_function()
+    list(
+        fn.process_element1(
+            _cost(
+                "apt-A",
+                variable_cost=100.0,
+                property_decision_components=property_components,
+            ),
+            ctx,
+        )
+    )
+    results = list(fn.process_element2(_market(days_from_today=7), ctx))
+
+    calc = results[0].calculation
+    assert len(calc.decision_components) == 5
+    assert [c.code for c in calc.decision_components[:4]] == [
+        c.code for c in property_components
+    ]
+    assert calc.decision_components[4].code.startswith("rule_")
+
+    for candidate in calc.los_floor_matrix:
+        assert len(candidate.decision_components) == 1
+        assert candidate.decision_components[0].code == f"rule_{candidate.rule_applied}"
 
 
 def test_market_update_fans_out_across_known_apartments():

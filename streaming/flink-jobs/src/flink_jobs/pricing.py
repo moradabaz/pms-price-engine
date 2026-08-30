@@ -1,5 +1,8 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
+
+from flink_jobs.decision_components import DecisionComponent
 
 RuleApplied = Literal["market_competitive", "minimum_floor", "cost_protected"]
 FloorType = Literal[
@@ -28,6 +31,48 @@ class PriceCalculation:
     suggested_price_eur: float
     below_market_by: float
     effective_margin: float
+    decision_components: list[DecisionComponent]
+
+
+def rule_decision_component(
+    rule_applied: RuleApplied,
+    minimum_price_eur: float,
+    market_reference_price_eur: float,
+    property_reference_price_eur: float,
+) -> DecisionComponent:
+    """Explains which pricing rule fired and by how much (Phase 10, ADR-0011
+    backlog #4) — impact is the signed EUR gap that decided the branch.
+    Returns the component."""
+    if rule_applied == "market_competitive":
+        impact = round(market_reference_price_eur - minimum_price_eur, 2)
+        return DecisionComponent(
+            code="rule_market_competitive",
+            label=(
+                f"Market reference price ({market_reference_price_eur}) "
+                f"clears the cost floor ({minimum_price_eur}) by {impact} EUR"
+            ),
+            impact=impact,
+        )
+    if rule_applied == "minimum_floor":
+        impact = round(minimum_price_eur - market_reference_price_eur, 2)
+        return DecisionComponent(
+            code="rule_minimum_floor",
+            label=(
+                f"Cost floor ({minimum_price_eur}) exceeds market reference "
+                f"({market_reference_price_eur}) by {impact} EUR but stays "
+                f"within property reference ({property_reference_price_eur})"
+            ),
+            impact=impact,
+        )
+    impact = round(minimum_price_eur - property_reference_price_eur, 2)
+    return DecisionComponent(
+        code="rule_cost_protected",
+        label=(
+            f"Cost floor ({minimum_price_eur}) exceeds property reference "
+            f"price ({property_reference_price_eur}) by {impact} EUR"
+        ),
+        impact=impact,
+    )
 
 
 def decide_price(
@@ -41,6 +86,7 @@ def decide_price(
     days_to_arrival: int,
     property_attribute_factor: float = 1.0,
     stay_length: int = 1,
+    property_decision_components: Sequence[DecisionComponent] = (),
 ) -> PriceCalculation:
     """Computes the suggested nightly price and which rule/floor applied
     (ADR-0009, ADR-0011 backlog #6/#1). Returns a PriceCalculation."""
@@ -95,6 +141,18 @@ def decide_price(
         (suggested_price_eur / total_cost_eur) - 1 if total_cost_eur else 0.0
     )
 
+    # Phase 10 (ADR-0011 backlog #4): property_decision_components is empty
+    # for LOS-matrix candidates (decide_price_los_matrix() never forwards it),
+    # so their decision_components naturally ends up as just [rule_component]
+    # — no second code path (spec 10 §E).
+    rule_component = rule_decision_component(
+        rule_applied,
+        round(minimum_price_eur, 2),
+        round(market_reference_price_eur, 2),
+        round(property_reference_price_eur, 2),
+    )
+    decision_components = [*property_decision_components, rule_component]
+
     return PriceCalculation(
         minimum_price_eur=round(minimum_price_eur, 2),
         floor_type=floor_type,
@@ -105,6 +163,7 @@ def decide_price(
         suggested_price_eur=round(suggested_price_eur, 2),
         below_market_by=round(below_market_by, 2),
         effective_margin=round(effective_margin, 4),
+        decision_components=decision_components,
     )
 
 
@@ -116,6 +175,7 @@ class LosFloorCandidate:
     rule_applied: RuleApplied
     suggested_price_eur: float
     effective_margin: float
+    decision_components: list[DecisionComponent]
 
 
 def decide_price_los_matrix(
@@ -158,6 +218,7 @@ def decide_price_los_matrix(
                 rule_applied=calc.rule_applied,
                 suggested_price_eur=calc.suggested_price_eur,
                 effective_margin=calc.effective_margin,
+                decision_components=calc.decision_components,
             )
         )
     return candidates

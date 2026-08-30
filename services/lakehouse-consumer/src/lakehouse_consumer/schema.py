@@ -84,6 +84,37 @@ ICEBERG_SCHEMA = Schema(
                         NestedField(46, "rule_applied", StringType()),
                         NestedField(47, "suggested_price_eur", DoubleType()),
                         NestedField(48, "effective_margin", DoubleType()),
+                        # Phase 10 (ADR-0011 backlog #4): a list nested inside
+                        # this list — this candidate's own rule component only
+                        # (spec 10 §E), appended, never inserted before 43-48.
+                        NestedField(
+                            54,
+                            "decision_components",
+                            ListType(
+                                element_id=55,
+                                element_type=StructType(
+                                    NestedField(56, "code", StringType()),
+                                    NestedField(57, "label", StringType()),
+                                    NestedField(58, "impact", DoubleType()),
+                                ),
+                                element_required=True,
+                            ),
+                        ),
+                    ),
+                    element_required=True,
+                ),
+            ),
+            # Phase 10 (ADR-0011 backlog #4): the 4 property + 1 rule
+            # components for the stay_length=1 (top-level) decision.
+            NestedField(
+                49,
+                "decision_components",
+                ListType(
+                    element_id=50,
+                    element_type=StructType(
+                        NestedField(51, "code", StringType()),
+                        NestedField(52, "label", StringType()),
+                        NestedField(53, "impact", DoubleType()),
                     ),
                     element_required=True,
                 ),

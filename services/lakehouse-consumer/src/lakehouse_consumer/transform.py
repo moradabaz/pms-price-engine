@@ -18,6 +18,20 @@ def _int(value: Any) -> int | None:
     return int(value) if value is not None else None
 
 
+def _decision_components(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Coerces one decision_components array (Phase 10, ADR-0011 backlog #4)
+    — either calculation's own or one los_floor_matrix candidate's. Returns
+    the coerced list."""
+    return [
+        {
+            "code": component["code"],
+            "label": component["label"],
+            "impact": _num(component["impact"]),
+        }
+        for component in components
+    ]
+
+
 def row_from_new_image(
     new_image: dict[str, Any], event_name: str, ingested_at: datetime
 ) -> dict[str, Any]:
@@ -96,9 +110,20 @@ def row_from_new_image(
                     "rule_applied": candidate["rule_applied"],
                     "suggested_price_eur": _num(candidate["suggested_price_eur"]),
                     "effective_margin": _num(candidate["effective_margin"]),
+                    # Phase 10 (ADR-0011 backlog #4): a record predating this
+                    # phase has no decision_components at all, at either
+                    # nesting level — empty list is the honest answer, same
+                    # convention Phase 9 established for los_floor_matrix
+                    # itself.
+                    "decision_components": _decision_components(
+                        candidate.get("decision_components", [])
+                    ),
                 }
                 for candidate in calculation.get("los_floor_matrix", [])
             ],
+            "decision_components": _decision_components(
+                calculation.get("decision_components", [])
+            ),
         },
         "output": {
             "suggested_price_eur": _num(output["suggested_price_eur"]),

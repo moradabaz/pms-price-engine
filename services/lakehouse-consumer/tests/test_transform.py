@@ -50,3 +50,21 @@ def test_row_from_new_image_defaults_missing_property_fields_pre_phase_8(
     assert row["calculation"]["property_reference_price_eur"] == (
         row["market_inputs"]["avg_nightly_rate_eur"]
     )
+
+
+def test_row_from_new_image_defaults_missing_decision_components_to_empty_list(
+    sample_new_image,
+):
+    # Regression test: a record predating Phase 10 (ADR-0011 backlog #4) has
+    # no decision_components at either nesting level — empty list is the
+    # honest answer, same convention Phase 9 established for los_floor_matrix
+    # itself.
+    image = sample_new_image("44444444-4444-4444-4444-444444444444", 132.0)
+    del image["calculation"]["decision_components"]
+    del image["calculation"]["los_floor_matrix"][0]["decision_components"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["calculation"]["decision_components"] == []
+    assert row["calculation"]["los_floor_matrix"][0]["decision_components"] == []

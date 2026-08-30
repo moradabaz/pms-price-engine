@@ -37,11 +37,108 @@
     "market_reference_price_eur": 114.47,
     "rule_applied": "market_competitive",
     "los_floor_matrix": [
-      { "stay_length": 1, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
-      { "stay_length": 2, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
-      { "stay_length": 3, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
-      { "stay_length": 7, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
-      { "stay_length": 14, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 }
+      {
+        "stay_length": 1,
+        "minimum_price_eur": 21.03,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
+          }
+        ]
+      },
+      {
+        "stay_length": 2,
+        "minimum_price_eur": 21.03,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
+          }
+        ]
+      },
+      {
+        "stay_length": 3,
+        "minimum_price_eur": 21.03,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
+          }
+        ]
+      },
+      {
+        "stay_length": 7,
+        "minimum_price_eur": 21.03,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
+          }
+        ]
+      },
+      {
+        "stay_length": 14,
+        "minimum_price_eur": 21.03,
+        "floor_type": "structural_full_margin",
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
+        "decision_components": [
+          {
+            "code": "rule_market_competitive",
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
+          }
+        ]
+      }
+    ],
+    "decision_components": [
+      {
+        "code": "property_quality_tier",
+        "label": "Quality tier 'standard' (+0%)",
+        "impact": 0.0
+      },
+      {
+        "code": "property_rating",
+        "label": "Rating 4.0 vs baseline 4.0",
+        "impact": 0.0
+      },
+      {
+        "code": "property_view",
+        "label": "No view",
+        "impact": 0.0
+      },
+      {
+        "code": "property_parking",
+        "label": "No parking",
+        "impact": 0.0
+      },
+      {
+        "code": "rule_market_competitive",
+        "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+        "impact": 93.44
+      }
     ]
   },
   "output": {

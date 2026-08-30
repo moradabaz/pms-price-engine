@@ -13,6 +13,18 @@ FloorType = Literal[
 ]
 RuleApplied = Literal["market_competitive", "minimum_floor", "cost_protected"]
 
+# Phase 10 (ADR-0011 backlog #4): closed reason-code vocabulary shared by
+# Calculation.decision_components and LosFloorCandidate.decision_components.
+ReasonCode = Literal[
+    "property_quality_tier",
+    "property_rating",
+    "property_view",
+    "property_parking",
+    "rule_market_competitive",
+    "rule_minimum_floor",
+    "rule_cost_protected",
+]
+
 
 class BillingPeriod(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -44,6 +56,19 @@ class MarketInputs(BaseModel):
     data_age_seconds: int = Field(ge=0)
 
 
+class DecisionComponent(BaseModel):
+    """One structured reason code explaining part of a pricing decision
+    (Phase 10, ADR-0011 backlog #4). impact's unit is contextual to code's
+    family: a signed adjustment fraction for property_* codes, a signed EUR
+    gap for rule_* codes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: ReasonCode
+    label: str
+    impact: float
+
+
 class LosFloorCandidate(BaseModel):
     """One LOS floor matrix entry (ADR-0011 backlog #1) — everything that
     varies with stay_length for an otherwise-identical decision."""
@@ -56,6 +81,10 @@ class LosFloorCandidate(BaseModel):
     rule_applied: RuleApplied
     suggested_price_eur: float = Field(ge=0)
     effective_margin: float
+    # Phase 10: only this candidate's own rule component — never the
+    # property Bonus/Malus block, which doesn't vary with stay_length and
+    # already lives once on the top-level Calculation (spec 10 §E).
+    decision_components: list[DecisionComponent] = Field(min_length=1)
 
 
 class Calculation(BaseModel):
@@ -72,6 +101,7 @@ class Calculation(BaseModel):
     market_reference_price_eur: float = Field(ge=0)
     rule_applied: RuleApplied
     los_floor_matrix: list[LosFloorCandidate] = Field(min_length=1)
+    decision_components: list[DecisionComponent] = Field(min_length=1)
 
 
 class Output(BaseModel):
