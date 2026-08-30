@@ -40,6 +40,16 @@ def _sample_new_image(decision_id: str, suggested_price_eur: float) -> dict:
             "property_reference_price_eur": 145.0,
             "market_reference_price_eur": 130.5,
             "rule_applied": "market_competitive",
+            "los_floor_matrix": [
+                {
+                    "stay_length": 1,
+                    "minimum_price_eur": 129.27,
+                    "floor_type": "structural_full_margin",
+                    "rule_applied": "market_competitive",
+                    "suggested_price_eur": suggested_price_eur,
+                    "effective_margin": 0.25,
+                }
+            ],
         },
         "output": {
             "suggested_price_eur": suggested_price_eur,

@@ -35,6 +35,7 @@ select
     calculation.property_reference_price_eur,
     calculation.market_reference_price_eur,
     calculation.rule_applied,
+    calculation.los_floor_matrix,
 
     output.suggested_price_eur,
     output.currency,

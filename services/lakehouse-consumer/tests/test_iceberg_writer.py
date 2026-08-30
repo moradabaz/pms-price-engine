@@ -5,7 +5,14 @@ from lakehouse_consumer.iceberg_writer import ensure_table, merge_rows
 from lakehouse_consumer.settings import ConsumerSettings
 from lakehouse_consumer.transform import row_from_new_image
 from pyiceberg.catalog.sql import SqlCatalog
-from pyiceberg.types import StringType
+from pyiceberg.schema import Schema
+from pyiceberg.types import (
+    DoubleType,
+    NestedField,
+    StringType,
+    StructType,
+    TimestampType,
+)
 
 
 def _build_settings(tmp_path) -> ConsumerSettings:
@@ -90,3 +97,60 @@ def test_schema_evolution_adds_column_without_rewriting_history(tmp_path, merge_
     assert result.num_rows == 1
     assert "channel" in result.column_names
     assert result.column("channel").to_pylist() == [None]
+
+
+_PRE_PHASE_9_SCHEMA = Schema(
+    NestedField(1, "decision_id", StringType(), required=True),
+    NestedField(2, "apartment_id", StringType(), required=True),
+    NestedField(5, "decided_at", TimestampType(), required=True),
+    NestedField(10, "dynamodb_event_name", StringType(), required=True),
+    NestedField(11, "ingested_at", TimestampType(), required=True),
+    NestedField(
+        8,
+        "calculation",
+        StructType(
+            NestedField(34, "rule_applied", StringType()),
+            NestedField(35, "property_attribute_factor", DoubleType()),
+        ),
+    ),
+)
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_ensure_table_migrates_an_existing_table_missing_newer_fields(tmp_path):
+    # Regression test: create_table_if_not_exists loads an existing table
+    # as-is and silently ignores anything ICEBERG_SCHEMA has gained since —
+    # caught live against LocalStack as a DuckDB "Could not find key
+    # 'los_floor_matrix' in struct" error against a table created before
+    # Phase 9 (ADR-0011 backlog #1) and never migrated. ensure_table must
+    # reconcile an existing table to the current schema on every call.
+    catalog = _build_catalog(tmp_path)
+    settings = _build_settings(tmp_path)
+    catalog.create_namespace_if_not_exists(settings.glue_database)
+    catalog.create_table_if_not_exists(
+        settings.iceberg_identifier,
+        schema=_PRE_PHASE_9_SCHEMA,
+        location=f"{settings.iceberg_warehouse}/{settings.iceberg_table_name}",
+    )
+
+    table = ensure_table(catalog, settings)
+
+    calculation_field = next(
+        f for f in table.schema().fields if f.name == "calculation"
+    )
+    field_names = {f.name for f in calculation_field.field_type.fields}
+    assert "los_floor_matrix" in field_names
+    assert "property_reference_price_eur" in field_names
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_ensure_table_is_idempotent_when_already_current(tmp_path):
+    # A table already matching ICEBERG_SCHEMA must not get a new schema
+    # version on every service restart — union_by_name should be a no-op.
+    catalog = _build_catalog(tmp_path)
+    settings = _build_settings(tmp_path)
+    ensure_table(catalog, settings)
+
+    table = ensure_table(catalog, settings)
+
+    assert table.schema().schema_id == 0

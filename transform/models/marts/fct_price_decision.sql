@@ -26,6 +26,7 @@ select
     property_reference_price_eur,
     market_reference_price_eur,
     rule_applied,
+    los_floor_matrix,
     suggested_price_eur,
     currency,
     effective_margin,

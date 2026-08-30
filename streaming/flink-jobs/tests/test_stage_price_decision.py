@@ -59,6 +59,25 @@ def _make_function():
     return fn, FakeReadOnlyContext(None)
 
 
+def test_los_floor_matrix_stay_length_1_matches_top_level_calculation():
+    # AC-05: the stay_length=1 entry must match the top-level calculation
+    # exactly, since the top-level calculation *is* the stay_length=1 case.
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=100.0), ctx))
+    results = list(fn.process_element2(_market(days_from_today=7), ctx))
+
+    calc = results[0].calculation
+    matrix_by_stay_length = {c.stay_length: c for c in calc.los_floor_matrix}
+    assert set(matrix_by_stay_length) == {1, 2, 3, 7, 14}
+
+    los_1 = matrix_by_stay_length[1]
+    assert los_1.minimum_price_eur == calc.minimum_price_eur
+    assert los_1.floor_type == calc.floor_type
+    assert los_1.rule_applied == calc.rule_applied
+    assert los_1.suggested_price_eur == results[0].output.suggested_price_eur
+    assert los_1.effective_margin == results[0].output.effective_margin
+
+
 def test_market_update_fans_out_across_known_apartments():
     fn, ctx = _make_function()
     list(fn.process_element1(_cost("apt-A", variable_cost=100.0), ctx))

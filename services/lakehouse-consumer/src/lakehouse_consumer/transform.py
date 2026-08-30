@@ -67,16 +67,38 @@ def row_from_new_image(
             "commission_pct": _num(calculation["commission_pct"]),
             "days_to_arrival": _int(calculation["days_to_arrival"]),
             "competitiveness_discount": _num(calculation["competitiveness_discount"]),
+            # Phase 8/9 fields (ADR-0011 backlog #6/#1): defensive defaults for
+            # DynamoDB Streams records predating each field's rollout — the
+            # same gap ADR-0009's own commission_pct fallback (job.py) already
+            # hit once for a different consumer. property_reference_price_eur
+            # defaults to avg_nightly_rate_eur (the true pre-Phase-8 value,
+            # since property_attribute_factor's own default is 1.0); an empty
+            # los_floor_matrix is the honest answer for a record that predates
+            # LOS-aware pricing entirely — never fabricated.
             "property_attribute_factor": _num(
-                calculation["property_attribute_factor"]
+                calculation.get("property_attribute_factor", 1.0)
             ),
             "property_reference_price_eur": _num(
-                calculation["property_reference_price_eur"]
+                calculation.get(
+                    "property_reference_price_eur",
+                    market_inputs["avg_nightly_rate_eur"],
+                )
             ),
             "market_reference_price_eur": _num(
                 calculation["market_reference_price_eur"]
             ),
             "rule_applied": calculation["rule_applied"],
+            "los_floor_matrix": [
+                {
+                    "stay_length": _int(candidate["stay_length"]),
+                    "minimum_price_eur": _num(candidate["minimum_price_eur"]),
+                    "floor_type": candidate["floor_type"],
+                    "rule_applied": candidate["rule_applied"],
+                    "suggested_price_eur": _num(candidate["suggested_price_eur"]),
+                    "effective_margin": _num(candidate["effective_margin"]),
+                }
+                for candidate in calculation.get("los_floor_matrix", [])
+            ],
         },
         "output": {
             "suggested_price_eur": _num(output["suggested_price_eur"]),

@@ -108,7 +108,7 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied"],
+      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
@@ -120,7 +120,7 @@
         "minimum_price_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "The active profitability floor (ADR-0009) — whichever formula floor_type selects. structural_*: ((fixed_cost_eur + variable_cost_eur) + one_time_cost_eur) / (1 - margin - commission_pct). contribution: (variable_cost_eur + one_time_cost_eur) / (1 - commission_pct), no margin term. The absolute floor for its tier — no price below this."
+          "description": "The active profitability floor for a 1-night stay (ADR-0009, ADR-0011 backlog #1) — whichever formula floor_type selects. structural_*: (fixed_cost_eur + variable_cost_eur + one_time_cost_eur) / (1 - margin - commission_pct). contribution: (variable_cost_eur + one_time_cost_eur) / (1 - commission_pct), no margin term. The absolute floor for its tier at stay_length=1 — no price below this. See los_floor_matrix for the same floor at other candidate stay lengths (one_time_cost_eur amortizes across the stay; fixed/variable costs do not, since they're already per-night rates)."
         },
         "floor_type": {
           "type": "string",
@@ -162,6 +162,24 @@
           "type": "string",
           "enum": ["market_competitive", "minimum_floor", "cost_protected"],
           "description": "market_competitive: minimum_price_eur <= market_reference_price_eur, competitive pricing applied. minimum_floor: market_reference_price_eur < minimum_price_eur <= property_reference_price_eur, the cost floor won but the apartment is still at or below its (attribute-adjusted) market reference. cost_protected: minimum_price_eur > property_reference_price_eur, the cost floor pushed the price above the apartment's market reference — the property's costs are pricing it out of its own market; the only levers are lowering target_margin or discontinuing the listing (ADR-0007, ADR-0011)."
+        },
+        "los_floor_matrix": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The same decide_price() evaluation at other candidate stay lengths (ADR-0011 backlog #1) — property_attribute_factor/property_reference_price_eur/market_reference_price_eur/below_market_by are identical across every entry (they never depend on stay_length), so they aren't repeated here. The stay_length=1 entry matches this calculation's own minimum_price_eur/floor_type/rule_applied and the top-level output's suggested_price_eur/effective_margin exactly.",
+          "items": {
+            "type": "object",
+            "required": ["stay_length", "minimum_price_eur", "floor_type", "rule_applied", "suggested_price_eur", "effective_margin"],
+            "additionalProperties": false,
+            "properties": {
+              "stay_length": { "type": "integer", "minimum": 1, "description": "Candidate LOS this entry evaluates, in nights." },
+              "minimum_price_eur": { "type": "number", "minimum": 0, "description": "The floor at this stay_length — one_time_cost_eur amortized across the stay, fixed/variable costs unchanged (they're already per-night)." },
+              "floor_type": { "type": "string", "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"], "description": "Unaffected by stay_length — selected by days_to_arrival, same for every entry in one decision." },
+              "rule_applied": { "type": "string", "enum": ["market_competitive", "minimum_floor", "cost_protected"], "description": "Can genuinely differ per entry — a longer stay's diluted floor can flip cost_protected into market_competitive." },
+              "suggested_price_eur": { "type": "number", "minimum": 0, "description": "What this LOS candidate would be priced at." },
+              "effective_margin": { "type": "number", "description": "Varies per entry — the per-night total cost this margin is computed against changes with stay_length." }
+            }
+          }
         }
       }
     },

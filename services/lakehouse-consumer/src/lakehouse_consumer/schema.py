@@ -3,6 +3,7 @@ from pyiceberg.types import (
     DateType,
     DoubleType,
     IntegerType,
+    ListType,
     NestedField,
     StringType,
     StructType,
@@ -68,6 +69,25 @@ ICEBERG_SCHEMA = Schema(
             # regardless of logical position in the struct (see module docstring).
             NestedField(39, "property_attribute_factor", DoubleType()),
             NestedField(40, "property_reference_price_eur", DoubleType()),
+            # Phase 9 (ADR-0011 backlog #1): first list field in this schema —
+            # element_id/its own nested field IDs also continue the sequence,
+            # never reused/renumbered (see module docstring).
+            NestedField(
+                41,
+                "los_floor_matrix",
+                ListType(
+                    element_id=42,
+                    element_type=StructType(
+                        NestedField(43, "stay_length", IntegerType()),
+                        NestedField(44, "minimum_price_eur", DoubleType()),
+                        NestedField(45, "floor_type", StringType()),
+                        NestedField(46, "rule_applied", StringType()),
+                        NestedField(47, "suggested_price_eur", DoubleType()),
+                        NestedField(48, "effective_margin", DoubleType()),
+                    ),
+                    element_required=True,
+                ),
+            ),
         ),
     ),
     NestedField(

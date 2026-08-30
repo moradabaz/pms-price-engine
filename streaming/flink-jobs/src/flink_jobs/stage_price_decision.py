@@ -10,6 +10,7 @@ from shared_schemas.price_decision import (
     BillingPeriod,
     Calculation,
     CostInputs,
+    LosFloorCandidate,
     MarketInputs,
     Output,
     PriceDecision,
@@ -21,7 +22,7 @@ from flink_jobs.eviction import (
     oldest_key_by_updated_at,
 )
 from flink_jobs.models import CostAggregate, MarketSnapshot
-from flink_jobs.pricing import decide_price
+from flink_jobs.pricing import decide_price, decide_price_los_matrix
 from flink_jobs.staleness import is_safe_to_overwrite
 from flink_jobs.watchdog import expired_keys, next_deadline_millis
 
@@ -144,6 +145,17 @@ def _build_price_decision(
         days_to_arrival=days_to_arrival,
         property_attribute_factor=cost.property_attribute_factor,
     )
+    los_matrix = decide_price_los_matrix(
+        fixed_cost_eur=cost.fixed_cost_eur,
+        variable_cost_eur=cost.variable_cost_eur,
+        one_time_cost_eur=cost.one_time_cost_eur,
+        target_margin=cost.target_margin,
+        commission_pct=cost.commission_pct,
+        avg_nightly_rate_eur=market.avg_nightly_rate_eur,
+        competitiveness_discount=cost.competitiveness_discount,
+        days_to_arrival=days_to_arrival,
+        property_attribute_factor=cost.property_attribute_factor,
+    )
     return PriceDecision(
         decision_id=uuid4(),
         apartment_id=cost.apartment_id,
@@ -184,6 +196,17 @@ def _build_price_decision(
             property_reference_price_eur=calc.property_reference_price_eur,
             market_reference_price_eur=calc.market_reference_price_eur,
             rule_applied=calc.rule_applied,
+            los_floor_matrix=[
+                LosFloorCandidate(
+                    stay_length=candidate.stay_length,
+                    minimum_price_eur=candidate.minimum_price_eur,
+                    floor_type=candidate.floor_type,
+                    rule_applied=candidate.rule_applied,
+                    suggested_price_eur=candidate.suggested_price_eur,
+                    effective_margin=candidate.effective_margin,
+                )
+                for candidate in los_matrix
+            ],
         ),
         output=Output(
             suggested_price_eur=calc.suggested_price_eur,

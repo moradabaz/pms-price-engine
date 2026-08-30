@@ -6,6 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Mirrors specs/events/price_decision.v1.json field-for-field.
 
+# Shared between Calculation and LosFloorCandidate (Phase 9) — defined once
+# rather than repeating the same enum tuple in two Pydantic models.
+FloorType = Literal[
+    "structural_full_margin", "structural_reduced_margin", "contribution"
+]
+RuleApplied = Literal["market_competitive", "minimum_floor", "cost_protected"]
+
 
 class BillingPeriod(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -37,21 +44,34 @@ class MarketInputs(BaseModel):
     data_age_seconds: int = Field(ge=0)
 
 
+class LosFloorCandidate(BaseModel):
+    """One LOS floor matrix entry (ADR-0011 backlog #1) — everything that
+    varies with stay_length for an otherwise-identical decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stay_length: int = Field(ge=1)
+    minimum_price_eur: float = Field(ge=0)
+    floor_type: FloorType
+    rule_applied: RuleApplied
+    suggested_price_eur: float = Field(ge=0)
+    effective_margin: float
+
+
 class Calculation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target_margin: float = Field(ge=0)
     minimum_price_eur: float = Field(ge=0)
-    floor_type: Literal[
-        "structural_full_margin", "structural_reduced_margin", "contribution"
-    ]
+    floor_type: FloorType
     commission_pct: float = Field(ge=0, le=1)
     days_to_arrival: int
     competitiveness_discount: float = Field(ge=0, le=1)
     property_attribute_factor: float = Field(ge=0)
     property_reference_price_eur: float = Field(ge=0)
     market_reference_price_eur: float = Field(ge=0)
-    rule_applied: Literal["market_competitive", "minimum_floor", "cost_protected"]
+    rule_applied: RuleApplied
+    los_floor_matrix: list[LosFloorCandidate] = Field(min_length=1)
 
 
 class Output(BaseModel):

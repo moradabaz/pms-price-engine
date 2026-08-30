@@ -35,7 +35,14 @@
     "property_attribute_factor": 1.0,
     "property_reference_price_eur": 120.5,
     "market_reference_price_eur": 114.47,
-    "rule_applied": "market_competitive"
+    "rule_applied": "market_competitive",
+    "los_floor_matrix": [
+      { "stay_length": 1, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
+      { "stay_length": 2, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
+      { "stay_length": 3, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
+      { "stay_length": 7, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 },
+      { "stay_length": 14, "minimum_price_eur": 21.03, "floor_type": "structural_full_margin", "rule_applied": "market_competitive", "suggested_price_eur": 114.47, "effective_margin": 7.3742 }
+    ]
   },
   "output": {
     "suggested_price_eur": 114.47,

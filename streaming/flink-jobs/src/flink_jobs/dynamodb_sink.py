@@ -60,6 +60,8 @@ def _python_to_dynamodb(value: Any) -> Any:
         return {"N": str(value)}
     if isinstance(value, dict):
         return {"M": {k: _python_to_dynamodb(v) for k, v in value.items()}}
+    if isinstance(value, list):
+        return {"L": [_python_to_dynamodb(v) for v in value]}
     if value is None:
         return {"NULL": True}
     raise TypeError(f"Unsupported type for DynamoDB item: {type(value)}")

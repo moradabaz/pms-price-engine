@@ -16,7 +16,17 @@ def ensure_table(catalog: Catalog, settings: ConsumerSettings) -> Table:
     """Creates the raw table (and its Glue database) if this is the first
     run, otherwise loads the existing one. Partitioned by days(decided_at)
     (spec 05 §4/§10, pre-spec Decision B) — Iceberg's hidden partitioning,
-    no partition value computed by this consumer. Returns the table."""
+    no partition value computed by this consumer.
+
+    Self-healing schema migration (Phase 9, ADR-0011 backlog #1): on an
+    existing table, create_table_if_not_exists loads it as-is and ignores
+    any fields ICEBERG_SCHEMA has gained since it was first created —
+    union_by_name reconciles the two on every call, adding whatever's
+    missing (nested struct/list fields included) and committing nothing
+    when there's no difference. Same self-healing-migration shape
+    mock-pm-app's ensure_apartment_market_segments_schema already
+    establishes for Postgres (ADD COLUMN IF NOT EXISTS, run unconditionally
+    at every startup), applied to Iceberg. Returns the table."""
     catalog.create_namespace_if_not_exists(settings.glue_database)
     partition_spec = PartitionSpec(
         PartitionField(
@@ -27,12 +37,15 @@ def ensure_table(catalog: Catalog, settings: ConsumerSettings) -> Table:
         )
     )
     location = f"{settings.iceberg_warehouse}/{settings.iceberg_table_name}"
-    return catalog.create_table_if_not_exists(
+    table = catalog.create_table_if_not_exists(
         settings.iceberg_identifier,
         schema=ICEBERG_SCHEMA,
         location=location,
         partition_spec=partition_spec,
     )
+    with table.update_schema() as update:
+        update.union_by_name(ICEBERG_SCHEMA)
+    return table
 
 
 def merge_rows(table: Table, rows: list[dict[str, Any]]) -> None:
