@@ -1,13 +1,13 @@
-from flink_jobs.decision_components import DecisionComponent
-from flink_jobs.pricing import (
+from unittest.mock import patch
+
+from pricing_formulas.decision_components import DecisionComponent
+from pricing_formulas.engine import (
     LOS_CANDIDATES,
-    commission_base_netting_component,
     decide_price,
     decide_price_los_matrix,
-    floor_policy_for,
-    netted_commission_amount,
-    rule_decision_component,
 )
+from pricing_formulas.layers.booking_window import floor_policy_for
+from pricing_formulas.layers.commercial import commission_base_netting_component
 
 
 def test_division_not_multiplication_for_the_floor():
@@ -197,13 +197,6 @@ def test_floor_type_boundaries():
     assert decide_price(days_to_arrival=0, **common).floor_type == "contribution"
 
 
-def test_floor_policy_for_all_three_floor_types():
-    # AC-01 (spec 12): contribution is Hard, both structural_* tiers are Soft.
-    assert floor_policy_for("structural_full_margin") == "soft"
-    assert floor_policy_for("structural_reduced_margin") == "soft"
-    assert floor_policy_for("contribution") == "hard"
-
-
 def test_decide_price_sets_floor_policy_consistently_with_floor_type():
     # AC-02 (spec 12): floor_policy tracks floor_type across all three
     # antelación tiers, not just a single hardcoded value.
@@ -354,43 +347,6 @@ def test_decide_price_los_matrix_rule_applied_can_differ_across_candidates():
         assert by_stay_length[n].suggested_price_eur == 85.5
 
 
-def test_rule_decision_component_market_competitive():
-    # spec 10 §3: impact is the headroom, market reference minus floor.
-    component = rule_decision_component(
-        "market_competitive",
-        minimum_price_eur=21.03,
-        market_reference_price_eur=114.47,
-        property_reference_price_eur=120.5,
-    )
-    assert component.code == "rule_market_competitive"
-    assert component.impact == 93.44
-
-
-def test_rule_decision_component_minimum_floor():
-    # impact is how far the floor sits above market, while still <= property
-    # reference (property_reference=200.0 > minimum_price=195.0).
-    component = rule_decision_component(
-        "minimum_floor",
-        minimum_price_eur=195.0,
-        market_reference_price_eur=190.0,
-        property_reference_price_eur=200.0,
-    )
-    assert component.code == "rule_minimum_floor"
-    assert component.impact == 5.0
-
-
-def test_rule_decision_component_cost_protected():
-    # impact is how far the floor exceeds the apartment's own reference.
-    component = rule_decision_component(
-        "cost_protected",
-        minimum_price_eur=210.0,
-        market_reference_price_eur=190.0,
-        property_reference_price_eur=200.0,
-    )
-    assert component.code == "rule_cost_protected"
-    assert component.impact == 10.0
-
-
 def test_decide_price_default_decision_components_is_rule_only():
     # AC-04: no property_decision_components passed -> exactly one entry.
     result = decide_price(
@@ -456,32 +412,6 @@ def test_decide_price_los_matrix_candidates_carry_only_their_own_rule_component(
     for candidate in matrix:
         assert len(candidate.decision_components) == 1
         assert candidate.decision_components[0].code == f"rule_{candidate.rule_applied}"
-
-
-def test_netted_commission_amount_per_base():
-    assert netted_commission_amount("total_revenue", 45.0, 25.0) == 0.0
-    assert netted_commission_amount("revenue_minus_ota", 45.0, 25.0) == 45.0
-    assert (
-        netted_commission_amount("revenue_minus_ota_minus_cleaning", 45.0, 25.0)
-        == 70.0
-    )
-
-
-def test_commission_base_netting_component_absent_when_net_is_zero():
-    # AC-05: no component at total_revenue, nor for a netting base whose
-    # underlying amount happens to be zero this period (no noise for no
-    # information gain, spec 11 §F).
-    assert commission_base_netting_component("total_revenue", 0.15, 0.0) is None
-    assert (
-        commission_base_netting_component("revenue_minus_ota", 0.15, 0.0) is None
-    )
-
-
-def test_commission_base_netting_component_present_when_net_is_positive():
-    component = commission_base_netting_component("revenue_minus_ota", 0.15, 45.0)
-    assert component is not None
-    assert component.code == "commission_base_netting"
-    assert component.impact == -6.75
 
 
 def test_decide_price_commission_base_netting_reduces_the_floor():
@@ -616,3 +546,82 @@ def test_decide_price_los_matrix_never_carries_commission_component():
         assert candidate.decision_components[0].code == f"rule_{candidate.rule_applied}"
     for baseline, netted in zip(without_netting, with_netting, strict=True):
         assert netted.minimum_price_eur < baseline.minimum_price_eur
+
+
+def test_rule_applied_boundary_survives_rounding_at_the_market_comparison():
+    # AC-04 (spec 13 §F): minimum_price_eur (100.004 unrounded) is genuinely
+    # ABOVE market_reference_price_eur (99.997 unrounded) -> not
+    # market_competitive. Both round to 100.0 at 2dp, so a refactor that
+    # rounds once and reuses that rounded value for the comparison (instead
+    # of comparing unrounded, as apply_guardrails() must) would wrongly see
+    # 100.0 <= 100.0 and pick market_competitive instead of cost_protected.
+    result = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=100.004,
+        one_time_cost_eur=0.0,
+        target_margin=0.0,
+        commission_pct=0.0,
+        avg_nightly_rate_eur=99.997,
+        competitiveness_discount=0.0,
+        days_to_arrival=45,
+    )
+    assert result.rule_applied == "cost_protected"
+    assert result.minimum_price_eur == 100.0
+    assert result.market_reference_price_eur == 100.0
+    assert result.suggested_price_eur == 100.0
+
+
+def test_rule_applied_boundary_survives_rounding_at_the_property_comparison():
+    # AC-04 (spec 13 §F): minimum_price_eur (100.004 unrounded) is genuinely
+    # ABOVE property_reference_price_eur (99.997 unrounded) -> cost_protected,
+    # not minimum_floor, even though market_reference_price_eur (94.99715,
+    # from the 5% discount) is comfortably below both, and minimum_price_eur/
+    # property_reference_price_eur both round to the same 100.0 at 2dp. A
+    # round-then-compare refactor would wrongly see 100.0 <= 100.0 and pick
+    # minimum_floor.
+    result = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=100.004,
+        one_time_cost_eur=0.0,
+        target_margin=0.0,
+        commission_pct=0.0,
+        avg_nightly_rate_eur=99.997,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert result.rule_applied == "cost_protected"
+    assert result.minimum_price_eur == 100.0
+    assert result.property_reference_price_eur == 100.0
+    assert result.market_reference_price_eur == 95.0
+    assert result.suggested_price_eur == 100.0
+
+
+def test_performance_and_inventory_layers_multiply_into_property_reference_price():
+    # AC-05: proves the stubs are real, reachable code — not dead. Patched
+    # where decide_price() looks them up (pricing_formulas.engine), not
+    # where they're defined (pricing_formulas.layers.performance/inventory) —
+    # patching the definition would leave engine.py's already-bound
+    # reference untouched.
+    common = dict(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=100.0,
+        one_time_cost_eur=0.0,
+        target_margin=0.05,
+        commission_pct=0.0,
+        avg_nightly_rate_eur=100.0,
+        competitiveness_discount=0.0,
+        days_to_arrival=45,
+        property_attribute_factor=1.0,
+    )
+    baseline = decide_price(**common)
+    with patch("pricing_formulas.engine.performance_layer", return_value=1.10):
+        boosted = decide_price(**common)
+    assert boosted.property_reference_price_eur == round(
+        baseline.property_reference_price_eur * 1.10, 2
+    )
+
+    with patch("pricing_formulas.engine.inventory_layer", return_value=0.90):
+        reduced = decide_price(**common)
+    assert reduced.property_reference_price_eur == round(
+        baseline.property_reference_price_eur * 0.90, 2
+    )

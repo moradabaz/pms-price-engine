@@ -8,11 +8,13 @@ dependencies = [
     "pydantic-settings>=2.14.0",
     "shared-schemas",
     "common",
+    "pricing-formulas",
 ]
 
 [tool.uv.sources]
 shared-schemas = { workspace = true }
 common = { workspace = true }
+pricing-formulas = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

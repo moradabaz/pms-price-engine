@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from flink_jobs.decision_components import DecisionComponent
-from flink_jobs.pricing import CommissionBase
+from pricing_formulas.decision_components import DecisionComponent
+from pricing_formulas.layers.commercial import CommissionBase
 
 
 @dataclass(frozen=True)

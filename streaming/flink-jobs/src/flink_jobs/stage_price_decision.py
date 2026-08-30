@@ -1,6 +1,11 @@
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
+from pricing_formulas.engine import decide_price, decide_price_los_matrix
+from pricing_formulas.layers.commercial import (
+    commission_base_netting_component,
+    netted_commission_amount,
+)
 from pyflink.common.typeinfo import Types
 from pyflink.datastream import OutputTag
 from pyflink.datastream.functions import KeyedCoProcessFunction
@@ -23,12 +28,6 @@ from flink_jobs.eviction import (
     oldest_key_by_updated_at,
 )
 from flink_jobs.models import CostAggregate, MarketSnapshot
-from flink_jobs.pricing import (
-    commission_base_netting_component,
-    decide_price,
-    decide_price_los_matrix,
-    netted_commission_amount,
-)
 from flink_jobs.staleness import is_safe_to_overwrite
 from flink_jobs.watchdog import expired_keys, next_deadline_millis
 
@@ -236,9 +235,7 @@ def _build_price_decision(
                     suggested_price_eur=candidate.suggested_price_eur,
                     effective_margin=candidate.effective_margin,
                     decision_components=[
-                        DecisionComponent(
-                            code=c.code, label=c.label, impact=c.impact
-                        )
+                        DecisionComponent(code=c.code, label=c.label, impact=c.impact)
                         for c in candidate.decision_components
                     ],
                 )

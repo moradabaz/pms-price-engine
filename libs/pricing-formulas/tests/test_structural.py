@@ -1,4 +1,4 @@
-from flink_jobs.property_attributes import (
+from pricing_formulas.layers.structural import (
     MAX_FACTOR,
     MIN_FACTOR,
     PARKING_ADJUSTMENT,

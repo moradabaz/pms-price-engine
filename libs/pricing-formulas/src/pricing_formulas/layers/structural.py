@@ -1,4 +1,4 @@
-from flink_jobs.decision_components import DecisionComponent
+from pricing_formulas.decision_components import DecisionComponent
 
 # Phase 8 (docs/adr/ADR-0011 backlog #6,
 # docs/phase-8-property-bonus-malus-design-decisions.md §B): weights as named
@@ -16,6 +16,9 @@ RATING_BASELINE = 4.0
 RATING_WEIGHT = 0.10
 VIEW_ADJUSTMENT = 0.05
 PARKING_ADJUSTMENT = 0.04
+# Phase 13 (ADR-0011 backlog #7, spec 13 §C): this clamp is an internal bound
+# on Structural's own arithmetic, not a cross-layer arbitration — it stays
+# here rather than moving to guardrails.py. See spec 13 §C for the reasoning.
 MIN_FACTOR = 0.5
 MAX_FACTOR = 2.0
 
@@ -67,3 +70,14 @@ def property_attribute_factor(
         )
     )
     return round(min(max(1 + adjustment, MIN_FACTOR), MAX_FACTOR), 4)
+
+
+def property_reference_price(
+    avg_nightly_rate_eur: float, property_attribute_factor: float
+) -> float:
+    """Structural layer's per-decision output (ADR-0011 backlog #7, spec 13
+    §3) — the segment's raw market average, adjusted for this specific
+    apartment's Bonus/Malus attributes. Pure extraction of engine.py's
+    former inline multiplication; unrounded, rounded once by the caller.
+    Returns the property reference price."""
+    return avg_nightly_rate_eur * property_attribute_factor

@@ -1,5 +1,9 @@
 from datetime import UTC, datetime
 
+from pricing_formulas.layers.structural import (
+    property_attribute_components,
+    property_attribute_factor,
+)
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import KeyedBroadcastProcessFunction
 from pyflink.datastream.state import MapStateDescriptor
@@ -7,10 +11,6 @@ from shared_schemas.payment_line import PaymentLine
 
 from flink_jobs.cost_aggregation import aggregate_cost, retained_billing_period_ends
 from flink_jobs.models import ApartmentSegmentRow, CostAggregate
-from flink_jobs.property_attributes import (
-    property_attribute_components,
-    property_attribute_factor,
-)
 
 SEGMENT_BROADCAST_DESCRIPTOR = MapStateDescriptor(
     "apartment-segment-assignments", Types.STRING(), Types.PICKLED_BYTE_ARRAY()

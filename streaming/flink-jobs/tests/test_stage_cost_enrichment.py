@@ -5,8 +5,8 @@ from fakes import (
     FakeRuntimeContext,
 )
 from flink_jobs.models import ApartmentSegmentRow
-from flink_jobs.property_attributes import property_attribute_components
 from flink_jobs.stage_cost_enrichment import CostEnrichmentFunction
+from pricing_formulas.layers.structural import property_attribute_components
 from shared_schemas.payment_line import PaymentLine
 
 
