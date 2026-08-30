@@ -125,7 +125,7 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "floor_type", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components"],
+      "required": ["target_margin", "minimum_price_eur", "floor_type", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
@@ -143,6 +143,11 @@
           "type": "string",
           "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"],
           "description": "Which floor formula produced minimum_price_eur, selected by days_to_arrival (ADR-0009): structural_full_margin (>30 days), structural_reduced_margin (15-30 days, margin × 0.75), contribution (<15 days, no margin term — only variable + one-time costs and commission)."
+        },
+        "floor_policy": {
+          "type": "string",
+          "enum": ["hard", "soft"],
+          "description": "Classifies floor_type into the external spec's Hard/Soft floor vocabulary (ADR-0011 backlog #10): hard for contribution (the absolute, never-crossed floor), soft for either structural_* tier (a margin target, relaxable by antelación)."
         },
         "commission_pct": {
           "type": "number",
@@ -191,12 +196,13 @@
           "description": "The same decide_price() evaluation at other candidate stay lengths (ADR-0011 backlog #1) — property_attribute_factor/property_reference_price_eur/market_reference_price_eur/below_market_by are identical across every entry (they never depend on stay_length), so they aren't repeated here. The stay_length=1 entry matches this calculation's own minimum_price_eur/floor_type/rule_applied and the top-level output's suggested_price_eur/effective_margin exactly.",
           "items": {
             "type": "object",
-            "required": ["stay_length", "minimum_price_eur", "floor_type", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
+            "required": ["stay_length", "minimum_price_eur", "floor_type", "floor_policy", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
             "additionalProperties": false,
             "properties": {
               "stay_length": { "type": "integer", "minimum": 1, "description": "Candidate LOS this entry evaluates, in nights." },
               "minimum_price_eur": { "type": "number", "minimum": 0, "description": "The floor at this stay_length — one_time_cost_eur amortized across the stay, fixed/variable costs unchanged (they're already per-night)." },
               "floor_type": { "type": "string", "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"], "description": "Unaffected by stay_length — selected by days_to_arrival, same for every entry in one decision." },
+              "floor_policy": { "type": "string", "enum": ["hard", "soft"], "description": "This candidate's own floor_type classified into Hard/Soft (ADR-0011 backlog #10) — see calculation.floor_policy." },
               "rule_applied": { "type": "string", "enum": ["market_competitive", "minimum_floor", "cost_protected"], "description": "Can genuinely differ per entry — a longer stay's diluted floor can flip cost_protected into market_competitive." },
               "suggested_price_eur": { "type": "number", "minimum": 0, "description": "What this LOS candidate would be priced at." },
               "effective_margin": { "type": "number", "description": "Varies per entry — the per-night total cost this margin is computed against changes with stay_length." },

@@ -4,6 +4,7 @@ from flink_jobs.pricing import (
     commission_base_netting_component,
     decide_price,
     decide_price_los_matrix,
+    floor_policy_for,
     netted_commission_amount,
     rule_decision_component,
 )
@@ -196,6 +197,35 @@ def test_floor_type_boundaries():
     assert decide_price(days_to_arrival=0, **common).floor_type == "contribution"
 
 
+def test_floor_policy_for_all_three_floor_types():
+    # AC-01 (spec 12): contribution is Hard, both structural_* tiers are Soft.
+    assert floor_policy_for("structural_full_margin") == "soft"
+    assert floor_policy_for("structural_reduced_margin") == "soft"
+    assert floor_policy_for("contribution") == "hard"
+
+
+def test_decide_price_sets_floor_policy_consistently_with_floor_type():
+    # AC-02 (spec 12): floor_policy tracks floor_type across all three
+    # antelación tiers, not just a single hardcoded value.
+    common = dict(
+        fixed_cost_eur=50.0,
+        variable_cost_eur=30.0,
+        one_time_cost_eur=20.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=90.0,
+        competitiveness_discount=0.05,
+    )
+    for days_to_arrival, expected_policy in (
+        (31, "soft"),
+        (15, "soft"),
+        (14, "hard"),
+    ):
+        result = decide_price(days_to_arrival=days_to_arrival, **common)
+        assert result.floor_policy == expected_policy
+        assert result.floor_policy == floor_policy_for(result.floor_type)
+
+
 def test_stay_length_default_matches_pre_phase_9_behavior():
     # AC-01: stay_length=1 (the default) must reproduce every existing
     # worked example unchanged.
@@ -276,9 +306,28 @@ def test_decide_price_los_matrix_matches_standalone_calls():
         standalone = decide_price(stay_length=candidate.stay_length, **common)
         assert candidate.minimum_price_eur == standalone.minimum_price_eur
         assert candidate.floor_type == standalone.floor_type
+        assert candidate.floor_policy == standalone.floor_policy
         assert candidate.rule_applied == standalone.rule_applied
         assert candidate.suggested_price_eur == standalone.suggested_price_eur
         assert candidate.effective_margin == standalone.effective_margin
+
+
+def test_decide_price_los_matrix_floor_policy_matches_its_own_floor_type():
+    # AC-03 (spec 12): each candidate's floor_policy is derived from its own
+    # floor_type independently, not copied from the top-level decision.
+    matrix = decide_price_los_matrix(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=0.0,
+        one_time_cost_eur=110.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=90.0,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+        stay_lengths=(1, 3, 7, 14),
+    )
+    for candidate in matrix:
+        assert candidate.floor_policy == floor_policy_for(candidate.floor_type)
 
 
 def test_decide_price_los_matrix_rule_applied_can_differ_across_candidates():

@@ -82,6 +82,10 @@ ICEBERG_SCHEMA = Schema(
                         NestedField(44, "minimum_price_eur", DoubleType()),
                         NestedField(45, "floor_type", StringType()),
                         NestedField(46, "rule_applied", StringType()),
+                        # Phase 12 (ADR-0011 backlog #10): appended, not
+                        # inserted next to floor_type/45 — new IDs always go
+                        # at the end of the sequence (see module docstring).
+                        NestedField(61, "floor_policy", StringType()),
                         NestedField(47, "suggested_price_eur", DoubleType()),
                         NestedField(48, "effective_margin", DoubleType()),
                         # Phase 10 (ADR-0011 backlog #4): a list nested inside
@@ -122,6 +126,9 @@ ICEBERG_SCHEMA = Schema(
             # Phase 11 (ADR-0011 backlog #5): a cheap scalar addition, not a
             # new shape (a string, like floor_type/rule_applied already are).
             NestedField(59, "commission_base", StringType()),
+            # Phase 12 (ADR-0011 backlog #10): same kind of cheap scalar
+            # addition, classifying floor_type into Hard/Soft.
+            NestedField(60, "floor_policy", StringType()),
         ),
     ),
     NestedField(

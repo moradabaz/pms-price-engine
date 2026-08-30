@@ -17,6 +17,9 @@ RuleApplied = Literal["market_competitive", "minimum_floor", "cost_protected"]
 CommissionBase = Literal[
     "total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"
 ]
+# Phase 12 (ADR-0011 backlog #10): explicit classification of floor_type
+# into the external spec's Hard/Soft floor vocabulary.
+FloorPolicy = Literal["hard", "soft"]
 
 # Phase 10 (ADR-0011 backlog #4): closed reason-code vocabulary shared by
 # Calculation.decision_components and LosFloorCandidate.decision_components.
@@ -86,6 +89,7 @@ class LosFloorCandidate(BaseModel):
     stay_length: int = Field(ge=1)
     minimum_price_eur: float = Field(ge=0)
     floor_type: FloorType
+    floor_policy: FloorPolicy
     rule_applied: RuleApplied
     suggested_price_eur: float = Field(ge=0)
     effective_margin: float
@@ -101,6 +105,7 @@ class Calculation(BaseModel):
     target_margin: float = Field(ge=0)
     minimum_price_eur: float = Field(ge=0)
     floor_type: FloorType
+    floor_policy: FloorPolicy
     commission_pct: float = Field(ge=0, le=1)
     commission_base: CommissionBase
     days_to_arrival: int

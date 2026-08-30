@@ -28,6 +28,7 @@ select
     calculation.target_margin,
     calculation.minimum_price_eur,
     calculation.floor_type,
+    calculation.floor_policy,
     calculation.commission_pct,
     calculation.commission_base,
     calculation.days_to_arrival,

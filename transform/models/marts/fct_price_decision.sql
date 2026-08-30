@@ -19,6 +19,7 @@ select
     target_margin,
     minimum_price_eur,
     floor_type,
+    floor_policy,
     commission_pct,
     commission_base,
     days_to_arrival,

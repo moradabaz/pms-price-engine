@@ -12,6 +12,9 @@ FloorType = Literal[
 CommissionBase = Literal[
     "total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"
 ]
+# Phase 12 (ADR-0011 backlog #10, spec 12 §3): explicit classification of
+# floor_type into the external spec's Hard/Soft floor vocabulary.
+FloorPolicy = Literal["hard", "soft"]
 
 # ADR-0009 (D4): antelación tier boundaries and the margin cut in the 15-30
 # day band, taken from the stakeholders' own table.
@@ -24,10 +27,18 @@ REDUCED_MARGIN_FACTOR = 0.75
 LOS_CANDIDATES: tuple[int, ...] = (1, 2, 3, 7, 14)
 
 
+def floor_policy_for(floor_type: FloorType) -> FloorPolicy:
+    """Classifies a floor_type as the external spec's Hard floor (absolute,
+    never crossed) or Soft floor (a margin target, relaxable by antelación —
+    ADR-0011 backlog #10, spec 12 §4). Returns the policy."""
+    return "hard" if floor_type == "contribution" else "soft"
+
+
 @dataclass(frozen=True)
 class PriceCalculation:
     minimum_price_eur: float
     floor_type: FloorType
+    floor_policy: FloorPolicy
     property_attribute_factor: float
     property_reference_price_eur: float
     market_reference_price_eur: float
@@ -219,6 +230,7 @@ def decide_price(
     return PriceCalculation(
         minimum_price_eur=round(minimum_price_eur, 2),
         floor_type=floor_type,
+        floor_policy=floor_policy_for(floor_type),
         property_attribute_factor=property_attribute_factor,
         property_reference_price_eur=round(property_reference_price_eur, 2),
         market_reference_price_eur=round(market_reference_price_eur, 2),
@@ -235,6 +247,7 @@ class LosFloorCandidate:
     stay_length: int
     minimum_price_eur: float
     floor_type: FloorType
+    floor_policy: FloorPolicy
     rule_applied: RuleApplied
     suggested_price_eur: float
     effective_margin: float
@@ -280,6 +293,7 @@ def decide_price_los_matrix(
                 stay_length=stay_length,
                 minimum_price_eur=calc.minimum_price_eur,
                 floor_type=calc.floor_type,
+                floor_policy=calc.floor_policy,
                 rule_applied=calc.rule_applied,
                 suggested_price_eur=calc.suggested_price_eur,
                 effective_margin=calc.effective_margin,

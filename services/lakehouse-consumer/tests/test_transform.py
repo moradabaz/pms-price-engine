@@ -83,3 +83,37 @@ def test_row_from_new_image_defaults_missing_commission_base_to_total_revenue(
     row = row_from_new_image(image, "INSERT", ingested_at)
 
     assert row["calculation"]["commission_base"] == "total_revenue"
+
+
+def test_row_from_new_image_derives_missing_floor_policy_from_floor_type_soft(
+    sample_new_image,
+):
+    # Regression test: a record predating Phase 12 (ADR-0011 backlog #10) has
+    # no floor_policy at all — re-derived from floor_type, never a fabricated
+    # constant (spec 12 §D). structural_full_margin -> soft.
+    image = sample_new_image("66666666-6666-6666-6666-666666666666", 132.0)
+    del image["calculation"]["floor_policy"]
+    del image["calculation"]["los_floor_matrix"][0]["floor_policy"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["calculation"]["floor_policy"] == "soft"
+    assert row["calculation"]["los_floor_matrix"][0]["floor_policy"] == "soft"
+
+
+def test_row_from_new_image_derives_missing_floor_policy_from_floor_type_hard(
+    sample_new_image,
+):
+    # Same fallback, but for the contribution -> hard mapping.
+    image = sample_new_image("77777777-7777-7777-7777-777777777777", 132.0)
+    image["calculation"]["floor_type"] = "contribution"
+    image["calculation"]["los_floor_matrix"][0]["floor_type"] = "contribution"
+    del image["calculation"]["floor_policy"]
+    del image["calculation"]["los_floor_matrix"][0]["floor_policy"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["calculation"]["floor_policy"] == "hard"
+    assert row["calculation"]["los_floor_matrix"][0]["floor_policy"] == "hard"

@@ -214,6 +214,7 @@ def _build_price_decision(
             target_margin=cost.target_margin,
             minimum_price_eur=calc.minimum_price_eur,
             floor_type=calc.floor_type,
+            floor_policy=calc.floor_policy,
             commission_pct=cost.commission_pct,
             # Phase 11 (ADR-0011 backlog #5): set directly from cost, same as
             # commission_pct above — decide_price() doesn't need to know
@@ -230,6 +231,7 @@ def _build_price_decision(
                     stay_length=candidate.stay_length,
                     minimum_price_eur=candidate.minimum_price_eur,
                     floor_type=candidate.floor_type,
+                    floor_policy=candidate.floor_policy,
                     rule_applied=candidate.rule_applied,
                     suggested_price_eur=candidate.suggested_price_eur,
                     effective_margin=candidate.effective_margin,

@@ -18,6 +18,14 @@ def _int(value: Any) -> int | None:
     return int(value) if value is not None else None
 
 
+def _floor_policy_for(floor_type: str) -> str:
+    """Same derivation as pricing.py's floor_policy_for (ADR-0011 backlog
+    #10) — duplicated here since lakehouse-consumer doesn't depend on
+    flink_jobs. Used only as a fallback for records predating Phase 12,
+    which never have a fabricated floor_policy, only a re-derived one."""
+    return "hard" if floor_type == "contribution" else "soft"
+
+
 def _decision_components(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Coerces one decision_components array (Phase 10, ADR-0011 backlog #4)
     — either calculation's own or one los_floor_matrix candidate's. Returns
@@ -78,6 +86,12 @@ def row_from_new_image(
             "target_margin": _num(calculation["target_margin"]),
             "minimum_price_eur": _num(calculation["minimum_price_eur"]),
             "floor_type": calculation["floor_type"],
+            # Phase 12 (ADR-0011 backlog #10): a record predating this phase
+            # has no floor_policy at all — re-derived from that same
+            # record's own floor_type, never a fabricated constant.
+            "floor_policy": calculation.get(
+                "floor_policy", _floor_policy_for(calculation["floor_type"])
+            ),
             "commission_pct": _num(calculation["commission_pct"]),
             "days_to_arrival": _int(calculation["days_to_arrival"]),
             "competitiveness_discount": _num(calculation["competitiveness_discount"]),
@@ -107,6 +121,9 @@ def row_from_new_image(
                     "stay_length": _int(candidate["stay_length"]),
                     "minimum_price_eur": _num(candidate["minimum_price_eur"]),
                     "floor_type": candidate["floor_type"],
+                    "floor_policy": candidate.get(
+                        "floor_policy", _floor_policy_for(candidate["floor_type"])
+                    ),
                     "rule_applied": candidate["rule_applied"],
                     "suggested_price_eur": _num(candidate["suggested_price_eur"]),
                     "effective_margin": _num(candidate["effective_margin"]),

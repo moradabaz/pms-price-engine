@@ -80,6 +80,7 @@ def test_los_floor_matrix_stay_length_1_matches_top_level_calculation():
     los_1 = matrix_by_stay_length[1]
     assert los_1.minimum_price_eur == calc.minimum_price_eur
     assert los_1.floor_type == calc.floor_type
+    assert los_1.floor_policy == calc.floor_policy
     assert los_1.rule_applied == calc.rule_applied
     assert los_1.suggested_price_eur == results[0].output.suggested_price_eur
     assert los_1.effective_margin == results[0].output.effective_margin
@@ -144,8 +145,12 @@ def test_cost_update_fans_out_across_known_nights():
     by_date = {str(d.target_date): d for d in results}
     assert by_date[str(near_night)].calculation.rule_applied == "cost_protected"
     assert by_date[str(near_night)].calculation.floor_type == "contribution"
+    # AC-02 (spec 12): contribution -> hard, structural_reduced_margin -> soft,
+    # wired end-to-end through the real PriceDecisionFunction, not just pricing.py.
+    assert by_date[str(near_night)].calculation.floor_policy == "hard"
     assert by_date[str(far_night)].calculation.rule_applied == "market_competitive"
     assert by_date[str(far_night)].calculation.floor_type == "structural_reduced_margin"
+    assert by_date[str(far_night)].calculation.floor_policy == "soft"
 
 
 def test_past_target_date_is_dropped():
