@@ -64,6 +64,17 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     commission_pct       NUMERIC(5,4) NOT NULL DEFAULT 0.15
                                   CHECK (commission_pct >= 0 AND commission_pct <= 1),
 
+    -- Phase 8 (docs/adr/ADR-0011, backlog #6): raw Property Bonus/Malus
+    -- attributes. Flink resolves these into a single property_attribute_factor
+    -- on CostAggregate (flink_jobs/property_attributes.py) — this table stores
+    -- the inputs, not the derived factor.
+    quality_tier         TEXT NOT NULL DEFAULT 'standard'
+                                  CHECK (quality_tier IN ('basic', 'standard', 'premium', 'luxury')),
+    rating                NUMERIC(2,1) NOT NULL DEFAULT 4.0
+                                  CHECK (rating >= 1.0 AND rating <= 5.0),
+    has_view              BOOLEAN NOT NULL DEFAULT false,
+    has_parking           BOOLEAN NOT NULL DEFAULT false,
+
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ
 );
@@ -79,6 +90,29 @@ ALTER TABLE public.apartment_market_segments
 ALTER TABLE public.apartment_market_segments
     ADD CONSTRAINT apartment_market_segments_commission_pct_check
         CHECK (commission_pct >= 0 AND commission_pct <= 1);
+
+-- Phase 8: same ADD COLUMN IF NOT EXISTS pattern as commission_pct above, so
+-- a volume from before this phase still picks up sane defaults.
+ALTER TABLE public.apartment_market_segments
+    ADD COLUMN IF NOT EXISTS quality_tier TEXT NOT NULL DEFAULT 'standard';
+ALTER TABLE public.apartment_market_segments
+    DROP CONSTRAINT IF EXISTS apartment_market_segments_quality_tier_check;
+ALTER TABLE public.apartment_market_segments
+    ADD CONSTRAINT apartment_market_segments_quality_tier_check
+        CHECK (quality_tier IN ('basic', 'standard', 'premium', 'luxury'));
+
+ALTER TABLE public.apartment_market_segments
+    ADD COLUMN IF NOT EXISTS rating NUMERIC(2,1) NOT NULL DEFAULT 4.0;
+ALTER TABLE public.apartment_market_segments
+    DROP CONSTRAINT IF EXISTS apartment_market_segments_rating_check;
+ALTER TABLE public.apartment_market_segments
+    ADD CONSTRAINT apartment_market_segments_rating_check
+        CHECK (rating >= 1.0 AND rating <= 5.0);
+
+ALTER TABLE public.apartment_market_segments
+    ADD COLUMN IF NOT EXISTS has_view BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE public.apartment_market_segments
+    ADD COLUMN IF NOT EXISTS has_parking BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_apartment_market_segments_segment
     ON public.apartment_market_segments (city, neighborhood, property_type, bedrooms);

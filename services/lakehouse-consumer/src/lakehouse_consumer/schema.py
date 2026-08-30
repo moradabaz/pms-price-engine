@@ -63,6 +63,11 @@ ICEBERG_SCHEMA = Schema(
             NestedField(29, "competitiveness_discount", DoubleType()),
             NestedField(30, "market_reference_price_eur", DoubleType()),
             NestedField(31, "rule_applied", StringType()),
+            # Phase 8 (ADR-0011 backlog #6): appended, not inserted before
+            # rule_applied's ID — new IDs go at the end of the sequence
+            # regardless of logical position in the struct (see module docstring).
+            NestedField(39, "property_attribute_factor", DoubleType()),
+            NestedField(40, "property_reference_price_eur", DoubleType()),
         ),
     ),
     NestedField(

@@ -32,6 +32,8 @@
     "commission_pct": 0.15,
     "days_to_arrival": 45,
     "competitiveness_discount": 0.05,
+    "property_attribute_factor": 1.0,
+    "property_reference_price_eur": 120.5,
     "market_reference_price_eur": 114.47,
     "rule_applied": "market_competitive"
   },

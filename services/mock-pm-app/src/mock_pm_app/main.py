@@ -28,14 +28,13 @@ def main() -> None:
         ensure_apartment_market_segments_schema(conn)
         logger.info("apartment_market_segments_schema_ensured")
 
-        apartments = build_apartment_pool(settings.seed_apartments)
+        rng = random.Random()
+        apartments = build_apartment_pool(settings.seed_apartments, rng)
 
         if already_seeded(conn):
             logger.info("seed_skipped", reason="payment_lines already has rows")
         else:
-            rows_inserted = seed(
-                conn, settings, apartments, random.Random(), date.today()
-            )
+            rows_inserted = seed(conn, settings, apartments, rng, date.today())
             logger.info("seed_complete", rows_inserted=rows_inserted)
 
         if already_seeded_segments(conn):

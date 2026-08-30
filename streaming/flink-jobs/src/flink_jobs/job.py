@@ -43,6 +43,13 @@ def _configure_checkpointing(env, settings: FlinkJobSettings) -> None:
 # addition to apartment_market_segments don't carry the field at all.
 _DEFAULT_COMMISSION_PCT = 0.15
 
+# Phase 8 (ADR-0011 backlog #6): same defensive-default pattern for the four
+# Bonus/Malus columns added after this topic already had history.
+_DEFAULT_QUALITY_TIER = "standard"
+_DEFAULT_RATING = 4.0
+_DEFAULT_HAS_VIEW = False
+_DEFAULT_HAS_PARKING = False
+
 
 def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
     """Parses one apartment_market_segments CDC message. Returns a row."""
@@ -56,6 +63,10 @@ def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
         target_margin=float(data["target_margin"]),
         competitiveness_discount=float(data["competitiveness_discount"]),
         commission_pct=float(data.get("commission_pct", _DEFAULT_COMMISSION_PCT)),
+        quality_tier=data.get("quality_tier", _DEFAULT_QUALITY_TIER),
+        rating=float(data.get("rating", _DEFAULT_RATING)),
+        has_view=bool(data.get("has_view", _DEFAULT_HAS_VIEW)),
+        has_parking=bool(data.get("has_parking", _DEFAULT_HAS_PARKING)),
     )
 
 

@@ -13,6 +13,13 @@ class SegmentAssignment:
     target_margin: float
     competitiveness_discount: float
     commission_pct: float
+    # Phase 8 (ADR-0011 backlog #6): raw Property Bonus/Malus attributes.
+    # Defaults match apartment_market_segments' own column defaults, for CDC
+    # messages predating this phase (same pattern commission_pct established).
+    quality_tier: str = "standard"
+    rating: float = 4.0
+    has_view: bool = False
+    has_parking: bool = False
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,10 @@ class ApartmentSegmentRow:
     target_margin: float
     competitiveness_discount: float
     commission_pct: float
+    quality_tier: str = "standard"
+    rating: float = 4.0
+    has_view: bool = False
+    has_parking: bool = False
 
     def to_assignment(self) -> SegmentAssignment:
         """Drops apartment_id (used as the map key, not stored in the value)."""
@@ -38,6 +49,10 @@ class ApartmentSegmentRow:
             target_margin=self.target_margin,
             competitiveness_discount=self.competitiveness_discount,
             commission_pct=self.commission_pct,
+            quality_tier=self.quality_tier,
+            rating=self.rating,
+            has_view=self.has_view,
+            has_parking=self.has_parking,
         )
 
 
@@ -63,6 +78,12 @@ class CostAggregate:
     competitiveness_discount: float
     commission_pct: float
     updated_at: datetime
+    # Phase 8 (ADR-0011 backlog #6): resolved once in Stage A from the
+    # apartment's raw Bonus/Malus attributes (property_attributes.py) — Stage B
+    # and decide_price() consume this single float, never the raw attributes.
+    # Default 1.0 (neutral) keeps every pre-Phase-8 CostAggregate construction
+    # (tests included) valid without change.
+    property_attribute_factor: float = 1.0
 
     @property
     def segment_key(self) -> tuple[str, str, str, int]:

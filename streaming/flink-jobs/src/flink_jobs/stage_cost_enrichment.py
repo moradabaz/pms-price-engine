@@ -7,6 +7,7 @@ from shared_schemas.payment_line import PaymentLine
 
 from flink_jobs.cost_aggregation import aggregate_cost, retained_billing_period_ends
 from flink_jobs.models import ApartmentSegmentRow, CostAggregate
+from flink_jobs.property_attributes import property_attribute_factor
 
 SEGMENT_BROADCAST_DESCRIPTOR = MapStateDescriptor(
     "apartment-segment-assignments", Types.STRING(), Types.PICKLED_BYTE_ARRAY()
@@ -65,6 +66,12 @@ class CostEnrichmentFunction(KeyedBroadcastProcessFunction):
             competitiveness_discount=assignment.competitiveness_discount,
             commission_pct=assignment.commission_pct,
             updated_at=datetime.now(UTC),
+            property_attribute_factor=property_attribute_factor(
+                quality_tier=assignment.quality_tier,
+                rating=assignment.rating,
+                has_view=assignment.has_view,
+                has_parking=assignment.has_parking,
+            ),
         )
 
     def process_broadcast_element(self, value: ApartmentSegmentRow, ctx):

@@ -25,16 +25,21 @@ def seed_apartment_market_segments(conn: Any, apartments: list[Apartment]) -> in
     # Decision C.1: seed once, deterministically, from mock-pm-app's own
     # apartment pool — target_margin/competitiveness_discount are left to the
     # table's own DEFAULT 0.05 (Decision C.2), not set here, so the schema
-    # stays the single source of truth for that default.
+    # stays the single source of truth for that default. Phase 8's four
+    # Bonus/Malus attributes ARE set here — unlike margin/discount, they're
+    # generated per apartment (data.py's build_apartment_pool), not a shared
+    # default.
     with conn.cursor() as cur:
         for apartment in apartments:
             cur.execute(
                 """
                 INSERT INTO apartment_market_segments
                     (apartment_id, apartment_reference, city, neighborhood,
-                     property_type, bedrooms)
+                     property_type, bedrooms, quality_tier, rating,
+                     has_view, has_parking)
                 VALUES (%(apartment_id)s, %(apartment_reference)s, %(city)s,
-                        %(neighborhood)s, %(property_type)s, %(bedrooms)s)
+                        %(neighborhood)s, %(property_type)s, %(bedrooms)s,
+                        %(quality_tier)s, %(rating)s, %(has_view)s, %(has_parking)s)
                 ON CONFLICT (apartment_id) DO NOTHING
                 """,
                 {
@@ -44,6 +49,10 @@ def seed_apartment_market_segments(conn: Any, apartments: list[Apartment]) -> in
                     "neighborhood": apartment.neighborhood,
                     "property_type": apartment.property_type,
                     "bedrooms": apartment.bedrooms,
+                    "quality_tier": apartment.quality_tier,
+                    "rating": apartment.rating,
+                    "has_view": apartment.has_view,
+                    "has_parking": apartment.has_parking,
                 },
             )
     conn.commit()

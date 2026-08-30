@@ -128,7 +128,7 @@ Two apartments, same segment (Barcelona/Eixample, apartment, 1 bedroom), same co
 | `property_reference_price_eur` | `200.00` | `294.00` |
 | `market_reference_price_eur` | `190.00` | `279.30` |
 
-If both apartments' cost floor (`minimum_price_eur`) sits at `210.00`: Apartment A gets `rule_applied = "minimum_floor"`, `suggested_price_eur = 210.00` (floor exceeds its market reference). Apartment B gets `rule_applied = "market_competitive"`, `suggested_price_eur = 279.30` (its higher property reference comfortably clears the same floor). Same cost, same raw market rate, genuinely different outcomes — this is the phase's entire point.
+If both apartments' cost floor (`minimum_price_eur`) sits at `210.00`: Apartment A gets `rule_applied = "cost_protected"`, `suggested_price_eur = 210.00` — its floor exceeds even its own (unboosted) market reference of `200.00`, so its costs are pricing it out of its own market. Apartment B gets `rule_applied = "market_competitive"`, `suggested_price_eur = 279.30` — its boosted market reference (`294.00`) comfortably clears the same floor, with room to spare. Same cost, same raw market rate, genuinely different outcomes — this is the phase's entire point.
 
 ---
 

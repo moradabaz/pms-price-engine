@@ -72,6 +72,38 @@ def test_emits_cost_aggregate_after_segment_arrives():
     assert aggregate.variable_cost_eur == round(100.0 / 30, 2)
     assert aggregate.fixed_cost_eur == 0.0
     assert aggregate.commission_pct == 0.15
+    # Default attributes (standard/4.0/no view/no parking) -> neutral factor.
+    assert aggregate.property_attribute_factor == 1.0
+
+
+def test_property_attribute_factor_resolved_from_broadcast_attributes():
+    fn, broadcast_state = _make_function()
+    read_ctx = FakeReadOnlyContext(broadcast_state)
+    fn.process_broadcast_element(
+        ApartmentSegmentRow(
+            "BCN-001",
+            "Barcelona",
+            "Eixample",
+            "studio",
+            0,
+            0.05,
+            0.05,
+            0.15,
+            quality_tier="luxury",
+            rating=4.8,
+            has_view=True,
+            has_parking=True,
+        ),
+        FakeBroadcastContext(broadcast_state),
+    )
+    results = list(
+        fn.process_element(
+            _line("00000000-0000-0000-0000-000000000001", 100.0), read_ctx
+        )
+    )
+
+    # 0.30 (luxury) + 0.08 (rating) + 0.05 (view) + 0.04 (parking) = 1.47
+    assert results[0].property_attribute_factor == 1.47
 
 
 def test_upsert_by_event_id_does_not_double_count():

@@ -23,6 +23,8 @@ REDUCED_MARGIN_FACTOR = 0.75
 class PriceCalculation:
     minimum_price_eur: float
     floor_type: FloorType
+    property_attribute_factor: float
+    property_reference_price_eur: float
     market_reference_price_eur: float
     rule_applied: RuleApplied
     suggested_price_eur: float
@@ -39,9 +41,10 @@ def decide_price(
     avg_nightly_rate_eur: float,
     competitiveness_discount: float,
     days_to_arrival: int,
+    property_attribute_factor: float = 1.0,
 ) -> PriceCalculation:
     """Computes the suggested nightly price and which rule/floor applied
-    (ADR-0009). Returns a PriceCalculation."""
+    (ADR-0009, ADR-0011 backlog #6). Returns a PriceCalculation."""
     n = STAY_LENGTH_NIGHTS
 
     if days_to_arrival > STRUCTURAL_FULL_MARGIN_THRESHOLD_DAYS:
@@ -63,20 +66,26 @@ def decide_price(
             1 - commission_pct
         )
 
-    market_reference_price_eur = avg_nightly_rate_eur * (1 - competitiveness_discount)
+    # ADR-0011 (backlog #6): the segment's raw market average, adjusted for
+    # this specific apartment's Bonus/Malus attributes — apartments in the
+    # same segment no longer share an identical competitive threshold.
+    property_reference_price_eur = avg_nightly_rate_eur * property_attribute_factor
+    market_reference_price_eur = property_reference_price_eur * (
+        1 - competitiveness_discount
+    )
 
     rule_applied: RuleApplied
     if minimum_price_eur <= market_reference_price_eur:
         rule_applied = "market_competitive"
         suggested_price_eur = market_reference_price_eur
-    elif minimum_price_eur <= avg_nightly_rate_eur:
+    elif minimum_price_eur <= property_reference_price_eur:
         rule_applied = "minimum_floor"
         suggested_price_eur = minimum_price_eur
     else:
         rule_applied = "cost_protected"
         suggested_price_eur = minimum_price_eur
 
-    below_market_by = avg_nightly_rate_eur - suggested_price_eur
+    below_market_by = property_reference_price_eur - suggested_price_eur
     total_cost_eur = n * fixed_cost_eur + n * variable_cost_eur + one_time_cost_eur
     effective_margin = (
         (suggested_price_eur / total_cost_eur) - 1 if total_cost_eur else 0.0
@@ -85,6 +94,8 @@ def decide_price(
     return PriceCalculation(
         minimum_price_eur=round(minimum_price_eur, 2),
         floor_type=floor_type,
+        property_attribute_factor=property_attribute_factor,
+        property_reference_price_eur=round(property_reference_price_eur, 2),
         market_reference_price_eur=round(market_reference_price_eur, 2),
         rule_applied=rule_applied,
         suggested_price_eur=round(suggested_price_eur, 2),

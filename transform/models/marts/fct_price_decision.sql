@@ -22,6 +22,8 @@ select
     commission_pct,
     days_to_arrival,
     competitiveness_discount,
+    property_attribute_factor,
+    property_reference_price_eur,
     market_reference_price_eur,
     rule_applied,
     suggested_price_eur,

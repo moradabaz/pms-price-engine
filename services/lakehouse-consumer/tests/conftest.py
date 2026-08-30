@@ -36,6 +36,8 @@ def _sample_new_image(decision_id: str, suggested_price_eur: float) -> dict:
             "commission_pct": 0.15,
             "days_to_arrival": 28,
             "competitiveness_discount": 0.1,
+            "property_attribute_factor": 1.0,
+            "property_reference_price_eur": 145.0,
             "market_reference_price_eur": 130.5,
             "rule_applied": "market_competitive",
         },

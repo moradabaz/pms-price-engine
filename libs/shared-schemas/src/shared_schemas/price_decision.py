@@ -48,6 +48,8 @@ class Calculation(BaseModel):
     commission_pct: float = Field(ge=0, le=1)
     days_to_arrival: int
     competitiveness_discount: float = Field(ge=0, le=1)
+    property_attribute_factor: float = Field(ge=0)
+    property_reference_price_eur: float = Field(ge=0)
     market_reference_price_eur: float = Field(ge=0)
     rule_applied: Literal["market_competitive", "minimum_floor", "cost_protected"]
 

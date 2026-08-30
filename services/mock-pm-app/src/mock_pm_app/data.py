@@ -1,3 +1,4 @@
+import random
 from dataclasses import dataclass
 
 # Restricted to the 3 cities services/market-ingestor/src/market_ingestor/segments.py
@@ -41,6 +42,12 @@ def _segment_combos() -> list[tuple[str, str, str, int]]:
 _SEGMENT_COMBOS = _segment_combos()
 
 
+# Phase 8 (docs/adr/ADR-0011, backlog #6): raw Property Bonus/Malus
+# attributes, synthesized per apartment — not modeled on real property data
+# (see Phase 1 spec, Known limitations, same caveat as CONCEPT_PROFILES below).
+_QUALITY_TIERS = ["basic", "standard", "premium", "luxury"]
+
+
 @dataclass(frozen=True)
 class Apartment:
     apartment_id: str
@@ -49,9 +56,16 @@ class Apartment:
     neighborhood: str
     property_type: str
     bedrooms: int
+    quality_tier: str
+    rating: float
+    has_view: bool
+    has_parking: bool
 
 
-def build_apartment_pool(count: int) -> list[Apartment]:
+def build_apartment_pool(
+    count: int, rng: random.Random | None = None
+) -> list[Apartment]:
+    rng = rng or random.Random()
     apartments = []
     for i in range(count):
         city, neighborhood, property_type, bedrooms = _SEGMENT_COMBOS[
@@ -66,6 +80,10 @@ def build_apartment_pool(count: int) -> list[Apartment]:
                 neighborhood=neighborhood,
                 property_type=property_type,
                 bedrooms=bedrooms,
+                quality_tier=rng.choice(_QUALITY_TIERS),
+                rating=round(rng.uniform(3.0, 5.0), 1),
+                has_view=rng.random() < 0.3,
+                has_parking=rng.random() < 0.3,
             )
         )
     return apartments

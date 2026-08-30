@@ -31,6 +31,8 @@ select
     calculation.commission_pct,
     calculation.days_to_arrival,
     calculation.competitiveness_discount,
+    calculation.property_attribute_factor,
+    calculation.property_reference_price_eur,
     calculation.market_reference_price_eur,
     calculation.rule_applied,
 

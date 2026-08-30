@@ -67,6 +67,12 @@ def row_from_new_image(
             "commission_pct": _num(calculation["commission_pct"]),
             "days_to_arrival": _int(calculation["days_to_arrival"]),
             "competitiveness_discount": _num(calculation["competitiveness_discount"]),
+            "property_attribute_factor": _num(
+                calculation["property_attribute_factor"]
+            ),
+            "property_reference_price_eur": _num(
+                calculation["property_reference_price_eur"]
+            ),
             "market_reference_price_eur": _num(
                 calculation["market_reference_price_eur"]
             ),

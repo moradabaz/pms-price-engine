@@ -142,6 +142,7 @@ def _build_price_decision(
         avg_nightly_rate_eur=market.avg_nightly_rate_eur,
         competitiveness_discount=cost.competitiveness_discount,
         days_to_arrival=days_to_arrival,
+        property_attribute_factor=cost.property_attribute_factor,
     )
     return PriceDecision(
         decision_id=uuid4(),
@@ -179,6 +180,8 @@ def _build_price_decision(
             commission_pct=cost.commission_pct,
             days_to_arrival=days_to_arrival,
             competitiveness_discount=cost.competitiveness_discount,
+            property_attribute_factor=calc.property_attribute_factor,
+            property_reference_price_eur=calc.property_reference_price_eur,
             market_reference_price_eur=calc.market_reference_price_eur,
             rule_applied=calc.rule_applied,
         ),

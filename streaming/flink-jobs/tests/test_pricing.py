@@ -117,6 +117,51 @@ def test_below_market_by_sign_flips_between_rules():
     assert protected.below_market_by < 0
 
 
+def test_property_attribute_factor_changes_rule_applied():
+    # Same cost floor (210.0, structural_full_margin), same raw market rate
+    # (200.0) — only the Bonus/Malus factor differs (ADR-0011 backlog #6,
+    # spec 08 §4 worked example). one_time_cost_eur=199.5 is chosen so
+    # minimum_price_eur lands exactly on 210.0: 199.5 / (1 - 0.05) = 210.0.
+    common = dict(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=0.0,
+        one_time_cost_eur=199.5,
+        target_margin=0.05,
+        commission_pct=0.0,
+        avg_nightly_rate_eur=200.0,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    neutral = decide_price(property_attribute_factor=1.0, **common)
+    boosted = decide_price(property_attribute_factor=1.47, **common)
+
+    assert neutral.minimum_price_eur == 210.0
+    # 210.0 exceeds Apartment A's own (unboosted) market reference (200.0) —
+    # its costs price it out of its own market.
+    assert neutral.rule_applied == "cost_protected"
+    assert neutral.suggested_price_eur == 210.0
+    # Apartment B's boosted reference (294.0) comfortably clears the same floor.
+    assert boosted.property_reference_price_eur == 294.0
+    assert boosted.rule_applied == "market_competitive"
+    assert boosted.suggested_price_eur > neutral.suggested_price_eur
+
+
+def test_property_attribute_factor_defaults_to_neutral():
+    common = dict(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=120.5,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert decide_price(**common) == decide_price(
+        property_attribute_factor=1.0, **common
+    )
+
+
 def test_floor_type_boundaries():
     common = dict(
         fixed_cost_eur=50.0,
