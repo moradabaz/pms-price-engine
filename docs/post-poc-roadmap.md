@@ -4,7 +4,7 @@
 
 Two items from the stakeholders' profitability model are **explicitly deferred until after the PoC ships**, to keep Phase 4's reform (ADR-0009) scoped to what's cheap: fixing the floor formula, adding commissions, splitting cost by category, and the antelación-tiered dual floor. Not silently dropped — tracked here so they get picked up as real follow-up work.
 
-**2026-08-30 update:** a much richer external spec ("Profitable Dynamic Pricing Engine") confirmed items 1 and 2 below independently, and surfaced several more concepts with no equivalent in this repo today. ADR-0011 adopts that spec as the target design; §3 below is the full backlog it produced, §4 is a learning note to read before starting on it, and §5 sketches the next concrete increment (LOS-aware floor).
+**2026-08-30 update:** a much richer external spec ("Profitable Dynamic Pricing Engine") confirmed items 1 and 2 below independently, and surfaced several more concepts with no equivalent in this repo today. ADR-0011 adopts that spec as the target design; §3 below is the full backlog it produced, §4 is a learning note to read before starting on it, and §5 sketches the LOS-aware floor increment (now **Phase 9** — Property Bonus/Malus was picked up first as **Phase 8**, [`specs/phases/08-property-bonus-malus/spec.md`](../specs/phases/08-property-bonus-malus/spec.md), since this repo numbers phases by actual implementation order, not by backlog tier).
 
 ## 1. Real stay-length pricing (`n` beyond the fixed `1`)
 
@@ -39,14 +39,14 @@ Every concept from the external spec, mapped to what it would extend or replace 
 | 3 | Read `concept` (13 values, incl. `ota_fee`) in cost aggregation | `PaymentLine.concept`, ignored by `cost_aggregation.py` today | **Next** | Additive — zero upstream schema change |
 | 4 | Decision Components / structured reason codes | `rule_applied`/`floor_type` (closed enums), no list field anywhere in `PriceDecision` | **Next** (prerequisite for #5, #7, #9) | Structural — every `PriceDecision` sub-model is `extra="forbid"`, no existing array to extend |
 | 5 | Owner contract / configurable commission base (Total Revenue vs. Revenue−OTA vs. …) | No anchor — no owner/contract entity exists | **Later** | Structural (net-new entity) |
-| 6 | Property Bonus/Malus + Property Reference Price | `market-ingestor/segments.py`'s fixed per-segment multiplier (0.7/1.0/1.45) — not per apartment | **Later** | Structural at the source (mock-app needs new attribute columns), additive in Flink once the data exists |
+| 6 | Property Bonus/Malus + Property Reference Price | `market-ingestor/segments.py`'s fixed per-segment multiplier (0.7/1.0/1.45) — not per apartment | **Now** (spec written — [Phase 8](../specs/phases/08-property-bonus-malus/spec.md)) | Structural at the source (mock-app needs new attribute columns), additive in Flink once the data exists |
 | 7 | Layered Revenue Management engine (structural/market/performance/booking-window/inventory/commercial/guardrails) | ADR-0009 D4's antelación tier table — the only existing analog, and only for one layer | **Later** | Structural — rewrite of `pricing.py`'s single if/elif chain into a composable pipeline; the point at which the formulas move into `libs/pricing-formulas` (§6) if that extraction hasn't happened already |
 | 8 | Channel gross-up economics | No anchor; depends on #2 | **Later** | Additive once #2 exists |
 | 9 | Manual Override + audit trail | No anchor — the pipeline is read-only downstream of Flink | **Later** | Structural (new write path) |
 | 10 | Explicit Hard/Soft floor policy | Mostly already covered by `floor_type`/`rule_applied` | **Later** | Additive (relabeling) |
 | 11 | Real market data / comp-set (real occupancy, competitor rates) | 18 static segments, `occupancy_rate = rng.uniform(0.45, 0.85)` | **Later** | Structural (external integration) |
 
-## 4. Learning note: Flink concepts worth studying before Phase 8 (LOS)
+## 4. Learning note: Flink concepts worth studying before Phase 9 (LOS)
 
 This project's learning focus (README) is CDC and stateful stream processing, not just shipping the pricing formula — so before starting item #1, three streaming-systems concepts are worth deliberately studying, not just implementing around:
 
@@ -56,7 +56,7 @@ This project's learning focus (README) is CDC and stateful stream processing, no
 
 Lower priority, worth flagging for when item #7 (layered RM engine) is picked up rather than now: **Flink CEP** (pattern matching over streams) as a natural fit for compound rule conditions like "occupancy < 30% AND booking window < 3 days" — not urgent, since #7 is tier "Later."
 
-## 5. LOS-aware floor — outline for a future Phase 8
+## 5. LOS-aware floor — outline for Phase 9
 
 Not a full spec — a sketch to work from once this is picked up (see "When to pick these up" above; same rule applies).
 

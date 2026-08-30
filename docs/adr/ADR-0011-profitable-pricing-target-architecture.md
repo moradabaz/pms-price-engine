@@ -26,6 +26,6 @@ One structural fact worth naming even though no ADR mandated it: every sub-model
 ## Consequences
 
 - `docs/post-poc-roadmap.md` is extended into the full backlog (11 items) rather than staying a 2-item list; its existing items 1 and 2 (LOS, channel) are kept as-is and cross-referenced, not rewritten.
-- A future Phase 8 spec (LOS-aware floor) is named and outlined at a high level in the roadmap doc, but not written yet — consistent with this repo's practice of writing phase specs immediately before implementation, not speculatively.
+- The backlog item actually picked up first was #6 (Property Bonus/Malus), not #1 (LOS) — implemented as **Phase 8** (`specs/phases/08-property-bonus-malus/spec.md`). LOS-aware floor is renumbered to **Phase 9** and remains outlined at a high level in the roadmap doc, not written yet — consistent with this repo's practice of writing phase specs immediately before implementation, not speculatively.
 - No code changes follow from this ADR by itself. It is a documentation-only decision record; implementation of any backlog item gets its own ADR and/or phase spec when picked up.
 - If a future increment (e.g. LOS) requires breaking an existing schema or primary key, that is treated as an acceptable, planned remodel — not something to work around with a backward-compatible patch — since the project is a PoC with no production consumers yet (the same reasoning ADR-0007/ADR-0009 already used to change `price_decision.v1` without a `schema_version` bump).
