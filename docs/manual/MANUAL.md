@@ -29,9 +29,10 @@ else (Postgres, Kafka, Debezium, Flink) is a plain Docker container.
 ## 2. Bringing up the stack from scratch
 
 These steps match the sequence actually used to live-verify every phase of this project — not a
-theoretical runbook. Two steps are manual on purpose (connector registration, Flink job
-submission): this project deliberately treats them as one-time operator actions instead of adding
-an orchestration harness just to automate a `curl` call (see [spec 02 §6](../../specs/phases/02-cdc-pipeline/spec.md)).
+theoretical runbook. Three steps are manual on purpose (topic creation, connector registration,
+Flink job submission): this project deliberately treats them as one-time operator actions instead
+of adding an orchestration harness just to automate a `curl`/`kafka-topics` call (see
+[spec 02 §6](../../specs/phases/02-cdc-pipeline/spec.md)).
 
 ```bash
 # 1. Build every custom image and start the whole stack
@@ -42,7 +43,20 @@ docker compose -f infra/docker-compose.yml up -d
 docker compose -f infra/docker-compose.yml logs -f mock-pm-app
 # ...Ctrl-C once you see it looping past the initial seed
 
-# 3. Register the Debezium connector (one-time — reads payment_lines + apartment_market_segments)
+# 3. Create the Kafka topics (one-time — this broker runs with
+# KAFKA_AUTO_CREATE_TOPICS_ENABLE=false, so nothing creates these for you;
+# skipping this step surfaces as UNKNOWN_TOPIC_OR_PARTITION warnings and a
+# Debezium/bridge producer that never makes progress, per
+# error-handling/debezium-heartbeat-topic-stalls-entire-connector.md's own lesson
+# that a RUNNING connector says nothing about whether data is actually flowing)
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic payment-events.v1 --partitions 6 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic apartment-market-segments.v1 --partitions 1 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic market-price-bridge.v1 --partitions 4 --replication-factor 1
+
+# 4. Register the Debezium connector (one-time — reads payment_lines + apartment_market_segments)
 curl -X POST -H "Content-Type: application/json" \
   --data @infra/debezium/postgres-connector.json \
   http://localhost:8083/connectors
@@ -50,7 +64,7 @@ curl -X POST -H "Content-Type: application/json" \
 # Confirm it's actually running before moving on
 curl -s http://localhost:8083/connectors/pms-payment-lines-connector/status | grep state
 
-# 4. Submit the Flink job (one-time — the JobManager doesn't auto-submit on boot)
+# 5. Submit the Flink job (one-time — the JobManager doesn't auto-submit on boot)
 docker exec -d pms_flink_jobmanager flink run \
   -pyclientexec /app/.venv/bin/python3 -pyexec /app/.venv/bin/python3 \
   -py /app/streaming/flink-jobs/src/flink_jobs/main.py
