@@ -42,6 +42,11 @@ def _margin_alerts() -> pd.DataFrame:
     return marts.margin_alerts(_SETTINGS)
 
 
+@st.cache_data(ttl=_SETTINGS.marts_cache_ttl_seconds)
+def _channel_pricing(apartment_id: str, target_date: str) -> pd.DataFrame:
+    return marts.channel_pricing(_SETTINGS, apartment_id, target_date)
+
+
 _STATUS_COLOR = {
     "Price Below Cost": "color: red",
     "Price Below Profit": "color: orange",
@@ -117,10 +122,59 @@ def render_margin_alerts() -> None:
     st.dataframe(_margin_alerts(), hide_index=True)
 
 
+def render_channel_pricing() -> None:
+    # Phase 16 (ADR-0011 backlog #2): a separate tab, not new columns on
+    # "Current price" — that table is already dense after Phase 15.
+    st.header("Channel pricing")
+    st.caption(_freshness_label())
+    apartment_id = st.selectbox(
+        "Apartment", _apartment_ids(), key="channel_pricing_apartment"
+    )
+    if not apartment_id:
+        return
+    evolution = _price_evolution(apartment_id)
+    if evolution.empty:
+        st.caption("No decisions yet for this apartment.")
+        return
+    target_date = st.selectbox(
+        "Night", evolution["target_date"], key="channel_pricing_night"
+    )
+    df = _channel_pricing(apartment_id, str(target_date))
+    if df.empty:
+        st.caption("No channel data for this night yet.")
+        return
+    st.dataframe(
+        df,
+        hide_index=True,
+        column_config={
+            "platform": "Channel",
+            "avg_nightly_rate_eur": st.column_config.NumberColumn(
+                "Market rate", format="euro"
+            ),
+            "commission_pct": st.column_config.NumberColumn(
+                "Commission", format="percent"
+            ),
+            "market_reference_price_eur": st.column_config.NumberColumn(
+                "Reference price", format="euro"
+            ),
+            "minimum_price_eur": st.column_config.NumberColumn(
+                "Cost floor", format="euro"
+            ),
+            "rule_applied": "Rule",
+            "suggested_price_eur": st.column_config.NumberColumn(
+                "Suggested price", format="euro"
+            ),
+            "effective_margin": st.column_config.NumberColumn(
+                "Margin", format="percent"
+            ),
+        },
+    )
+
+
 @st.fragment(run_every="60s")
 def render_dashboard() -> None:
-    tab_current, tab_evolution, tab_alerts = st.tabs(
-        ["Current price", "Price evolution", "Margin alerts"]
+    tab_current, tab_evolution, tab_alerts, tab_channels = st.tabs(
+        ["Current price", "Price evolution", "Margin alerts", "Channel pricing"]
     )
     with tab_current:
         render_current_prices()
@@ -128,6 +182,8 @@ def render_dashboard() -> None:
         render_price_evolution()
     with tab_alerts:
         render_margin_alerts()
+    with tab_channels:
+        render_channel_pricing()
 
 
 def main() -> None:

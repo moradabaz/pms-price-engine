@@ -28,13 +28,27 @@ def settings(tmp_path) -> DashboardSettings:
     )
 
     con.execute(
-        "create table fct_price_decision (apartment_id varchar, rule_applied varchar,"
-        " ingested_at timestamp)"
+        "create table fct_price_decision ("
+        " apartment_id varchar, target_date date, rule_applied varchar,"
+        " decided_at timestamp, ingested_at timestamp,"
+        " channel_price_matrix STRUCT("
+        "  platform varchar, avg_nightly_rate_eur double, commission_pct double,"
+        "  market_reference_price_eur double, minimum_price_eur double,"
+        "  rule_applied varchar, suggested_price_eur double,"
+        "  effective_margin double"
+        " )[]"
+        ")"
     )
     con.execute(
         "insert into fct_price_decision values"
-        " ('BCN-001', 'market_competitive', '2026-08-06T10:00:00'),"
-        " ('BCN-001', 'cost_protected', '2026-08-06T10:15:00')"
+        " ('BCN-001', '2026-09-01', 'market_competitive', '2026-08-06T10:00:00',"
+        "  '2026-08-06T10:00:00', NULL),"
+        " ('BCN-001', '2026-09-02', 'cost_protected', '2026-08-06T10:15:00',"
+        "  '2026-08-06T10:15:00',"
+        "  [{'platform': 'airbnb', 'avg_nightly_rate_eur': 97.2,"
+        "    'commission_pct': 0.03, 'market_reference_price_eur': 92.34,"
+        "    'minimum_price_eur': 113.4, 'rule_applied': 'cost_protected',"
+        "    'suggested_price_eur': 113.4, 'effective_margin': 0.0309}])"
     )
 
     con.execute(
@@ -66,6 +80,26 @@ def test_margin_alerts_only_cost_protected(settings):
 
     assert len(df) == 1
     assert df.iloc[0]["apartment_id"] == "BCN-001"
+
+
+def test_channel_pricing_returns_rows_for_known_night(settings):
+    df = marts.channel_pricing(settings, "BCN-001", "2026-09-02")
+
+    assert list(df["platform"]) == ["airbnb"]
+    assert df.iloc[0]["commission_pct"] == 0.03
+    assert df.iloc[0]["rule_applied"] == "cost_protected"
+
+
+def test_channel_pricing_empty_when_no_channel_data_yet(settings):
+    df = marts.channel_pricing(settings, "BCN-001", "2026-09-01")
+
+    assert df.empty
+
+
+def test_channel_pricing_empty_when_night_unknown(settings):
+    df = marts.channel_pricing(settings, "BCN-001", "2026-01-01")
+
+    assert df.empty
 
 
 def test_freshness_returns_max_ingested_at(settings):

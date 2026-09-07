@@ -2,8 +2,10 @@ from unittest.mock import patch
 
 from pricing_formulas.decision_components import DecisionComponent
 from pricing_formulas.engine import (
+    CHANNEL_COMMISSION_PCT,
     LOS_CANDIDATES,
     decide_price,
+    decide_price_by_channel,
     decide_price_los_matrix,
     recommend_minimum_stay,
 )
@@ -770,3 +772,108 @@ def test_minimum_price_eur_is_monotonically_non_increasing_in_stay_length():
         rule_rank = {"cost_protected": 0, "minimum_floor": 1, "market_competitive": 2}
         ranks = [rule_rank[c.rule_applied] for c in ordered]
         assert ranks == sorted(ranks)
+
+
+def test_decide_price_by_channel_empty_input_returns_empty_list():
+    # AC-01: no channel snapshot has reached this night yet.
+    assert (
+        decide_price_by_channel(
+            channel_rates_eur={},
+            fixed_cost_eur=0.0,
+            variable_cost_eur=13.67,
+            one_time_cost_eur=0.0,
+            target_margin=0.2,
+            competitiveness_discount=0.05,
+            days_to_arrival=45,
+        )
+        == []
+    )
+
+
+def test_decide_price_by_channel_matches_standalone_decide_price():
+    # AC-02: one channel's candidate is exactly what a standalone
+    # decide_price() call with that channel's own rate/commission produces.
+    candidates = decide_price_by_channel(
+        channel_rates_eur={"airbnb": 97.2},
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert len(candidates) == 1
+    candidate = candidates[0]
+
+    standalone = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=CHANNEL_COMMISSION_PCT["airbnb"],
+        avg_nightly_rate_eur=97.2,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert candidate.platform == "airbnb"
+    assert candidate.avg_nightly_rate_eur == 97.2
+    assert candidate.commission_pct == CHANNEL_COMMISSION_PCT["airbnb"]
+    assert candidate.market_reference_price_eur == standalone.market_reference_price_eur
+    assert candidate.minimum_price_eur == standalone.minimum_price_eur
+    assert candidate.rule_applied == standalone.rule_applied
+    assert candidate.suggested_price_eur == standalone.suggested_price_eur
+    assert candidate.effective_margin == standalone.effective_margin
+
+
+def test_decide_price_by_channel_rule_applied_can_differ_per_channel():
+    # AC-03: unlike LOS's single monotonic axis, channel candidates can land
+    # on different rule_applied values independently of each other — here
+    # airbnb's own market rate clears the floor easily, booking's own rate
+    # is too low relative to the same variable cost to ever clear it.
+    candidates = decide_price_by_channel(
+        channel_rates_eur={"airbnb": 200.0, "booking": 3.0},
+        fixed_cost_eur=0.0,
+        variable_cost_eur=5.0,
+        one_time_cost_eur=0.0,
+        target_margin=0.05,
+        competitiveness_discount=0.05,
+        days_to_arrival=7,
+    )
+    by_platform = {c.platform: c for c in candidates}
+    assert by_platform["airbnb"].rule_applied == "market_competitive"
+    assert by_platform["booking"].rule_applied == "cost_protected"
+
+
+def test_decide_price_by_channel_top_level_calculation_is_unaffected():
+    # AC-04: decide_price() itself takes no channel-related parameters —
+    # adding channel candidates alongside it cannot change its output.
+    before = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=120.5,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    decide_price_by_channel(
+        channel_rates_eur={"airbnb": 130.0, "booking": 110.0, "vrbo": 100.0},
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    after = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=120.5,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert before == after

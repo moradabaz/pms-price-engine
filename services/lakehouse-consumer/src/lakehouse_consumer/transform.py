@@ -76,6 +76,34 @@ def _minimum_stay_recommendation(calculation: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _channel_price_matrix(calculation: dict[str, Any]) -> list[dict[str, Any]]:
+    """Coerces calculation.channel_price_matrix (Phase 16, ADR-0011 backlog
+    #2). [] both for a record predating this phase (key absent) and for one
+    where no channel data had reached this night yet (key present, value
+    []) — the same honest answer for both, same convention los_floor_matrix
+    itself established."""
+    return [
+        {
+            "platform": candidate["platform"],
+            "avg_nightly_rate_eur": _num(candidate["avg_nightly_rate_eur"]),
+            "commission_pct": _num(candidate["commission_pct"]),
+            "market_reference_price_eur": _num(
+                candidate["market_reference_price_eur"]
+            ),
+            "minimum_price_eur": _num(candidate["minimum_price_eur"]),
+            "floor_type": candidate["floor_type"],
+            "floor_policy": candidate["floor_policy"],
+            "rule_applied": candidate["rule_applied"],
+            "suggested_price_eur": _num(candidate["suggested_price_eur"]),
+            "effective_margin": _num(candidate["effective_margin"]),
+            "decision_components": _decision_components(
+                candidate.get("decision_components", [])
+            ),
+        }
+        for candidate in calculation.get("channel_price_matrix", [])
+    ]
+
+
 def row_from_new_image(
     new_image: dict[str, Any], event_name: str, ingested_at: datetime
 ) -> dict[str, Any]:
@@ -188,6 +216,8 @@ def row_from_new_image(
             "manual_override": _manual_override(calculation),
             # Phase 15 (ADR-0011 backlog #12).
             "minimum_stay_recommendation": _minimum_stay_recommendation(calculation),
+            # Phase 16 (ADR-0011 backlog #2).
+            "channel_price_matrix": _channel_price_matrix(calculation),
         },
         "output": {
             "suggested_price_eur": _num(output["suggested_price_eur"]),

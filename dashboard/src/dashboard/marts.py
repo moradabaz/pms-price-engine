@@ -74,6 +74,37 @@ def margin_alerts(settings: DashboardSettings) -> pd.DataFrame:
     )
 
 
+def channel_pricing(
+    settings: DashboardSettings, apartment_id: str, target_date: str
+) -> pd.DataFrame:
+    """This apartment/night's most recent channel_price_matrix (Phase 16,
+    ADR-0011 backlog #2), one row per channel — empty DataFrame if no
+    channel data has reached this night yet."""
+    columns = [
+        "platform",
+        "avg_nightly_rate_eur",
+        "commission_pct",
+        "market_reference_price_eur",
+        "minimum_price_eur",
+        "rule_applied",
+        "suggested_price_eur",
+        "effective_margin",
+    ]
+
+    def _query(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+        row = con.execute(
+            "select channel_price_matrix from fct_price_decision"
+            " where apartment_id = ? and target_date = ?"
+            " order by decided_at desc limit 1",
+            [apartment_id, target_date],
+        ).fetchone()
+        if row is None or not row[0]:
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame(row[0])[columns]
+
+    return _read_with_retry(settings, _query)
+
+
 def freshness(settings: DashboardSettings) -> datetime | None:
     """When the cold path was last updated (max ingested_at)."""
 

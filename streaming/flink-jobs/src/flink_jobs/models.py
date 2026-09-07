@@ -182,10 +182,36 @@ class CostAggregate:
 
 @dataclass(frozen=True)
 class MarketSnapshot:
-    """One segment's known market price for a single target_date."""
+    """One segment's known market price for a single target_date — either
+    the blended (channel-agnostic) rate, or one specific channel's own rate
+    (Phase 16, ADR-0011 backlog #2), depending on which map a NightSnapshot
+    holds it in."""
 
     market_area: str
     avg_nightly_rate_eur: float
     occupancy_rate: float | None
     sample_size: int | None
     collected_at: datetime
+
+
+@dataclass(frozen=True)
+class NightSnapshot:
+    """Everything Stage B knows about one segment's single target_date
+    (Phase 16, ADR-0011 backlog #2): the blended snapshot Stage B has always
+    tracked, plus whichever per-channel snapshots have arrived so far.
+    `blended` is `None` only transiently — a channel-only event for a
+    brand-new night is stored but doesn't fan out (same "known night"
+    definition Stage B already used pre-Phase-16); in practice this window
+    is one Kafka round-trip, since market-ingestor emits the blended event
+    and every channel event for a segment/tick together."""
+
+    blended: MarketSnapshot | None
+    channels: dict[str, MarketSnapshot] = field(default_factory=dict)
+
+    def channel_rates_eur(self) -> dict[str, float]:
+        """Returns {platform: avg_nightly_rate_eur} for decide_price_by_
+        channel() — the only part of each channel MarketSnapshot it needs."""
+        return {
+            platform: snapshot.avg_nightly_rate_eur
+            for platform, snapshot in self.channels.items()
+        }

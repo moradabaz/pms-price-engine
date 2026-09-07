@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from pricing_formulas.engine import (
     decide_price,
+    decide_price_by_channel,
     decide_price_los_matrix,
     recommend_minimum_stay,
 )
@@ -18,6 +19,7 @@ from shared_schemas.market_price import MarketPrice
 from shared_schemas.price_decision import (
     BillingPeriod,
     Calculation,
+    ChannelPriceCandidate,
     CostInputs,
     DecisionComponent,
     LosFloorCandidate,
@@ -32,7 +34,7 @@ from flink_jobs.eviction import (
     is_over_capacity,
     oldest_key_by_updated_at,
 )
-from flink_jobs.models import CostAggregate, MarketSnapshot
+from flink_jobs.models import CostAggregate, MarketSnapshot, NightSnapshot
 from flink_jobs.staleness import is_safe_to_overwrite
 from flink_jobs.watchdog import expired_keys, next_deadline_millis
 
@@ -85,18 +87,27 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
         self.apartment_deadlines.put(value.apartment_id, deadline_millis)
         ctx.timer_service().register_processing_time_timer(deadline_millis)
 
-        for target_date_str, snapshot in dict(self.nights.items()).items():
+        for target_date_str, night in dict(self.nights.items()).items():
+            # Phase 16 (ADR-0011 backlog #2): a night isn't "known" until its
+            # blended snapshot exists — a channel-only update for a
+            # brand-new night is stored (process_element2) but doesn't
+            # fan out from here either.
+            if night.blended is None:
+                continue
             yield _build_price_decision(
-                value, snapshot, date.fromisoformat(target_date_str)
+                value, night, date.fromisoformat(target_date_str)
             )
 
     def process_element2(self, value: MarketPrice, ctx):
-        """Market side: updates one night, then reprices every known apartment."""
+        """Market side: updates one night (its blended rate, or one channel's
+        rate — Phase 16, ADR-0011 backlog #2), then reprices every known
+        apartment, provided the night's blended rate is already known."""
         target_date = value.target_date
         if target_date < datetime.now(UTC).date():
             return
 
         key = target_date.isoformat()
+        platform = value.market_context.platform
         neighborhood = value.market_area.neighborhood or ""
         market_area = f"{value.market_area.city}/{neighborhood}".rstrip("/")
         snapshot = MarketSnapshot(
@@ -107,9 +118,17 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
             collected_at=value.collected_at,
         )
         existing = self.nights.get(key)
-        if not is_safe_to_overwrite(
-            snapshot.collected_at, existing.collected_at if existing else None
-        ):
+        # Phase 16: staleness is checked against this specific sub-snapshot
+        # (the blended one, or this one channel's) — not the whole
+        # NightSnapshot, so an old blended update can't be blocked by a
+        # fresher channel update for the same night, or vice versa.
+        previous_collected_at = None
+        if existing is not None:
+            previous = existing.blended if platform is None else existing.channels.get(
+                platform
+            )
+            previous_collected_at = previous.collected_at if previous else None
+        if not is_safe_to_overwrite(snapshot.collected_at, previous_collected_at):
             return
 
         expired = expired_night_keys(
@@ -120,13 +139,27 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
             self.nights.remove(expired_key)
             self.night_deadlines.remove(expired_key)
 
-        self.nights.put(key, snapshot)
+        if platform is None:
+            night = NightSnapshot(
+                blended=snapshot,
+                channels=dict(existing.channels) if existing else {},
+            )
+        else:
+            channels = dict(existing.channels) if existing else {}
+            channels[platform] = snapshot
+            night = NightSnapshot(
+                blended=existing.blended if existing else None, channels=channels
+            )
+
+        self.nights.put(key, night)
         deadline_millis = next_deadline_millis(datetime.now(UTC))
         self.night_deadlines.put(key, deadline_millis)
         ctx.timer_service().register_processing_time_timer(deadline_millis)
 
+        if night.blended is None:
+            return
         for apartment_id, cost in dict(self.apartments.items()).items():
-            yield _build_price_decision(cost, snapshot, target_date)
+            yield _build_price_decision(cost, night, target_date)
 
     def on_timer(self, timestamp: int, ctx):
         """Fires data_stale for apartments/nights whose deadline matches timestamp."""
@@ -139,9 +172,14 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
 
 
 def _build_price_decision(
-    cost: CostAggregate, market: MarketSnapshot, target_date: date
+    cost: CostAggregate, night: NightSnapshot, target_date: date
 ) -> PriceDecision:
-    """Applies the pricing formula and assembles a PriceDecision. Returns it."""
+    """Applies the pricing formula and assembles a PriceDecision. Returns it.
+    night.blended must already be resolved (Phase 16, ADR-0011 backlog #2) —
+    both call sites (process_element1/2) only reach here once it is; the
+    top-level calculation always reflects it, never a channel-specific rate."""
+    assert night.blended is not None
+    market = night.blended
     decided_at = datetime.now(UTC)
     days_to_arrival = (target_date - decided_at.date()).days
 
@@ -196,6 +234,23 @@ def _build_price_decision(
         fixed_cost_eur=cost.fixed_cost_eur,
         variable_cost_eur=cost.variable_cost_eur,
         one_time_cost_eur=cost.one_time_cost_eur,
+    )
+    # Phase 16 (ADR-0011 backlog #2): one candidate per channel with an
+    # observed rate for this night — [] until market-ingestor's channel
+    # events for it have arrived. Never affects the top-level calculation
+    # above, which always reads night.blended only.
+    channel_candidates = decide_price_by_channel(
+        night.channel_rates_eur(),
+        fixed_cost_eur=cost.fixed_cost_eur,
+        variable_cost_eur=cost.variable_cost_eur,
+        one_time_cost_eur=cost.one_time_cost_eur,
+        target_margin=cost.target_margin,
+        competitiveness_discount=cost.competitiveness_discount,
+        days_to_arrival=days_to_arrival,
+        property_attribute_factor=cost.property_attribute_factor,
+        commission_base=cost.commission_base,
+        ota_related_cost_eur=cost.ota_related_cost_eur,
+        cleaning_cost_eur=cost.cleaning_cost_eur,
     )
     decision_components = [
         DecisionComponent(code=c.code, label=c.label, impact=c.impact)
@@ -279,6 +334,27 @@ def _build_price_decision(
                     minimum_stay.suggested_price_per_reservation_eur
                 ),
             ),
+            channel_price_matrix=[
+                ChannelPriceCandidate(
+                    platform=c.platform,
+                    avg_nightly_rate_eur=c.avg_nightly_rate_eur,
+                    commission_pct=c.commission_pct,
+                    market_reference_price_eur=c.market_reference_price_eur,
+                    minimum_price_eur=c.minimum_price_eur,
+                    floor_type=c.floor_type,
+                    floor_policy=c.floor_policy,
+                    rule_applied=c.rule_applied,
+                    suggested_price_eur=c.suggested_price_eur,
+                    effective_margin=c.effective_margin,
+                    decision_components=[
+                        DecisionComponent(
+                            code=dc.code, label=dc.label, impact=dc.impact
+                        )
+                        for dc in c.decision_components
+                    ],
+                )
+                for c in channel_candidates
+            ],
         ),
         output=Output(
             suggested_price_eur=calc.suggested_price_eur,

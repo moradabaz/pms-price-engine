@@ -43,10 +43,19 @@ def _cost(
     )
 
 
-def _market(days_from_today=7, avg_rate=90.0, collected_at=None, target_date=None):
+def _market(
+    days_from_today=7,
+    avg_rate=90.0,
+    collected_at=None,
+    target_date=None,
+    platform=None,
+):
     """target_date defaults to `days_from_today` days from the real today, so
     tier-dependent assertions (ADR-0009) stay correct regardless of when the
-    suite actually runs. Pass target_date directly for a fixed past date."""
+    suite actually runs. Pass target_date directly for a fixed past date.
+    platform=None (the default) is the existing blended event every test
+    before Phase 16 already exercises; pass a real value for a channel event
+    (ADR-0011 backlog #2)."""
     resolved_date = target_date or (date.today() + timedelta(days=days_from_today))
     return MarketPrice(
         event_id="00000000-0000-0000-0000-000000000001",
@@ -56,7 +65,9 @@ def _market(days_from_today=7, avg_rate=90.0, collected_at=None, target_date=Non
         property_profile=PropertyProfile(type="studio", bedrooms=0),
         target_date=str(resolved_date),
         pricing=Pricing(avg_nightly_rate=avg_rate),
-        market_context=MarketContext(sample_size=20, data_source="mock"),
+        market_context=MarketContext(
+            sample_size=20, data_source="mock", platform=platform
+        ),
         collected_at=collected_at or datetime.now(UTC),
     )
 
@@ -270,6 +281,95 @@ def test_minimum_stay_recommendation_not_viable_when_only_variable_cost_is_the_i
     assert recommendation.cost_per_reservation_eur is None
     assert recommendation.suggested_price_per_reservation_eur is None
     assert [c.code for c in calc.decision_components][-1] == "minimum_stay_not_viable"
+
+
+def test_channel_price_matrix_empty_when_no_channel_event_has_arrived():
+    # AC-01: only the blended event has ever arrived for this night.
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=10.0), ctx))
+    results = list(fn.process_element2(_market(days_from_today=7), ctx))
+
+    assert results[0].calculation.channel_price_matrix == []
+
+
+def test_channel_event_populates_matrix_without_touching_top_level():
+    # AC-02/AC-04: a channel event for an already-known night adds a
+    # candidate to channel_price_matrix; the top-level calculation (still
+    # keyed off the blended rate) is byte-for-byte identical to before.
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=10.0), ctx))
+    before = list(fn.process_element2(_market(days_from_today=7), ctx))[0]
+
+    results = list(
+        fn.process_element2(
+            _market(days_from_today=7, avg_rate=97.2, platform="airbnb"), ctx
+        )
+    )
+
+    after = results[0]
+    assert after.calculation.model_dump(
+        exclude={"channel_price_matrix"}
+    ) == before.calculation.model_dump(exclude={"channel_price_matrix"})
+    assert len(after.calculation.channel_price_matrix) == 1
+    candidate = after.calculation.channel_price_matrix[0]
+    assert candidate.platform == "airbnb"
+    assert candidate.avg_nightly_rate_eur == 97.2
+
+
+def test_channel_only_event_for_unknown_night_does_not_fan_out():
+    # A channel-only event for a night whose blended snapshot hasn't arrived
+    # yet is stored but doesn't trigger a fan-out (spec 16 §2 "known night").
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=10.0), ctx))
+
+    results = list(
+        fn.process_element2(
+            _market(days_from_today=7, avg_rate=97.2, platform="airbnb"), ctx
+        )
+    )
+
+    assert results == []
+
+
+def test_channel_snapshot_survives_a_later_blended_update():
+    # A channel arriving before the blended event for a brand-new night is
+    # included once the blended event finally arrives — nothing is lost.
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=10.0), ctx))
+    list(
+        fn.process_element2(
+            _market(days_from_today=7, avg_rate=97.2, platform="airbnb"), ctx
+        )
+    )
+
+    results = list(fn.process_element2(_market(days_from_today=7), ctx))
+
+    assert len(results) == 1
+    matrix = results[0].calculation.channel_price_matrix
+    assert [c.platform for c in matrix] == ["airbnb"]
+
+
+def test_multiple_channels_can_have_different_rule_applied():
+    # AC-03: unlike LOS's single monotonic axis, channels are independent —
+    # a high, uncompetitive rate for one channel and a very low rate for
+    # another land on different rule_applied values within the same decision.
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=5.0, one_time_cost=0.0), ctx))
+    list(fn.process_element2(_market(days_from_today=7, avg_rate=200.0), ctx))
+    list(
+        fn.process_element2(
+            _market(days_from_today=7, avg_rate=200.0, platform="airbnb"), ctx
+        )
+    )
+    results = list(
+        fn.process_element2(
+            _market(days_from_today=7, avg_rate=3.0, platform="booking"), ctx
+        )
+    )
+
+    matrix = {c.platform: c for c in results[0].calculation.channel_price_matrix}
+    assert matrix["airbnb"].rule_applied == "market_competitive"
+    assert matrix["booking"].rule_applied == "cost_protected"
 
 
 def test_on_timer_emits_data_stale_for_expired_night():

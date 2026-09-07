@@ -13,6 +13,9 @@ from pyiceberg.types import (
 # Field ID note (Phase 15, ADR-0011 backlog #12): the highest ID in use
 # before this phase is 67 (Phase 14's manual_override.expected_loss_eur).
 # This phase's new IDs therefore start at 68.
+# Field ID note (Phase 16, ADR-0011 backlog #2): the highest ID in use before
+# this phase is 72 (Phase 15's suggested_price_per_reservation_eur). This
+# phase's new IDs therefore start at 73.
 
 # Mirrors specs/events/price_decision.v1.json field-for-field (spec 05 §4),
 # plus dynamodb_event_name/ingested_at appended by this consumer. Field IDs
@@ -168,6 +171,43 @@ ICEBERG_SCHEMA = Schema(
                     NestedField(
                         72, "suggested_price_per_reservation_eur", DoubleType()
                     ),
+                ),
+            ),
+            # Phase 16 (ADR-0011 backlog #2): required at the struct/list
+            # level (like los_floor_matrix, not manual_override) — always
+            # present, but legitimately an empty list until market-ingestor's
+            # channel-specific events for this night have arrived.
+            NestedField(
+                73,
+                "channel_price_matrix",
+                ListType(
+                    element_id=74,
+                    element_type=StructType(
+                        NestedField(75, "platform", StringType()),
+                        NestedField(76, "avg_nightly_rate_eur", DoubleType()),
+                        NestedField(77, "commission_pct", DoubleType()),
+                        NestedField(78, "market_reference_price_eur", DoubleType()),
+                        NestedField(79, "minimum_price_eur", DoubleType()),
+                        NestedField(80, "floor_type", StringType()),
+                        NestedField(81, "floor_policy", StringType()),
+                        NestedField(82, "rule_applied", StringType()),
+                        NestedField(83, "suggested_price_eur", DoubleType()),
+                        NestedField(84, "effective_margin", DoubleType()),
+                        NestedField(
+                            85,
+                            "decision_components",
+                            ListType(
+                                element_id=86,
+                                element_type=StructType(
+                                    NestedField(87, "code", StringType()),
+                                    NestedField(88, "label", StringType()),
+                                    NestedField(89, "impact", DoubleType()),
+                                ),
+                                element_required=True,
+                            ),
+                        ),
+                    ),
+                    element_required=True,
                 ),
             ),
         ),

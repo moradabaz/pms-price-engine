@@ -203,6 +203,58 @@ def test_row_from_new_image_converts_minimum_stay_recommendation_when_null(
     assert recommendation["suggested_price_per_reservation_eur"] is None
 
 
+def test_row_from_new_image_defaults_missing_channel_price_matrix_to_empty_list(
+    sample_new_image,
+):
+    # A record predating Phase 16 (ADR-0011 backlog #2) has no
+    # channel_price_matrix key at all — [] is the honest answer, same
+    # convention los_floor_matrix itself established.
+    image = sample_new_image("dddddddd-dddd-dddd-dddd-dddddddddddd", 132.0)
+    assert "channel_price_matrix" not in image["calculation"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["calculation"]["channel_price_matrix"] == []
+
+
+def test_row_from_new_image_converts_channel_price_matrix_when_populated(
+    sample_new_image,
+):
+    image = sample_new_image("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", 132.0)
+    image["calculation"]["channel_price_matrix"] = [
+        {
+            "platform": "airbnb",
+            "avg_nightly_rate_eur": 97.2,
+            "commission_pct": 0.03,
+            "market_reference_price_eur": 92.34,
+            "minimum_price_eur": 113.4,
+            "floor_type": "contribution",
+            "floor_policy": "hard",
+            "rule_applied": "cost_protected",
+            "suggested_price_eur": 113.4,
+            "effective_margin": 0.0309,
+            "decision_components": [
+                {
+                    "code": "rule_cost_protected",
+                    "label": "Cost floor (113.4) exceeds property reference "
+                    "price (97.2) by 16.2 EUR",
+                    "impact": 16.2,
+                }
+            ],
+        }
+    ]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    matrix = row["calculation"]["channel_price_matrix"]
+    assert len(matrix) == 1
+    assert matrix[0]["platform"] == "airbnb"
+    assert matrix[0]["commission_pct"] == 0.03
+    assert matrix[0]["decision_components"][0]["code"] == "rule_cost_protected"
+
+
 def test_row_from_new_image_derives_missing_floor_policy_from_floor_type_hard(
     sample_new_image,
 ):

@@ -7,6 +7,7 @@ from pricing_formulas.layers.booking_window import (
     FloorType,
     booking_window_floor,
 )
+from pricing_formulas.layers.commercial import CommissionBase, netted_commission_amount
 from pricing_formulas.layers.guardrails import RuleApplied, apply_guardrails
 from pricing_formulas.layers.inventory import inventory_layer
 from pricing_formulas.layers.market import market_reference_price
@@ -302,6 +303,96 @@ def decide_price_los_matrix(
         candidates.append(
             LosFloorCandidate(
                 stay_length=stay_length,
+                minimum_price_eur=calc.minimum_price_eur,
+                floor_type=calc.floor_type,
+                floor_policy=calc.floor_policy,
+                rule_applied=calc.rule_applied,
+                suggested_price_eur=calc.suggested_price_eur,
+                effective_margin=calc.effective_margin,
+                decision_components=calc.decision_components,
+            )
+        )
+    return candidates
+
+
+# Phase 16 (ADR-0011 backlog #2): fixed per-platform commission, one value
+# for every apartment alike — a deliberate cheap first step (spec 16 §2),
+# not a real owner/channel contract. Plausible OTA commission figures, not
+# sourced from a specific contract (same caveat LOS_CANDIDATES/segment
+# multipliers already carry).
+CHANNEL_COMMISSION_PCT: dict[str, float] = {
+    "airbnb": 0.12,
+    "booking": 0.15,
+    "vrbo": 0.08,
+}
+
+
+@dataclass(frozen=True)
+class ChannelPriceCandidate:
+    platform: str
+    avg_nightly_rate_eur: float
+    commission_pct: float
+    market_reference_price_eur: float
+    minimum_price_eur: float
+    floor_type: FloorType
+    floor_policy: FloorPolicy
+    rule_applied: RuleApplied
+    suggested_price_eur: float
+    effective_margin: float
+    decision_components: list[DecisionComponent]
+
+
+def decide_price_by_channel(
+    channel_rates_eur: dict[str, float],
+    fixed_cost_eur: float,
+    variable_cost_eur: float,
+    one_time_cost_eur: float,
+    target_margin: float,
+    competitiveness_discount: float,
+    days_to_arrival: int,
+    property_attribute_factor: float = 1.0,
+    commission_base: CommissionBase = "total_revenue",
+    ota_related_cost_eur: float = 0.0,
+    cleaning_cost_eur: float = 0.0,
+    channel_commission_pct: dict[str, float] = CHANNEL_COMMISSION_PCT,
+) -> list[ChannelPriceCandidate]:
+    """Evaluates decide_price() once per known channel (ADR-0011 backlog #2),
+    at stay_length=1. Unlike decide_price_los_matrix(), this is NOT a pure
+    post-processing pass over already-computed numbers: each channel has its
+    own real avg_nightly_rate_eur, which flows through property_reference_
+    price()/market_reference_price() before it reaches the floor comparison
+    (spec 16 §4) — so market_reference_price_eur genuinely varies per
+    candidate here, unlike its identical-across-candidates LOS counterpart.
+    Still no formula duplicated — a thin per-channel composition over
+    decide_price(), same discipline decide_price_los_matrix() follows.
+    Produces exactly one candidate per key present in channel_rates_eur —
+    never invents a channel with no observed market rate. Returns one
+    ChannelPriceCandidate per known channel."""
+    net = netted_commission_amount(
+        commission_base, ota_related_cost_eur, cleaning_cost_eur
+    )
+    candidates = []
+    for platform, avg_nightly_rate_eur in channel_rates_eur.items():
+        commission_pct = channel_commission_pct[platform]
+        commission_netting_eur = round(commission_pct * net, 2)
+        calc = decide_price(
+            fixed_cost_eur=fixed_cost_eur,
+            variable_cost_eur=variable_cost_eur,
+            one_time_cost_eur=one_time_cost_eur,
+            target_margin=target_margin,
+            commission_pct=commission_pct,
+            avg_nightly_rate_eur=avg_nightly_rate_eur,
+            competitiveness_discount=competitiveness_discount,
+            days_to_arrival=days_to_arrival,
+            property_attribute_factor=property_attribute_factor,
+            commission_netting_eur=commission_netting_eur,
+        )
+        candidates.append(
+            ChannelPriceCandidate(
+                platform=platform,
+                avg_nightly_rate_eur=avg_nightly_rate_eur,
+                commission_pct=commission_pct,
+                market_reference_price_eur=calc.market_reference_price_eur,
                 minimum_price_eur=calc.minimum_price_eur,
                 floor_type=calc.floor_type,
                 floor_policy=calc.floor_policy,

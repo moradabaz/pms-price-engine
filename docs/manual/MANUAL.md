@@ -137,7 +137,7 @@ pipeline stalls in this project trace back there, not to the source services. Se
 
 ## 4. The dashboard, explained
 
-Three tabs, refreshing themselves every **60 seconds** (no manual reload needed):
+Four tabs, refreshing themselves every **60 seconds** (no manual reload needed):
 
 ### Current price
 
@@ -174,9 +174,18 @@ the actionable case where an apartment's costs are pricing it above its own mark
 15-minute freshness as price evolution.
 
 **Why two different "freshness" behaviors:** the current-price tab needs no timestamp because
-DynamoDB is read live; the other two show `max(ingested_at)` from the mart because dbt only
+DynamoDB is read live; the other tabs show `max(ingested_at)` from the mart because dbt only
 refreshes on its own schedule. Each tab degrades independently — a DynamoDB outage only breaks
-"Current price," a stale dbt run only makes the other two tabs stale, never wrong.
+"Current price," a stale dbt run only makes the other tabs stale, never wrong.
+
+### Channel pricing
+
+Cold path — reads `fct_price_decision.channel_price_matrix` (ADR-0011 backlog #2, Phase 16, see
+`specs/phases/16-per-channel-pricing/spec.md`). Pick an apartment, then a specific night, and see
+one row per sales channel (`airbnb`/`booking`/`vrbo`) that has reported a rate for that night —
+each with its own market rate, commission, reference price, cost floor, rule applied, suggested
+price and margin. A night with no channel data yet (or an apartment with no decision at all) shows
+a caption instead of an empty table.
 
 ---
 

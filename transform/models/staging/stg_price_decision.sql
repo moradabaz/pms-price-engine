@@ -41,6 +41,7 @@ select
     calculation.decision_components,
     calculation.manual_override,
     calculation.minimum_stay_recommendation,
+    calculation.channel_price_matrix,
 
     output.suggested_price_eur,
     output.currency,

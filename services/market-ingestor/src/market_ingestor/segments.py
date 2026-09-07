@@ -4,12 +4,12 @@ from dataclasses import dataclass
 # 2025-2026 market observations — see specs/phases/03-market-ingestion/spec.md
 # §5.2 for sources and the per-neighborhood rationale.
 _NEIGHBORHOOD_REFERENCE_PRICES: dict[tuple[str, str], float] = {
-    ("Barcelona", "Eixample"): 160.0,
-    ("Barcelona", "Gràcia"): 110.0,
-    ("Madrid", "Centro"): 130.0,
-    ("Madrid", "Chamberí"): 95.0,
-    ("Valencia", "Ruzafa"): 140.0,
-    ("Valencia", "El Carmen"): 125.0,
+    ("Barcelona", "Eixample"): 210.0,
+    ("Barcelona", "Gràcia"): 145.0,
+    ("Madrid", "Centro"): 170.0,
+    ("Madrid", "Chamberí"): 125.0,
+    ("Valencia", "Ruzafa"): 185.0,
+    ("Valencia", "El Carmen"): 165.0,
 }
 
 _COUNTRY_CODES: dict[str, str] = {

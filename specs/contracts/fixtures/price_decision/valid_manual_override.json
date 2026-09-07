@@ -158,6 +158,7 @@
       "cost_per_reservation_eur": 118.0,
       "suggested_price_per_reservation_eur": 147.5
     },
+    "channel_price_matrix": [],
     "manual_override": {
       "override_price_eur": 130.0,
       "reason": "Pre-event availability push",

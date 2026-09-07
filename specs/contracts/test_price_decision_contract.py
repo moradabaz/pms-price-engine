@@ -47,6 +47,17 @@ def test_valid_minimum_stay_recommended_decision_conforms(schema):
     validate(schema, load_fixture("price_decision", "minimum_stay_recommended.json"))
 
 
+def test_channel_price_matrix_populated_decision_conforms(schema):
+    # calculation.channel_price_matrix populated (Phase 16, ADR-0011 backlog
+    # #2): 3 channels, each with its own market_reference_price_eur/
+    # commission_pct/rule_applied — the top-level calculation still reflects
+    # the blended/direct rate only (spec 16 §2/AC-04).
+    validate(
+        schema,
+        load_fixture("price_decision", "channel_price_matrix_populated.json"),
+    )
+
+
 def test_missing_required_field_rejected(schema):
     with pytest.raises(jsonschema.ValidationError):
         validate(

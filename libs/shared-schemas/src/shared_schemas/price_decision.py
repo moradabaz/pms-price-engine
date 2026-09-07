@@ -130,6 +130,31 @@ class MinimumStayRecommendation(BaseModel):
     suggested_price_per_reservation_eur: float | None = Field(default=None, ge=0)
 
 
+class ChannelPriceCandidate(BaseModel):
+    """One channel-price matrix entry (Phase 16, ADR-0011 backlog #2) — this
+    channel's own market rate and commission, run through the same layered
+    engine as the top-level (blended) calculation. Unlike LosFloorCandidate,
+    market_reference_price_eur genuinely varies per entry here (each channel
+    has its own real avg_nightly_rate_eur, spec 16 §4)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    platform: Literal["airbnb", "booking", "vrbo"]
+    avg_nightly_rate_eur: float = Field(ge=0)
+    commission_pct: float = Field(ge=0, le=1)
+    market_reference_price_eur: float = Field(ge=0)
+    minimum_price_eur: float = Field(ge=0)
+    floor_type: FloorType
+    floor_policy: FloorPolicy
+    rule_applied: RuleApplied
+    suggested_price_eur: float = Field(ge=0)
+    effective_margin: float
+    # Phase 10: only this candidate's own rule component — same "no property/
+    # commission block repeated per candidate" convention LosFloorCandidate
+    # already established.
+    decision_components: list[DecisionComponent] = Field(min_length=1)
+
+
 class LosFloorCandidate(BaseModel):
     """One LOS floor matrix entry (ADR-0011 backlog #1) — everything that
     varies with stay_length for an otherwise-identical decision."""
@@ -172,6 +197,11 @@ class Calculation(BaseModel):
     # Phase 15 (ADR-0011 backlog #12): always present, unlike manual_override
     # — computed from los_floor_matrix, which is itself always present.
     minimum_stay_recommendation: MinimumStayRecommendation
+    # Phase 16 (ADR-0011 backlog #2): always present but legitimately can be
+    # empty ([]) — unlike los_floor_matrix, a channel's candidate only exists
+    # once market-ingestor's channel-specific event for that night has
+    # arrived, so no minimum length is enforced.
+    channel_price_matrix: list[ChannelPriceCandidate] = Field(default_factory=list)
 
 
 class Output(BaseModel):

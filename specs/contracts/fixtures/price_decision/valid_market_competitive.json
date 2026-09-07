@@ -152,7 +152,8 @@
       "floor_relief_eur": 0.0,
       "cost_per_reservation_eur": 13.67,
       "suggested_price_per_reservation_eur": 114.47
-    }
+    },
+    "channel_price_matrix": []
   },
   "output": {
     "suggested_price_eur": 114.47,

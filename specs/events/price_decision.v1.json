@@ -125,7 +125,7 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "floor_type", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components", "minimum_stay_recommendation"],
+      "required": ["target_margin", "minimum_price_eur", "floor_type", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components", "minimum_stay_recommendation", "channel_price_matrix"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
@@ -231,6 +231,34 @@
             "floor_relief_eur": { "type": ["number", "null"], "minimum": 0, "description": "minimum_price_eur at stay_length=1 minus minimum_price_eur at recommended_min_stay. 0.0 when recommended_min_stay == 1 (already fine). null iff recommended_min_stay is null." },
             "cost_per_reservation_eur": { "type": ["number", "null"], "minimum": 0, "description": "Total cost for a reservation of recommended_min_stay nights: fixed/variable cost recur every night, one_time_cost_eur is paid once per booking (the inverse of minimum_price_eur's per-night amortization). null iff recommended_min_stay is null." },
             "suggested_price_per_reservation_eur": { "type": ["number", "null"], "minimum": 0, "description": "The recommended_min_stay candidate's own los_floor_matrix suggested_price_eur (never itself cost_protected) x its stay_length — a total reservation price already guaranteed to clear the cost floor and sit at/below the market reference. null iff recommended_min_stay is null." }
+          }
+        },
+        "channel_price_matrix": {
+          "type": "array",
+          "minItems": 0,
+          "description": "One entry per sales channel with an observed market rate for this night (ADR-0011 backlog #2, Phase 16) — 0 to 3 entries, since a candidate only exists once market-ingestor's channel-specific event for that channel/night has arrived. Unlike los_floor_matrix, market_reference_price_eur genuinely varies per entry here (each channel has its own real avg_nightly_rate_eur). The top-level calculation (this object's other fields) always reflects the blended/direct rate, never a channel-specific one.",
+          "items": {
+            "type": "object",
+            "required": ["platform", "avg_nightly_rate_eur", "commission_pct", "market_reference_price_eur", "minimum_price_eur", "floor_type", "floor_policy", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
+            "additionalProperties": false,
+            "properties": {
+              "platform": { "type": "string", "enum": ["airbnb", "booking", "vrbo"], "description": "Which channel this candidate prices for. Direct booking is represented by the top-level calculation, not a 'direct' entry here." },
+              "avg_nightly_rate_eur": { "type": "number", "minimum": 0, "description": "This channel's own raw market rate, as reported by market-ingestor." },
+              "commission_pct": { "type": "number", "minimum": 0, "maximum": 1, "description": "This channel's commission rate (a fixed per-platform constant, ADR-0011 backlog #2) — independent of the top-level calculation.commission_pct, which only applies to the direct/blended case." },
+              "market_reference_price_eur": { "type": "number", "minimum": 0, "description": "This channel's own avg_nightly_rate_eur run through the same property_attribute_factor/competitiveness_discount layers as the top-level calculation." },
+              "minimum_price_eur": { "type": "number", "minimum": 0, "description": "The cost floor for this channel at stay_length=1, using this channel's own commission_pct." },
+              "floor_type": { "type": "string", "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"], "description": "Unaffected by channel — selected by days_to_arrival, same for every entry in one decision." },
+              "floor_policy": { "type": "string", "enum": ["hard", "soft"], "description": "This candidate's own floor_type classified into Hard/Soft — see calculation.floor_policy." },
+              "rule_applied": { "type": "string", "enum": ["market_competitive", "minimum_floor", "cost_protected"], "description": "Can genuinely differ per entry — a channel with a higher commission and/or a lower own market rate can tip into cost_protected while another channel in the same decision stays market_competitive." },
+              "suggested_price_eur": { "type": "number", "minimum": 0, "description": "What this channel would be priced at." },
+              "effective_margin": { "type": "number", "description": "This channel's own margin at its own suggested price." },
+              "decision_components": {
+                "type": "array",
+                "minItems": 1,
+                "description": "This candidate's own rule-decision component only, same convention los_floor_matrix entries use.",
+                "items": { "$ref": "#/$defs/decision_component" }
+              }
+            }
           }
         },
         "manual_override": {

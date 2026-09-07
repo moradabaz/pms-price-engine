@@ -6,7 +6,10 @@ from typing import Any
 import boto3
 from common import configure_logging, get_logger
 
-from market_ingestor.events import build_market_price_event
+from market_ingestor.events import (
+    build_channel_market_price_events,
+    build_market_price_event,
+)
 from market_ingestor.kinesis import KinesisRecord, partition_key, publish_batch
 from market_ingestor.segments import SEGMENTS
 from market_ingestor.settings import MarketIngestorSettings
@@ -43,6 +46,18 @@ def run_tick(
                 "PartitionKey": partition_key(segment),
             }
         )
+        # Phase 16 (ADR-0011 backlog #2): additional, not a replacement — the
+        # blended event above is untouched, so the top-level/direct
+        # calculation this project has always produced is unaffected.
+        for channel_event in build_channel_market_price_events(
+            segment, target_date, rng, now
+        ):
+            records.append(
+                {
+                    "Data": channel_event.model_dump_json().encode("utf-8"),
+                    "PartitionKey": partition_key(segment),
+                }
+            )
 
     publish_batch(
         client,

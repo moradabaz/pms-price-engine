@@ -32,6 +32,7 @@ select
     decision_components,
     manual_override,
     minimum_stay_recommendation,
+    channel_price_matrix,
     suggested_price_eur,
     currency,
     effective_margin,
