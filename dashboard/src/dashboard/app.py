@@ -42,9 +42,11 @@ def _margin_alerts() -> pd.DataFrame:
     return marts.margin_alerts(_SETTINGS)
 
 
-_RULE_COLOR = {
-    "cost_protected": "color: red",
-    "market_competitive": "color: green",
+_STATUS_COLOR = {
+    "Price Below Cost": "color: red",
+    "Price Below Profit": "color: orange",
+    "Market Competitive": "color: green",
+    "Price Above Market": "color: orange",
 }
 
 
@@ -59,7 +61,9 @@ def render_current_prices() -> None:
     missing = [a for a in apartment_ids if a not in prices]
     df = pd.DataFrame(rows)
     table = (
-        df.style.map(lambda v: _RULE_COLOR.get(v, ""), subset=["rule_applied"])
+        df.style.map(lambda v: _STATUS_COLOR.get(v, ""), subset=["status"])
+        .map(lambda _: "color: red", subset=["total_cost_eur"])
+        .map(lambda _: "color: blue", subset=["avg_market_price_eur"])
         if not df.empty
         else df
     )
@@ -69,7 +73,9 @@ def render_current_prices() -> None:
         column_config={
             "apartment_id": "Apartment",
             "target_date": "Night",
-            "total_cost_eur": st.column_config.NumberColumn("Cost", format="euro"),
+            "total_cost_eur": st.column_config.NumberColumn(
+                "Cost (1-night)", format="euro"
+            ),
             "avg_market_price_eur": st.column_config.NumberColumn(
                 "Market avg", format="euro"
             ),
@@ -77,9 +83,18 @@ def render_current_prices() -> None:
                 "Suggested price", format="euro"
             ),
             "effective_margin": st.column_config.NumberColumn(
-                "Margin vs cost", format="percent"
+                "Margin", format="percent"
             ),
-            "rule_applied": "Rule",
+            "status": "Status",
+            "min_stay_reco": st.column_config.NumberColumn(
+                "Min. stay reco.", format="%d"
+            ),
+            "cost_per_reservation_eur": st.column_config.NumberColumn(
+                "Cost per reservation", format="euro"
+            ),
+            "suggested_price_per_reservation_eur": st.column_config.NumberColumn(
+                "Suggested price (reservation)", format="euro"
+            ),
         },
     )
     if missing:

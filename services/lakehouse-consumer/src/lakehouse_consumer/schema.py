@@ -10,6 +10,10 @@ from pyiceberg.types import (
     TimestampType,
 )
 
+# Field ID note (Phase 15, ADR-0011 backlog #12): the highest ID in use
+# before this phase is 67 (Phase 14's manual_override.expected_loss_eur).
+# This phase's new IDs therefore start at 68.
+
 # Mirrors specs/events/price_decision.v1.json field-for-field (spec 05 §4),
 # plus dynamodb_event_name/ingested_at appended by this consumer. Field IDs
 # are assigned once and must never be reused/renumbered — Iceberg schema
@@ -129,6 +133,43 @@ ICEBERG_SCHEMA = Schema(
             # Phase 12 (ADR-0011 backlog #10): same kind of cheap scalar
             # addition, classifying floor_type into Hard/Soft.
             NestedField(60, "floor_policy", StringType()),
+            # Phase 14 (ADR-0011 backlog #9): the first OPTIONAL
+            # (required=False) nested struct in this schema — every prior
+            # nested field here has been required=True. None (absent) is the
+            # correct, common case: no active override for this decision.
+            NestedField(
+                62,
+                "manual_override",
+                StructType(
+                    NestedField(63, "override_price_eur", DoubleType()),
+                    NestedField(64, "reason", StringType()),
+                    NestedField(65, "authorized_by", StringType()),
+                    NestedField(66, "valid_until", TimestampType()),
+                    NestedField(67, "expected_loss_eur", DoubleType()),
+                ),
+                required=False,
+            ),
+            # Phase 15 (ADR-0011 backlog #12): always present, unlike
+            # manual_override above — computed from los_floor_matrix, which
+            # is itself always present. required=True at the struct level,
+            # but its own leaf fields are individually nullable (all four
+            # can be None together, iff recommended_min_stay is None) — same
+            # convention market_inputs.occupancy_rate/sample_size already use.
+            NestedField(
+                68,
+                "minimum_stay_recommendation",
+                StructType(
+                    NestedField(69, "recommended_min_stay", IntegerType()),
+                    NestedField(70, "floor_relief_eur", DoubleType()),
+                    # Reservation-total fields, appended out of struct order
+                    # (see module docstring) — a whole reservation's cost and
+                    # what it should be priced at, at recommended_min_stay.
+                    NestedField(71, "cost_per_reservation_eur", DoubleType()),
+                    NestedField(
+                        72, "suggested_price_per_reservation_eur", DoubleType()
+                    ),
+                ),
+            ),
         ),
     ),
     NestedField(

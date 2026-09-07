@@ -32,6 +32,21 @@ def test_valid_cost_protected_decision_conforms(schema):
     validate(schema, load_fixture("price_decision", "valid_cost_protected.json"))
 
 
+def test_valid_manual_override_decision_conforms(schema):
+    # calculation.manual_override populated (Phase 14, ADR-0011 backlog #9):
+    # output.suggested_price_eur/effective_margin reflect the override, while
+    # rule_applied/below_market_by keep their pre-override, algorithmic
+    # meaning (spec 14 §4).
+    validate(schema, load_fixture("price_decision", "valid_manual_override.json"))
+
+
+def test_valid_minimum_stay_recommended_decision_conforms(schema):
+    # calculation.minimum_stay_recommendation populated with a real
+    # recommendation (Phase 15, ADR-0011 backlog #12): stay_length=1 is
+    # cost_protected, but LOS 2 already clears it.
+    validate(schema, load_fixture("price_decision", "minimum_stay_recommended.json"))
+
+
 def test_missing_required_field_rejected(schema):
     with pytest.raises(jsonschema.ValidationError):
         validate(

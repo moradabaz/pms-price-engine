@@ -30,6 +30,8 @@ select
     rule_applied,
     los_floor_matrix,
     decision_components,
+    manual_override,
+    minimum_stay_recommendation,
     suggested_price_eur,
     currency,
     effective_margin,

@@ -14,7 +14,13 @@ RuleReasonCode = Literal[
 # Phase 11 (ADR-0011 backlog #5, spec 11 §4): emitted only when a
 # non-total_revenue commission_base nets a non-zero amount.
 CommissionReasonCode = Literal["commission_base_netting"]
-ReasonCode = PropertyReasonCode | RuleReasonCode | CommissionReasonCode
+# Phase 15 (ADR-0011 backlog #12, spec 15 §4): emitted by
+# recommend_minimum_stay() — "recommended" when some LOS candidate clears
+# cost_protected, "not_viable" when none of them do.
+MinimumStayReasonCode = Literal["minimum_stay_recommended", "minimum_stay_not_viable"]
+ReasonCode = (
+    PropertyReasonCode | RuleReasonCode | CommissionReasonCode | MinimumStayReasonCode
+)
 
 
 @dataclass(frozen=True)

@@ -140,6 +140,131 @@ class LosFloorCandidate:
     decision_components: list[DecisionComponent]
 
 
+@dataclass(frozen=True)
+class MinimumStayRecommendation:
+    recommended_min_stay: int | None
+    floor_relief_eur: float | None
+    cost_per_reservation_eur: float | None
+    suggested_price_per_reservation_eur: float | None
+    decision_component: DecisionComponent | None
+
+
+def _reservation_cost_eur(
+    stay_length: int,
+    fixed_cost_eur: float,
+    variable_cost_eur: float,
+    one_time_cost_eur: float,
+) -> float:
+    """Total cost for a whole reservation of stay_length nights — the
+    inverse of decide_price()'s per-night amortization (spec 15 §4-follow-up):
+    fixed/variable costs recur every night, one_time_cost_eur is paid once
+    per booking, not per night. Returns the rounded total."""
+    return round(
+        stay_length * (fixed_cost_eur + variable_cost_eur) + one_time_cost_eur, 2
+    )
+
+
+def recommend_minimum_stay(
+    candidates: list[LosFloorCandidate],
+    property_reference_price_eur: float,
+    fixed_cost_eur: float,
+    variable_cost_eur: float,
+    one_time_cost_eur: float,
+) -> MinimumStayRecommendation:
+    """Minimum Stay as a profitability lever (ADR-0011 backlog #12, spec 15
+    §4). Pure post-processing over an already-computed los_floor_matrix, plus
+    the same raw cost inputs decide_price_los_matrix() itself received — no
+    new formula duplicated. Relies on minimum_price_eur being monotonically
+    non-increasing in stay_length (only one_time_cost_eur / n varies with n;
+    floor_type/market_reference_price_eur/property_reference_price_eur are
+    constant across candidates in one decision), so rule_applied can only
+    move cost_protected -> minimum_floor -> market_competitive as n grows,
+    never backwards — the shortest non-cost_protected candidate is therefore
+    the unique correct threshold, not a heuristic. Alongside that stay
+    length, also surfaces what the whole reservation would cost and what it
+    should be priced at in total — a price already guaranteed to clear the
+    cost floor and be at/below the market reference, since it's exactly the
+    LOS candidate's own suggested_price_eur (never itself cost_protected)
+    multiplied by the nights it covers. Returns the recommendation."""
+    ordered = sorted(candidates, key=lambda c: c.stay_length)
+    at_one_night = ordered[0]
+
+    if at_one_night.rule_applied != "cost_protected":
+        return MinimumStayRecommendation(
+            recommended_min_stay=at_one_night.stay_length,
+            floor_relief_eur=0.0,
+            cost_per_reservation_eur=_reservation_cost_eur(
+                at_one_night.stay_length,
+                fixed_cost_eur,
+                variable_cost_eur,
+                one_time_cost_eur,
+            ),
+            suggested_price_per_reservation_eur=round(
+                at_one_night.suggested_price_eur * at_one_night.stay_length, 2
+            ),
+            decision_component=None,
+        )
+
+    for candidate in ordered[1:]:
+        if candidate.rule_applied != "cost_protected":
+            floor_relief_eur = round(
+                at_one_night.minimum_price_eur - candidate.minimum_price_eur, 2
+            )
+            suggested_price_per_reservation_eur = round(
+                candidate.suggested_price_eur * candidate.stay_length, 2
+            )
+            return MinimumStayRecommendation(
+                recommended_min_stay=candidate.stay_length,
+                floor_relief_eur=floor_relief_eur,
+                cost_per_reservation_eur=_reservation_cost_eur(
+                    candidate.stay_length,
+                    fixed_cost_eur,
+                    variable_cost_eur,
+                    one_time_cost_eur,
+                ),
+                suggested_price_per_reservation_eur=suggested_price_per_reservation_eur,
+                decision_component=DecisionComponent(
+                    code="minimum_stay_recommended",
+                    label=(
+                        f"At {at_one_night.stay_length} night(s), the cost "
+                        f"floor ({at_one_night.minimum_price_eur} EUR) "
+                        f"exceeds the property reference price, forcing an "
+                        f"uncompetitive price. A minimum stay of "
+                        f"{candidate.stay_length} nights dilutes the "
+                        f"one-time booking cost enough to clear it "
+                        f"({floor_relief_eur} EUR/night floor relief) — a "
+                        f"whole reservation at that length should be "
+                        f"priced at {suggested_price_per_reservation_eur} "
+                        f"EUR total."
+                    ),
+                    impact=floor_relief_eur,
+                ),
+            )
+
+    longest = ordered[-1]
+    residual_gap_eur = round(
+        longest.minimum_price_eur - property_reference_price_eur, 2
+    )
+    return MinimumStayRecommendation(
+        recommended_min_stay=None,
+        floor_relief_eur=None,
+        cost_per_reservation_eur=None,
+        suggested_price_per_reservation_eur=None,
+        decision_component=DecisionComponent(
+            code="minimum_stay_not_viable",
+            label=(
+                f"Even at {longest.stay_length} nights, the cost floor "
+                f"still exceeds the property reference price by "
+                f"{residual_gap_eur} EUR — the fixed/variable cost base, "
+                f"not the one-time booking cost, is the binding "
+                f"constraint. A minimum-stay policy alone will not fix "
+                f"this."
+            ),
+            impact=residual_gap_eur,
+        ),
+    )
+
+
 def decide_price_los_matrix(
     fixed_cost_eur: float,
     variable_cost_eur: float,

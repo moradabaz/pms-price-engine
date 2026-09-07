@@ -53,6 +53,7 @@ module = [
     "flink_jobs.job",
     "flink_jobs.stage_cost_enrichment",
     "flink_jobs.stage_owner_contract_enrichment",
+    "flink_jobs.stage_manual_override_enrichment",
     "flink_jobs.stage_price_decision",
     "flink_jobs.dynamodb_sink",
 ]

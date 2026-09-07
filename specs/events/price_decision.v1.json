@@ -26,7 +26,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_cost_protected", "commission_base_netting"],
+          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_cost_protected", "commission_base_netting", "manual_override_applied", "minimum_stay_recommended", "minimum_stay_not_viable"],
           "description": "Stable across specific attribute values — the specific value observed (which tier, which rating) lives in label, not in a proliferating enum."
         },
         "label": { "type": "string", "description": "Human-readable, carries the specific value (e.g. \"Rating 4.8 vs baseline 4.0\")." },
@@ -125,7 +125,7 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "floor_type", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components"],
+      "required": ["target_margin", "minimum_price_eur", "floor_type", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components", "minimum_stay_recommendation"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
@@ -218,8 +218,33 @@
         "decision_components": {
           "type": "array",
           "minItems": 1,
-          "description": "Structured reason codes explaining this decision (ADR-0011 backlog #4): the four Property Bonus/Malus contributions plus the one rule-decision component for this stay_length=1 calculation.",
+          "description": "Structured reason codes explaining this decision (ADR-0011 backlog #4): the four Property Bonus/Malus contributions plus the one rule-decision component for this stay_length=1 calculation, plus manual_override_applied when an override is active, plus minimum_stay_recommended/minimum_stay_not_viable when stay_length=1 is cost_protected (ADR-0011 backlog #12).",
           "items": { "$ref": "#/$defs/decision_component" }
+        },
+        "minimum_stay_recommendation": {
+          "type": "object",
+          "description": "Minimum Stay as a profitability lever (ADR-0011 backlog #12, Phase 15) — pure post-processing over los_floor_matrix, always present. Finds the shortest candidate stay_length whose floor is no longer cost_protected, plus what a whole reservation at that length would cost and should be priced at in total.",
+          "required": ["recommended_min_stay", "floor_relief_eur", "cost_per_reservation_eur", "suggested_price_per_reservation_eur"],
+          "additionalProperties": false,
+          "properties": {
+            "recommended_min_stay": { "type": ["integer", "null"], "minimum": 1, "description": "Shortest stay_length in los_floor_matrix whose rule_applied != cost_protected. null when even the longest candidate still is (a structural fixed/variable cost problem, not a one-time-cost dilution one)." },
+            "floor_relief_eur": { "type": ["number", "null"], "minimum": 0, "description": "minimum_price_eur at stay_length=1 minus minimum_price_eur at recommended_min_stay. 0.0 when recommended_min_stay == 1 (already fine). null iff recommended_min_stay is null." },
+            "cost_per_reservation_eur": { "type": ["number", "null"], "minimum": 0, "description": "Total cost for a reservation of recommended_min_stay nights: fixed/variable cost recur every night, one_time_cost_eur is paid once per booking (the inverse of minimum_price_eur's per-night amortization). null iff recommended_min_stay is null." },
+            "suggested_price_per_reservation_eur": { "type": ["number", "null"], "minimum": 0, "description": "The recommended_min_stay candidate's own los_floor_matrix suggested_price_eur (never itself cost_protected) x its stay_length — a total reservation price already guaranteed to clear the cost floor and sit at/below the market reference. null iff recommended_min_stay is null." }
+          }
+        },
+        "manual_override": {
+          "type": ["object", "null"],
+          "description": "Populated iff an unexpired manual override applied to this decision (ADR-0011 backlog #9, Phase 14) — a human action layered on top of the algorithmic suggestion, applied after the pricing engine runs, never itself a Revenue Management rule. null for the overwhelming majority of decisions.",
+          "required": ["override_price_eur", "reason", "authorized_by", "valid_until", "expected_loss_eur"],
+          "additionalProperties": false,
+          "properties": {
+            "override_price_eur": { "type": "number", "minimum": 0, "description": "The authorized price, published in place of output.suggested_price_eur." },
+            "reason": { "type": "string" },
+            "authorized_by": { "type": "string", "description": "Free text — this project has no auth/roles system, so this is recorded for audit only, not checked (spec 14 §1)." },
+            "valid_until": { "type": "string", "format": "date-time", "description": "Expiry of the authorization. Cancelling a live override before this timestamp is done by updating this field, not deleting the row (spec 14 §1/§7)." },
+            "expected_loss_eur": { "type": "number", "minimum": 0, "description": "max(0, minimum_price_eur - override_price_eur) — zero when the override is at or above the algorithmic floor, not the raw (possibly negative) difference." }
+          }
         }
       }
     },

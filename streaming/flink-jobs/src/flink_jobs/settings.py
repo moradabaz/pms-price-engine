@@ -9,6 +9,8 @@ class FlinkJobSettings(BaseSettings):
     apartment_segments_topic: str = "apartment-market-segments.v1"
     # Phase 11 (ADR-0011 backlog #5).
     owner_contracts_topic: str = "owner-contracts.v1"
+    # Phase 14 (ADR-0011 backlog #9).
+    manual_overrides_topic: str = "manual-overrides.v1"
     kafka_consumer_group_id: str = "flink-price-engine"
 
     # Read via Kafka, not Kinesis directly — no Kinesis connector runs on

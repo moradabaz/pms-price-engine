@@ -40,6 +40,42 @@ def _decision_components(components: list[dict[str, Any]]) -> list[dict[str, Any
     ]
 
 
+def _manual_override(calculation: dict[str, Any]) -> dict[str, Any] | None:
+    """Coerces calculation.manual_override (Phase 14, ADR-0011 backlog #9).
+    Returns None both for a record predating this phase (key absent) and for
+    a post-Phase-14 record with no active override (key present, value
+    null) — the same value for both, since neither case has an override to
+    describe. Returns the coerced dict when one is present."""
+    manual_override = calculation.get("manual_override")
+    if manual_override is None:
+        return None
+    return {
+        "override_price_eur": _num(manual_override["override_price_eur"]),
+        "reason": manual_override["reason"],
+        "authorized_by": manual_override["authorized_by"],
+        "valid_until": _ts(manual_override["valid_until"]),
+        "expected_loss_eur": _num(manual_override["expected_loss_eur"]),
+    }
+
+
+def _minimum_stay_recommendation(calculation: dict[str, Any]) -> dict[str, Any]:
+    """Coerces calculation.minimum_stay_recommendation (Phase 15, ADR-0011
+    backlog #12). Always returns a dict — both-None field values for a
+    record predating this phase (key absent, since the recommendation was
+    never computed for it, not fabricated), the coerced values otherwise."""
+    recommendation = calculation.get("minimum_stay_recommendation") or {}
+    return {
+        "recommended_min_stay": _int(recommendation.get("recommended_min_stay")),
+        "floor_relief_eur": _num(recommendation.get("floor_relief_eur")),
+        "cost_per_reservation_eur": _num(
+            recommendation.get("cost_per_reservation_eur")
+        ),
+        "suggested_price_per_reservation_eur": _num(
+            recommendation.get("suggested_price_per_reservation_eur")
+        ),
+    }
+
+
 def row_from_new_image(
     new_image: dict[str, Any], event_name: str, ingested_at: datetime
 ) -> dict[str, Any]:
@@ -146,6 +182,12 @@ def row_from_new_image(
             # pre-Phase-11 value (decide_price()'s own default), not a
             # fabricated one.
             "commission_base": calculation.get("commission_base", "total_revenue"),
+            # Phase 14 (ADR-0011 backlog #9): None for a record predating
+            # this phase and for a decision with no active override — both
+            # the honest answer, never fabricated.
+            "manual_override": _manual_override(calculation),
+            # Phase 15 (ADR-0011 backlog #12).
+            "minimum_stay_recommendation": _minimum_stay_recommendation(calculation),
         },
         "output": {
             "suggested_price_eur": _num(output["suggested_price_eur"]),

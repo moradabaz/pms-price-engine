@@ -178,3 +178,60 @@ def ensure_owner_contracts_schema(conn: Any) -> None:
     with conn.cursor() as cur:
         cur.execute(_ENSURE_OWNER_CONTRACTS_SQL)
     conn.commit()
+
+
+# Phase 14 (ADR-0011 backlog #9): byte-identical (schema-wise) to
+# specs/phases/01-mock-app-db/manual_overrides.sql. Reuses the existing
+# dbz_publication/connector (spec 14 §2) — no new connector, slot, or
+# publication. Unlike every other _ENSURE_*_SQL here, there is no matching
+# seed_*/already_seeded_* pair for this table (spec 14 §1) — it starts empty
+# and stays empty unless a human inserts a row directly.
+_ENSURE_MANUAL_OVERRIDES_SQL = """
+CREATE TABLE IF NOT EXISTS public.manual_overrides (
+    apartment_id         TEXT NOT NULL
+                              REFERENCES public.apartment_market_segments(apartment_id),
+    target_date          DATE NOT NULL,
+
+    override_price_eur   NUMERIC(10,2) NOT NULL
+                              CHECK (override_price_eur >= 0),
+    reason               TEXT NOT NULL,
+    authorized_by        TEXT NOT NULL,
+    valid_until          TIMESTAMPTZ NOT NULL,
+
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ,
+
+    PRIMARY KEY (apartment_id, target_date)
+);
+
+CREATE OR REPLACE FUNCTION public.set_manual_override_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_manual_overrides_updated_at
+    BEFORE UPDATE ON public.manual_overrides
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_manual_override_updated_at();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'dbz_publication'
+          AND schemaname = 'public'
+          AND tablename = 'manual_overrides'
+    ) THEN
+        ALTER PUBLICATION dbz_publication ADD TABLE public.manual_overrides;
+    END IF;
+END $$;
+"""
+
+
+def ensure_manual_overrides_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_MANUAL_OVERRIDES_SQL)
+    conn.commit()

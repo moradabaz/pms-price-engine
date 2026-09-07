@@ -16,6 +16,7 @@ from shared_schemas.market_price import (
 def _cost(
     apartment_id="BCN-001",
     variable_cost=100.0,
+    one_time_cost=0.0,
     updated_at=None,
     property_decision_components=(),
 ):
@@ -28,7 +29,7 @@ def _cost(
         bedrooms=0,
         fixed_cost_eur=0.0,
         variable_cost_eur=variable_cost,
-        one_time_cost_eur=0.0,
+        one_time_cost_eur=one_time_cost,
         total_monthly_cost_eur=variable_cost * 30,
         available_days=30,
         cost_lines_count=1,
@@ -99,9 +100,13 @@ def test_decision_components_property_block_on_top_level_only():
     fn, ctx = _make_function()
     list(
         fn.process_element1(
+            # variable_cost=10.0 (not cost_protected, per _market's default
+            # avg_rate=90.0 below) so Phase 15's minimum_stay_* component
+            # never fires here — this test is only about property/rule
+            # component ordering.
             _cost(
                 "apt-A",
-                variable_cost=100.0,
+                variable_cost=10.0,
                 property_decision_components=property_components,
             ),
             ctx,
@@ -110,6 +115,7 @@ def test_decision_components_property_block_on_top_level_only():
     results = list(fn.process_element2(_market(days_from_today=7), ctx))
 
     calc = results[0].calculation
+    assert calc.rule_applied != "cost_protected"
     assert len(calc.decision_components) == 5
     assert [c.code for c in calc.decision_components[:4]] == [
         c.code for c in property_components
@@ -194,6 +200,76 @@ def test_data_age_seconds_clamps_to_zero_under_clock_skew():
     results = list(fn.process_element2(_market(collected_at=future_collected_at), ctx))
 
     assert results[0].market_inputs.data_age_seconds == 0
+
+
+def test_minimum_stay_recommendation_present_and_fine_at_los_1():
+    # AC-05 (spec 15): a decision whose stay_length=1 is not cost_protected
+    # gets recommended_min_stay=1, floor_relief_eur=0.0, and no extra
+    # decision component appended.
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=10.0), ctx))
+    results = list(fn.process_element2(_market(days_from_today=7), ctx))
+
+    calc = results[0].calculation
+    assert calc.rule_applied != "cost_protected"
+    recommendation = calc.minimum_stay_recommendation
+    assert recommendation.recommended_min_stay == 1
+    assert recommendation.floor_relief_eur == 0.0
+    # AC (reservation totals): at LOS 1, the reservation total matches the
+    # top-level, per-night cost/price exactly (a 1-night "reservation").
+    assert recommendation.cost_per_reservation_eur == 10.0
+    assert recommendation.suggested_price_per_reservation_eur == (
+        results[0].output.suggested_price_eur
+    )
+    assert not any(
+        c.code in ("minimum_stay_recommended", "minimum_stay_not_viable")
+        for c in calc.decision_components
+    )
+
+
+def test_minimum_stay_recommendation_found_when_one_time_cost_dilutes():
+    # AC-05 / spec 15 §4's worked example, wired through the real
+    # PriceDecisionFunction: Cr=110.0 forces cost_protected at stay_length=1
+    # but LOS 2 already dilutes it enough to clear the floor.
+    fn, ctx = _make_function()
+    list(
+        fn.process_element1(
+            _cost("apt-A", variable_cost=0.0, one_time_cost=110.0), ctx
+        )
+    )
+    results = list(fn.process_element2(_market(days_from_today=45, avg_rate=90.0), ctx))
+
+    calc = results[0].calculation
+    assert calc.rule_applied == "cost_protected"
+    recommendation = calc.minimum_stay_recommendation
+    assert recommendation.recommended_min_stay == 2
+    assert recommendation.floor_relief_eur == round(137.5 - 68.75, 2)
+    # AC (reservation totals): a 2-night reservation pays the 110.0 one-time
+    # cost once, priced at the LOS-2 candidate's own 85.5 EUR/night x 2.
+    assert recommendation.cost_per_reservation_eur == 110.0
+    assert recommendation.suggested_price_per_reservation_eur == round(85.5 * 2, 2)
+    assert [c.code for c in calc.decision_components][-1] == "minimum_stay_recommended"
+
+
+def test_minimum_stay_recommendation_not_viable_when_only_variable_cost_is_the_issue():
+    # AC-05: one_time_cost_eur=0.0 here (the _cost() default), so
+    # minimum_price_eur is identical across every LOS candidate (nothing to
+    # dilute) — cost_protected at stay_length=1 stays cost_protected at
+    # every candidate. recommended_min_stay is correctly None, and the
+    # minimum_stay_not_viable component is appended after the existing ones.
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=140.0), ctx))
+    results = list(fn.process_element2(_market(days_from_today=7, avg_rate=90.0), ctx))
+
+    calc = results[0].calculation
+    assert calc.rule_applied == "cost_protected"
+    assert all(c.rule_applied == "cost_protected" for c in calc.los_floor_matrix)
+    recommendation = calc.minimum_stay_recommendation
+    assert recommendation.recommended_min_stay is None
+    assert recommendation.floor_relief_eur is None
+    assert recommendation.cost_per_reservation_eur is None
+    assert recommendation.suggested_price_per_reservation_eur is None
+    assert [c.code for c in calc.decision_components][-1] == "minimum_stay_not_viable"
 
 
 def test_on_timer_emits_data_stale_for_expired_night():

@@ -47,8 +47,9 @@ def test_row_from_new_image_defaults_missing_property_fields_pre_phase_8(
     row = row_from_new_image(image, "INSERT", ingested_at)
 
     assert row["calculation"]["property_attribute_factor"] == 1.0
-    assert row["calculation"]["property_reference_price_eur"] == (
-        row["market_inputs"]["avg_nightly_rate_eur"]
+    assert (
+        row["calculation"]["property_reference_price_eur"]
+        == (row["market_inputs"]["avg_nightly_rate_eur"])
     )
 
 
@@ -100,6 +101,106 @@ def test_row_from_new_image_derives_missing_floor_policy_from_floor_type_soft(
 
     assert row["calculation"]["floor_policy"] == "soft"
     assert row["calculation"]["los_floor_matrix"][0]["floor_policy"] == "soft"
+
+
+def test_row_from_new_image_defaults_missing_manual_override_to_none(
+    sample_new_image,
+):
+    # A record predating Phase 14 (ADR-0011 backlog #9) has no
+    # manual_override key at all — None is the honest answer, same as a
+    # post-Phase-14 record with no active override (spec 14 §2).
+    image = sample_new_image("88888888-8888-8888-8888-888888888888", 132.0)
+    assert "manual_override" not in image["calculation"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["calculation"]["manual_override"] is None
+
+
+def test_row_from_new_image_converts_manual_override_when_present(sample_new_image):
+    image = sample_new_image("99999999-9999-9999-9999-999999999999", 132.0)
+    image["calculation"]["manual_override"] = {
+        "override_price_eur": 110.0,
+        "reason": "Pre-event availability push",
+        "authorized_by": "ops@bilemon.example",
+        "valid_until": "2026-08-10T00:00:00+00:00",
+        "expected_loss_eur": 19.27,
+    }
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    override = row["calculation"]["manual_override"]
+    assert override["override_price_eur"] == 110.0
+    assert override["reason"] == "Pre-event availability push"
+    assert override["authorized_by"] == "ops@bilemon.example"
+    assert override["valid_until"].year == 2026
+    assert override["expected_loss_eur"] == 19.27
+
+
+def test_row_from_new_image_defaults_missing_minimum_stay_recommendation_to_none(
+    sample_new_image,
+):
+    # A record predating Phase 15 (ADR-0011 backlog #12) has no
+    # minimum_stay_recommendation key at all — both fields None is the
+    # honest answer, never fabricated.
+    image = sample_new_image("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 132.0)
+    assert "minimum_stay_recommendation" not in image["calculation"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    recommendation = row["calculation"]["minimum_stay_recommendation"]
+    assert recommendation["recommended_min_stay"] is None
+    assert recommendation["floor_relief_eur"] is None
+    assert recommendation["cost_per_reservation_eur"] is None
+    assert recommendation["suggested_price_per_reservation_eur"] is None
+
+
+def test_row_from_new_image_converts_minimum_stay_recommendation_when_present(
+    sample_new_image,
+):
+    image = sample_new_image("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 132.0)
+    image["calculation"]["minimum_stay_recommendation"] = {
+        "recommended_min_stay": 2,
+        "floor_relief_eur": 68.75,
+        "cost_per_reservation_eur": 110.0,
+        "suggested_price_per_reservation_eur": 171.0,
+    }
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    recommendation = row["calculation"]["minimum_stay_recommendation"]
+    assert recommendation["recommended_min_stay"] == 2
+    assert recommendation["floor_relief_eur"] == 68.75
+    assert recommendation["cost_per_reservation_eur"] == 110.0
+    assert recommendation["suggested_price_per_reservation_eur"] == 171.0
+
+
+def test_row_from_new_image_converts_minimum_stay_recommendation_when_null(
+    sample_new_image,
+):
+    # A post-Phase-15 record with no viable recommendation carries an
+    # explicit null, not a missing key — same both-None result as the
+    # missing-key case above, from a different input shape.
+    image = sample_new_image("cccccccc-cccc-cccc-cccc-cccccccccccc", 132.0)
+    image["calculation"]["minimum_stay_recommendation"] = {
+        "recommended_min_stay": None,
+        "floor_relief_eur": None,
+        "cost_per_reservation_eur": None,
+        "suggested_price_per_reservation_eur": None,
+    }
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    recommendation = row["calculation"]["minimum_stay_recommendation"]
+    assert recommendation["recommended_min_stay"] is None
+    assert recommendation["floor_relief_eur"] is None
+    assert recommendation["cost_per_reservation_eur"] is None
+    assert recommendation["suggested_price_per_reservation_eur"] is None
 
 
 def test_row_from_new_image_derives_missing_floor_policy_from_floor_type_hard(

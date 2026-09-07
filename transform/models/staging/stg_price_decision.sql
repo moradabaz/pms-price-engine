@@ -39,6 +39,8 @@ select
     calculation.rule_applied,
     calculation.los_floor_matrix,
     calculation.decision_components,
+    calculation.manual_override,
+    calculation.minimum_stay_recommendation,
 
     output.suggested_price_eur,
     output.currency,

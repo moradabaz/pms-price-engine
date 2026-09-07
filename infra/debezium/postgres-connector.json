@@ -10,7 +10,7 @@
     "database.dbname": "pms_db",
 
     "topic.prefix": "pms",
-    "table.include.list": "public.payment_lines,public.apartment_market_segments,public.owner_contracts",
+    "table.include.list": "public.payment_lines,public.apartment_market_segments,public.owner_contracts,public.manual_overrides",
 
     "slot.name": "debezium_payment_lines",
     "plugin.name": "pgoutput",
@@ -27,7 +27,7 @@
     "dates.type": "com.pms.debezium.DateStringConverter",
     "dates.format.date": "yyyy-MM-dd",
 
-    "transforms": "unwrap,routePayments,routeSegments,routeOwnerContracts",
+    "transforms": "unwrap,routePayments,routeSegments,routeOwnerContracts,routeManualOverrides",
     "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
     "transforms.unwrap.drop.tombstones": "true",
     "transforms.unwrap.delete.handling.mode": "drop",
@@ -40,6 +40,9 @@
     "transforms.routeOwnerContracts.type": "org.apache.kafka.connect.transforms.RegexRouter",
     "transforms.routeOwnerContracts.regex": "pms\\.public\\.owner_contracts",
     "transforms.routeOwnerContracts.replacement": "owner-contracts.v1",
+    "transforms.routeManualOverrides.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeManualOverrides.regex": "pms\\.public\\.manual_overrides",
+    "transforms.routeManualOverrides.replacement": "manual-overrides.v1",
 
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",
     "key.converter.schemas.enable": "false",

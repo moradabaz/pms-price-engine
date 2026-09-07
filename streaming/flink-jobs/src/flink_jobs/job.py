@@ -1,4 +1,5 @@
 import json
+from datetime import date, datetime
 
 from pyflink.common import Configuration
 from pyflink.common.serialization import SimpleStringSchema
@@ -13,11 +14,15 @@ from shared_schemas.market_price import MarketPrice
 from shared_schemas.payment_line import PaymentLine
 
 from flink_jobs.dynamodb_sink import DynamoDbSinkFunction
-from flink_jobs.models import ApartmentSegmentRow, OwnerContractRow
+from flink_jobs.models import ApartmentSegmentRow, ManualOverrideRow, OwnerContractRow
 from flink_jobs.settings import FlinkJobSettings
 from flink_jobs.stage_cost_enrichment import (
     SEGMENT_BROADCAST_DESCRIPTOR,
     CostEnrichmentFunction,
+)
+from flink_jobs.stage_manual_override_enrichment import (
+    MANUAL_OVERRIDE_BROADCAST_DESCRIPTOR,
+    ManualOverrideEnrichmentFunction,
 )
 from flink_jobs.stage_owner_contract_enrichment import (
     OWNER_CONTRACT_BROADCAST_DESCRIPTOR,
@@ -84,6 +89,21 @@ def _parse_owner_contract_row(raw: str) -> OwnerContractRow:
         owner_id=data["owner_id"],
         commission_base=data.get("commission_base", _DEFAULT_COMMISSION_BASE),
         commission_pct=float(data.get("commission_pct", _DEFAULT_COMMISSION_PCT)),
+    )
+
+
+def _parse_manual_override_row(raw: str) -> ManualOverrideRow:
+    """Parses one manual_overrides CDC message (Phase 14, ADR-0011 backlog
+    #9). No defensive defaults needed — this topic has no history predating
+    this phase, unlike apartment-segments/owner-contracts."""
+    data = json.loads(raw)
+    return ManualOverrideRow(
+        apartment_id=data["apartment_id"],
+        target_date=date.fromisoformat(data["target_date"]),
+        override_price_eur=float(data["override_price_eur"]),
+        reason=data["reason"],
+        authorized_by=data["authorized_by"],
+        valid_until=datetime.fromisoformat(data["valid_until"]),
     )
 
 
@@ -191,14 +211,42 @@ def build_job(env, settings: FlinkJobSettings) -> None:
     )
 
     # E.1's dead-man's-switch — logged, not a price_decision (spec §7).
+    # Retrieved from Stage B's own output, BEFORE Stage C below — unaffected
+    # by the override enrichment chained after it (spec 14 §2).
     price_decisions.get_side_output(DATA_STALE_TAG).print()
+
+    # Phase 14 (ADR-0011 backlog #9, spec 14 §2): Stage C, the first stage in
+    # this project chained AFTER a price_decision is computed rather than
+    # before it — republishes an authorized manual override in place of the
+    # algorithmic suggestion when one is active for this (apartment_id,
+    # target_date).
+    manual_override_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.manual_overrides_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
+    manual_override_stream = env.from_source(
+        manual_override_source, WatermarkStrategy.no_watermarks(), "manual-overrides"
+    ).map(_parse_manual_override_row)
+    broadcast_manual_override_stream = manual_override_stream.broadcast(
+        MANUAL_OVERRIDE_BROADCAST_DESCRIPTOR
+    )
+    final_decisions = (
+        price_decisions.key_by(lambda pd: pd.apartment_id)
+        .connect(broadcast_manual_override_stream)
+        .process(ManualOverrideEnrichmentFunction())
+    )
 
     dynamodb_writer = DynamoDbSinkFunction(
         table_name=settings.dynamodb_table_name,
         endpoint_url=settings.dynamodb_endpoint_url,
         region_name=settings.aws_region,
     )
-    price_decisions.map(dynamodb_writer).add_sink(
+    final_decisions.map(dynamodb_writer).add_sink(
         # Flink 2.x moved this class under .legacy. (confirmed by scanning
         # flink-dist-2.3.0.jar — it wasn't deleted like RichParallelSourceFunction).
         SinkFunction(

@@ -90,6 +90,44 @@ class OwnerContractRow:
 
 
 @dataclass(frozen=True)
+class ManualOverrideAssignment:
+    """An apartment/night's authorized override, as stored in Stage C's
+    broadcast state (Phase 14, ADR-0011 backlog #9)."""
+
+    override_price_eur: float
+    reason: str
+    authorized_by: str
+    valid_until: datetime
+
+
+@dataclass(frozen=True)
+class ManualOverrideRow:
+    """One manual_overrides CDC row, as received from Kafka."""
+
+    apartment_id: str
+    target_date: date
+    override_price_eur: float
+    reason: str
+    authorized_by: str
+    valid_until: datetime
+
+    def broadcast_key(self) -> str:
+        """The composite key ManualOverrideEnrichmentFunction's broadcast
+        state uses — apartment_id/target_date are the map key, not stored in
+        the value (same drop-the-key convention OwnerContractRow.to_assignment
+        established). Returns the key."""
+        return f"{self.apartment_id}:{self.target_date.isoformat()}"
+
+    def to_assignment(self) -> ManualOverrideAssignment:
+        return ManualOverrideAssignment(
+            override_price_eur=self.override_price_eur,
+            reason=self.reason,
+            authorized_by=self.authorized_by,
+            valid_until=self.valid_until,
+        )
+
+
+@dataclass(frozen=True)
 class CostAggregate:
     """Stage A's output: one apartment's current cost, segment, and margin config."""
 

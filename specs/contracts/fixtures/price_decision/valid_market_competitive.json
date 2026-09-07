@@ -146,7 +146,13 @@
         "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
         "impact": 93.44
       }
-    ]
+    ],
+    "minimum_stay_recommendation": {
+      "recommended_min_stay": 1,
+      "floor_relief_eur": 0.0,
+      "cost_per_reservation_eur": 13.67,
+      "suggested_price_per_reservation_eur": 114.47
+    }
   },
   "output": {
     "suggested_price_eur": 114.47,

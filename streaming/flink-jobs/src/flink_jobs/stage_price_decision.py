@@ -1,7 +1,11 @@
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
-from pricing_formulas.engine import decide_price, decide_price_los_matrix
+from pricing_formulas.engine import (
+    decide_price,
+    decide_price_los_matrix,
+    recommend_minimum_stay,
+)
 from pricing_formulas.layers.commercial import (
     commission_base_netting_component,
     netted_commission_amount,
@@ -18,6 +22,7 @@ from shared_schemas.price_decision import (
     DecisionComponent,
     LosFloorCandidate,
     MarketInputs,
+    MinimumStayRecommendation,
     Output,
     PriceDecision,
 )
@@ -180,6 +185,30 @@ def _build_price_decision(
         property_attribute_factor=cost.property_attribute_factor,
         commission_netting_eur=commission_netting_eur,
     )
+    # Phase 15 (ADR-0011 backlog #12): pure post-processing over the matrix
+    # just computed above, plus the same raw cost inputs decide_price() used
+    # (to compute a whole reservation's cost/price, not just its per-night
+    # floor). Its own decision_component (if any) is appended to the same
+    # flat top-level list Phase 11/14 share.
+    minimum_stay = recommend_minimum_stay(
+        los_matrix,
+        calc.property_reference_price_eur,
+        fixed_cost_eur=cost.fixed_cost_eur,
+        variable_cost_eur=cost.variable_cost_eur,
+        one_time_cost_eur=cost.one_time_cost_eur,
+    )
+    decision_components = [
+        DecisionComponent(code=c.code, label=c.label, impact=c.impact)
+        for c in calc.decision_components
+    ]
+    if minimum_stay.decision_component is not None:
+        decision_components.append(
+            DecisionComponent(
+                code=minimum_stay.decision_component.code,
+                label=minimum_stay.decision_component.label,
+                impact=minimum_stay.decision_component.impact,
+            )
+        )
     return PriceDecision(
         decision_id=uuid4(),
         apartment_id=cost.apartment_id,
@@ -241,10 +270,15 @@ def _build_price_decision(
                 )
                 for candidate in los_matrix
             ],
-            decision_components=[
-                DecisionComponent(code=c.code, label=c.label, impact=c.impact)
-                for c in calc.decision_components
-            ],
+            decision_components=decision_components,
+            minimum_stay_recommendation=MinimumStayRecommendation(
+                recommended_min_stay=minimum_stay.recommended_min_stay,
+                floor_relief_eur=minimum_stay.floor_relief_eur,
+                cost_per_reservation_eur=minimum_stay.cost_per_reservation_eur,
+                suggested_price_per_reservation_eur=(
+                    minimum_stay.suggested_price_per_reservation_eur
+                ),
+            ),
         ),
         output=Output(
             suggested_price_eur=calc.suggested_price_eur,

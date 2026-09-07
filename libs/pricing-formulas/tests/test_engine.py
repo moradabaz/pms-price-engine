@@ -5,6 +5,7 @@ from pricing_formulas.engine import (
     LOS_CANDIDATES,
     decide_price,
     decide_price_los_matrix,
+    recommend_minimum_stay,
 )
 from pricing_formulas.layers.booking_window import floor_policy_for
 from pricing_formulas.layers.commercial import commission_base_netting_component
@@ -625,3 +626,147 @@ def test_performance_and_inventory_layers_multiply_into_property_reference_price
     assert reduced.property_reference_price_eur == round(
         baseline.property_reference_price_eur * 0.90, 2
     )
+
+
+def test_recommend_minimum_stay_already_fine_at_one_night():
+    # AC-01: stay_length=1 not cost_protected -> recommend 1, no relief,
+    # no decision component (nothing to explain).
+    matrix = decide_price_los_matrix(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=120.5,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    calc = decide_price(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+        target_margin=0.2,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=120.5,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    recommendation = recommend_minimum_stay(
+        matrix,
+        calc.property_reference_price_eur,
+        fixed_cost_eur=0.0,
+        variable_cost_eur=13.67,
+        one_time_cost_eur=0.0,
+    )
+    assert recommendation.recommended_min_stay == 1
+    assert recommendation.floor_relief_eur == 0.0
+    # AC (reservation totals): at LOS 1, "the reservation" IS the single
+    # night — cost/price per reservation match the standalone decide_price()
+    # call exactly.
+    assert recommendation.cost_per_reservation_eur == round(0.0 + 13.67, 2)
+    assert (
+        recommendation.suggested_price_per_reservation_eur == calc.suggested_price_eur
+    )
+    assert recommendation.decision_component is None
+
+
+def test_recommend_minimum_stay_finds_shortest_non_cost_protected_candidate():
+    # AC-02: spec 15 §4's worked example — LOS 1 is cost_protected, LOS 2 is
+    # the shortest candidate that clears it.
+    matrix = decide_price_los_matrix(
+        fixed_cost_eur=0.0,
+        variable_cost_eur=0.0,
+        one_time_cost_eur=110.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=90.0,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    by_stay_length = {c.stay_length: c for c in matrix}
+    assert by_stay_length[1].rule_applied == "cost_protected"
+    assert by_stay_length[2].rule_applied == "market_competitive"
+
+    recommendation = recommend_minimum_stay(
+        matrix,
+        property_reference_price_eur=90.0,
+        fixed_cost_eur=0.0,
+        variable_cost_eur=0.0,
+        one_time_cost_eur=110.0,
+    )
+
+    assert recommendation.recommended_min_stay == 2
+    assert recommendation.floor_relief_eur == round(137.5 - 68.75, 2)
+    # AC (reservation totals): a 2-night reservation pays the one-time cost
+    # once (110.0, no fixed/variable here) and should be priced at the LOS-2
+    # candidate's own market-competitive per-night rate (85.5) x 2 nights.
+    assert recommendation.cost_per_reservation_eur == 110.0
+    assert recommendation.suggested_price_per_reservation_eur == round(85.5 * 2, 2)
+    assert recommendation.decision_component is not None
+    assert recommendation.decision_component.code == "minimum_stay_recommended"
+    assert recommendation.decision_component.impact == recommendation.floor_relief_eur
+
+
+def test_recommend_minimum_stay_not_viable_when_every_candidate_cost_protected():
+    # AC-03: even the longest candidate (14 nights) stays cost_protected —
+    # a structural fixed/variable cost problem, not a one-time-cost dilution
+    # one. No recommendation exists.
+    matrix = decide_price_los_matrix(
+        fixed_cost_eur=60.0,
+        variable_cost_eur=30.0,
+        one_time_cost_eur=10.0,
+        target_margin=0.05,
+        commission_pct=0.15,
+        avg_nightly_rate_eur=90.0,
+        competitiveness_discount=0.05,
+        days_to_arrival=45,
+    )
+    assert all(c.rule_applied == "cost_protected" for c in matrix)
+
+    recommendation = recommend_minimum_stay(
+        matrix,
+        property_reference_price_eur=90.0,
+        fixed_cost_eur=60.0,
+        variable_cost_eur=30.0,
+        one_time_cost_eur=10.0,
+    )
+
+    assert recommendation.recommended_min_stay is None
+    assert recommendation.floor_relief_eur is None
+    assert recommendation.cost_per_reservation_eur is None
+    assert recommendation.suggested_price_per_reservation_eur is None
+    assert recommendation.decision_component is not None
+    assert recommendation.decision_component.code == "minimum_stay_not_viable"
+    longest = max(matrix, key=lambda c: c.stay_length)
+    assert recommendation.decision_component.impact == round(
+        longest.minimum_price_eur - 90.0, 2
+    )
+
+
+def test_minimum_price_eur_is_monotonically_non_increasing_in_stay_length():
+    # AC-04: the correctness precondition recommend_minimum_stay() relies on
+    # — checked directly, not just assumed, across several cost profiles.
+    profiles = [
+        (0.0, 0.0, 110.0),
+        (20.0, 15.0, 0.0),
+        (60.0, 30.0, 10.0),
+        (3.55, 0.0, 110.0),
+    ]
+    for fixed_cost_eur, variable_cost_eur, one_time_cost_eur in profiles:
+        matrix = decide_price_los_matrix(
+            fixed_cost_eur=fixed_cost_eur,
+            variable_cost_eur=variable_cost_eur,
+            one_time_cost_eur=one_time_cost_eur,
+            target_margin=0.05,
+            commission_pct=0.15,
+            avg_nightly_rate_eur=90.0,
+            competitiveness_discount=0.05,
+            days_to_arrival=45,
+        )
+        ordered = sorted(matrix, key=lambda c: c.stay_length)
+        floors = [c.minimum_price_eur for c in ordered]
+        assert floors == sorted(floors, reverse=True)
+
+        rule_rank = {"cost_protected": 0, "minimum_floor": 1, "market_competitive": 2}
+        ranks = [rule_rank[c.rule_applied] for c in ordered]
+        assert ranks == sorted(ranks)

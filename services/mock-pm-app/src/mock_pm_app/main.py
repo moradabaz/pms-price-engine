@@ -12,6 +12,7 @@ from mock_pm_app.data import (
 from mock_pm_app.generator import run_forever
 from mock_pm_app.migrations import (
     ensure_apartment_market_segments_schema,
+    ensure_manual_overrides_schema,
     ensure_owner_contracts_schema,
     ensure_owners_schema,
 )
@@ -43,6 +44,11 @@ def main() -> None:
         logger.info("owners_schema_ensured")
         ensure_owner_contracts_schema(conn)
         logger.info("owner_contracts_schema_ensured")
+        # Phase 14 (ADR-0011 backlog #9): schema only, no seed call — this
+        # table starts empty and stays empty unless a human inserts a row
+        # (spec 14 §1).
+        ensure_manual_overrides_schema(conn)
+        logger.info("manual_overrides_schema_ensured")
 
         rng = random.Random()
         apartments = build_apartment_pool(settings.seed_apartments, rng)
@@ -64,9 +70,7 @@ def main() -> None:
             logger.info("segment_seed_complete", rows_inserted=segments_inserted)
 
         if already_seeded_owners(conn):
-            logger.info(
-                "owner_seed_skipped", reason="owners already has rows"
-            )
+            logger.info("owner_seed_skipped", reason="owners already has rows")
         else:
             owners_inserted = seed_owners(conn, owners)
             logger.info("owner_seed_complete", rows_inserted=owners_inserted)

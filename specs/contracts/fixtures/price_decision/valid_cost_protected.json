@@ -145,8 +145,19 @@
         "code": "rule_cost_protected",
         "label": "Cost floor (125.0) exceeds property reference price (90.0) by 35.0 EUR",
         "impact": 35.0
+      },
+      {
+        "code": "minimum_stay_not_viable",
+        "label": "Even at 14 nights, the cost floor still exceeds the property reference price by 23.39 EUR — the fixed/variable cost base, not the one-time booking cost, is the binding constraint. A minimum-stay policy alone will not fix this.",
+        "impact": 23.39
       }
-    ]
+    ],
+    "minimum_stay_recommendation": {
+      "recommended_min_stay": null,
+      "floor_relief_eur": null,
+      "cost_per_reservation_eur": null,
+      "suggested_price_per_reservation_eur": null
+    }
   },
   "output": {
     "suggested_price_eur": 125.0,

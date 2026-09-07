@@ -9,6 +9,7 @@ from shared_schemas.price_decision import (
     DecisionComponent,
     LosFloorCandidate,
     MarketInputs,
+    MinimumStayRecommendation,
     Output,
     PriceDecision,
 )
@@ -74,6 +75,9 @@ def _decision() -> PriceDecision:
                 for n in (1, 2, 3, 7, 14)
             ],
             decision_components=_PROPERTY_COMPONENTS + _RULE_COMPONENT,
+            minimum_stay_recommendation=MinimumStayRecommendation(
+                recommended_min_stay=1, floor_relief_eur=0.0
+            ),
         ),
         output=Output(
             suggested_price_eur=95.0, effective_margin=0.9, below_market_by=5.0

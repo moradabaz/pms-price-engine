@@ -1,5 +1,5 @@
 {
-  "decision_id": "d4e5f6a7-89ab-4562-b3fc-2c963f66afb7",
+  "decision_id": "e5f6a7b8-89ab-4562-b3fc-2c963f66afc8",
   "schema_version": "1.0",
   "apartment_id": "a1b2c3d4-0002",
   "apartment_reference": "MAD-007",
@@ -145,6 +145,11 @@
         "code": "rule_minimum_floor",
         "label": "Cost floor (147.5) exceeds market reference (142.5) by 5.0 EUR but stays within property reference (150.0)",
         "impact": 5.0
+      },
+      {
+        "code": "manual_override_applied",
+        "label": "Manual override by ops@bilemon.example: Pre-event availability push (published 130.0 EUR instead of the 147.5 EUR algorithmic suggestion)",
+        "impact": -17.5
       }
     ],
     "minimum_stay_recommendation": {
@@ -152,12 +157,19 @@
       "floor_relief_eur": 0.0,
       "cost_per_reservation_eur": 118.0,
       "suggested_price_per_reservation_eur": 147.5
+    },
+    "manual_override": {
+      "override_price_eur": 130.0,
+      "reason": "Pre-event availability push",
+      "authorized_by": "ops@bilemon.example",
+      "valid_until": "2026-07-05T00:00:00Z",
+      "expected_loss_eur": 17.5
     }
   },
   "output": {
-    "suggested_price_eur": 147.5,
+    "suggested_price_eur": 130.0,
     "currency": "EUR",
-    "effective_margin": 0.25,
+    "effective_margin": 0.1017,
     "below_market_by": 2.5
   }
 }

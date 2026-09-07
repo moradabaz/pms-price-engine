@@ -9,8 +9,9 @@ README stays the high-level pitch; this manual is the "I just cloned this, now w
 3. [Verifying the pipeline is actually flowing](#3-verifying-the-pipeline-is-actually-flowing)
 4. [The dashboard, explained](#4-the-dashboard-explained)
 5. [Phase 4 — what Flink does, and what data the client provides](#5-phase-4--what-flink-does-and-what-data-the-client-provides)
-6. [Stopping the stack](#6-stopping-the-stack)
-7. [Troubleshooting](#7-troubleshooting)
+6. [Authoring a Manual Override (Phase 14)](#6-authoring-a-manual-override-phase-14)
+7. [Stopping the stack](#7-stopping-the-stack)
+8. [Troubleshooting](#8-troubleshooting)
 
 ---
 
@@ -57,9 +58,12 @@ docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
   --topic market-price-bridge.v1 --partitions 4 --replication-factor 1
 docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
   --topic owner-contracts.v1 --partitions 1 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic manual-overrides.v1 --partitions 1 --replication-factor 1
 
 # 4. Register the Debezium connector (one-time — reads payment_lines +
-# apartment_market_segments + owner_contracts, Phase 11 ADR-0011 backlog #5)
+# apartment_market_segments + owner_contracts + manual_overrides,
+# Phase 14 ADR-0011 backlog #9)
 curl -X POST -H "Content-Type: application/json" \
   --data @infra/debezium/postgres-connector.json \
   http://localhost:8083/connectors
@@ -92,7 +96,7 @@ Open the dashboard: **http://localhost:8501**
 
 | Service | Port | Role |
 |---|---|---|
-| `postgres` | `5432` | Source DB — `payment_lines`, `apartment_market_segments`, `owners`, `owner_contracts` |
+| `postgres` | `5432` | Source DB — `payment_lines`, `apartment_market_segments`, `owners`, `owner_contracts`, `manual_overrides` |
 | `mock-pm-app` | — | Seeds + continuously writes synthetic cost rows |
 | `zookeeper` | `2181` | Kafka coordination |
 | `kafka` | `9092` | Event bus for `payment-events.v1` |
@@ -145,11 +149,14 @@ fan-out gaps):
 |---|---|
 | Apartment | `apartment_id` |
 | Night | The specific check-in date this price applies to |
-| Cost | Total cost for that night (`fixed_cost_eur + variable_cost_eur + one_time_cost_eur`) |
-| Market avg | The raw average nightly rate for that apartment's market segment |
+| Cost (1-night) | Total cost as if this were a 1-night reservation (`fixed_cost_eur + variable_cost_eur + one_time_cost_eur`, the one-time/turnover cost charged in full, undiluted), always shown in red |
+| Market avg | The raw average nightly rate for that apartment's market segment, always shown in blue |
 | Suggested price | The price Flink recommends |
-| Margin vs cost | `(suggested_price / cost) - 1` — the margin this price actually achieves |
-| Rule | Which of the three pricing rules won (see §5) — **`cost_protected` in red**, **`market_competitive` in green**, `minimum_floor` uncolored |
+| Margin | `(suggested_price / cost) - 1` — the margin this price actually achieves |
+| Status | **`Price Below Cost`** (red) — loses money outright. **`Price Below Profit`** (orange) — covers cost but not the PM's target margin. **`Price Above Market`** (orange) — clears the target margin but prices above the raw market average. **`Market Competitive`** (green) — clears the target margin and stays at/below the market average. |
+| Min. stay reco. | Minimum Stay as a profitability lever (ADR-0011 backlog #12, Phase 15) — the shortest stay length (nights) that would clear `cost_protected` for this apartment/night, or `—` when already fine at 1 night or when no candidate stay length resolves it (see `specs/phases/15-minimum-stay-recommendation/spec.md`) |
+| Cost per reservation | Total cost for a whole reservation at the "Min. stay reco." length — fixed/variable cost recur every night, the one-time/turnover cost is paid once per booking. `—` when there is no recommendation. |
+| Suggested price (reservation) | What the whole reservation should be priced at in total — the recommended stay length's own market-competitive per-night rate × its nights, i.e. a price already covering cost + target margin while staying at/below the market average. `—` when there is no recommendation. |
 
 An apartment with no decision yet shows up in a "No decision yet for: ..." caption instead of a
 crash.
@@ -231,7 +238,63 @@ Full derivation, worked numeric examples, and the exact division-based formula:
 
 ---
 
-## 6. Stopping the stack
+## 6. Authoring a Manual Override (Phase 14)
+
+Every phase before this one is read-only downstream of Flink. This is the first human write path
+into the pipeline (ADR-0011 backlog #9,
+[spec 14](../../specs/phases/14-manual-override/spec.md)): a Property Manager can force a specific
+apartment/night's published price, overriding the algorithmic suggestion — authorized, reasoned,
+time-boxed, and fully audited in the resulting `price_decision`, never a silent patch.
+
+There is no UI or API for this in the PoC (§1 of the spec) — authoring an override means inserting
+a row directly:
+
+```bash
+# 1. Insert the override — apartment_id and target_date must match a real,
+#    already-seeded apartment/night for Stage C to pick it up.
+docker exec -i pms_postgres psql -U pms -d pms_db <<'SQL'
+INSERT INTO public.manual_overrides
+    (apartment_id, target_date, override_price_eur, reason, authorized_by, valid_until)
+VALUES
+    ('<apartment_id>', '<YYYY-MM-DD>', 130.00,
+     'Pre-event availability push', 'ops@bilemon.example',
+     now() + interval '2 days');
+SQL
+
+# 2. Confirm the CDC message actually reached Kafka (not just the connector's
+#    "RUNNING" status — see error-handling/debezium-heartbeat-topic-stalls-...)
+docker exec pms_kafka kafka-console-consumer --bootstrap-server localhost:9092 \
+  --topic manual-overrides.v1 --from-beginning --max-messages 1
+
+# 3. Trigger a reprice for that apartment/night — Stage C only re-evaluates
+#    on the next cost or market event for it, not on a timer. The fastest
+#    way is a new payment_lines row for that apartment (mock-pm-app's
+#    generator already does this continuously) or waiting for the next
+#    market-ingestor tick.
+
+# 4. Confirm the override applied
+aws --endpoint-url=http://localhost:4566 --region eu-west-1 \
+  dynamodb get-item --table-name price_decision \
+  --key '{"apartment_id": {"S": "<apartment_id>"}, "target_date": {"S": "<YYYY-MM-DD>"}}' \
+  | grep -A6 manual_override
+```
+
+**Cancelling a live override is an `UPDATE`, never a `DELETE`** — this connector's global
+`delete.handling.mode: drop` setting silently drops delete events for every captured table, so a
+deleted row's cancellation would never reach Flink:
+
+```sql
+UPDATE public.manual_overrides
+SET valid_until = now()
+WHERE apartment_id = '<apartment_id>' AND target_date = '<YYYY-MM-DD>';
+```
+
+The next reprice after `valid_until` passes reverts to the algorithmic price automatically — no
+Flink restart needed (spec 14 AC-09).
+
+---
+
+## 7. Stopping the stack
 
 ```bash
 # Stop containers, keep volumes (Postgres data, LocalStack data, dbt warehouse, Iceberg catalog survive)
@@ -244,7 +307,7 @@ docker compose -f infra/docker-compose.yml down -v
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 Every non-trivial incident hit while building this project — root cause, fix, and how to
 recognize it again — is written up in [`error-handling/`](../../error-handling/) instead of only

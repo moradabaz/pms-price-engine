@@ -1,8 +1,8 @@
 {
-  "decision_id": "d4e5f6a7-89ab-4562-b3fc-2c963f66afb7",
+  "decision_id": "f6a7b8c9-89ab-4562-b3fc-2c963f66afd9",
   "schema_version": "1.0",
-  "apartment_id": "a1b2c3d4-0002",
-  "apartment_reference": "MAD-007",
+  "apartment_id": "a1b2c3d4-0004",
+  "apartment_reference": "BCN-099",
   "target_date": "2026-08-15",
   "decided_at": "2026-07-01T06:05:00Z",
   "cost_inputs": {
@@ -10,24 +10,24 @@
       "start": "2026-06-01",
       "end": "2026-06-30"
     },
-    "total_monthly_cost_eur": 4200.0,
+    "total_monthly_cost_eur": 110.0,
     "available_days": 30,
-    "fixed_cost_eur": 70.0,
-    "variable_cost_eur": 38.0,
-    "one_time_cost_eur": 10.0,
-    "cost_lines_count": 8
+    "fixed_cost_eur": 0.0,
+    "variable_cost_eur": 0.0,
+    "one_time_cost_eur": 110.0,
+    "cost_lines_count": 1
   },
   "market_inputs": {
-    "market_area": "Madrid/Centro",
-    "avg_nightly_rate_eur": 150.0,
-    "occupancy_rate": 0.68,
-    "sample_size": 22,
+    "market_area": "Barcelona/Eixample",
+    "avg_nightly_rate_eur": 90.0,
+    "occupancy_rate": 0.6,
+    "sample_size": 15,
     "collected_at": "2026-07-01T06:00:00Z",
     "data_age_seconds": 300
   },
   "calculation": {
     "target_margin": 0.05,
-    "minimum_price_eur": 147.5,
+    "minimum_price_eur": 137.5,
     "floor_type": "structural_full_margin",
     "floor_policy": "soft",
     "commission_pct": 0.15,
@@ -35,87 +35,87 @@
     "days_to_arrival": 45,
     "competitiveness_discount": 0.05,
     "property_attribute_factor": 1.0,
-    "property_reference_price_eur": 150.0,
-    "market_reference_price_eur": 142.5,
-    "rule_applied": "minimum_floor",
+    "property_reference_price_eur": 90.0,
+    "market_reference_price_eur": 85.5,
+    "rule_applied": "cost_protected",
     "los_floor_matrix": [
       {
         "stay_length": 1,
-        "minimum_price_eur": 147.5,
+        "minimum_price_eur": 137.5,
         "floor_type": "structural_full_margin",
         "floor_policy": "soft",
-        "rule_applied": "minimum_floor",
-        "suggested_price_eur": 147.5,
+        "rule_applied": "cost_protected",
+        "suggested_price_eur": 137.5,
         "effective_margin": 0.25,
         "decision_components": [
           {
-            "code": "rule_minimum_floor",
-            "label": "Cost floor (147.5) exceeds market reference (142.5) by 5.0 EUR but stays within property reference (150.0)",
-            "impact": 5.0
+            "code": "rule_cost_protected",
+            "label": "Cost floor (137.5) exceeds property reference price (90.0) by 47.5 EUR",
+            "impact": 47.5
           }
         ]
       },
       {
         "stay_length": 2,
-        "minimum_price_eur": 141.25,
+        "minimum_price_eur": 68.75,
         "floor_type": "structural_full_margin",
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.2611,
+        "suggested_price_eur": 85.5,
+        "effective_margin": 0.5545,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (141.25) by 1.25 EUR",
-            "impact": 1.25
+            "label": "Market reference price (85.5) clears the cost floor (68.75) by 16.75 EUR",
+            "impact": 16.75
           }
         ]
       },
       {
         "stay_length": 3,
-        "minimum_price_eur": 139.17,
+        "minimum_price_eur": 45.83,
         "floor_type": "structural_full_margin",
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.2799,
+        "suggested_price_eur": 85.5,
+        "effective_margin": 1.3318,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (139.17) by 3.33 EUR",
-            "impact": 3.33
+            "label": "Market reference price (85.5) clears the cost floor (45.83) by 39.67 EUR",
+            "impact": 39.67
           }
         ]
       },
       {
         "stay_length": 7,
-        "minimum_price_eur": 136.79,
+        "minimum_price_eur": 19.64,
         "floor_type": "structural_full_margin",
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.3022,
+        "suggested_price_eur": 85.5,
+        "effective_margin": 4.4409,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (136.79) by 5.71 EUR",
-            "impact": 5.71
+            "label": "Market reference price (85.5) clears the cost floor (19.64) by 65.86 EUR",
+            "impact": 65.86
           }
         ]
       },
       {
         "stay_length": 14,
-        "minimum_price_eur": 135.89,
+        "minimum_price_eur": 9.82,
         "floor_type": "structural_full_margin",
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.3108,
+        "suggested_price_eur": 85.5,
+        "effective_margin": 9.8818,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (135.89) by 6.61 EUR",
-            "impact": 6.61
+            "label": "Market reference price (85.5) clears the cost floor (9.82) by 75.68 EUR",
+            "impact": 75.68
           }
         ]
       }
@@ -142,22 +142,27 @@
         "impact": 0.0
       },
       {
-        "code": "rule_minimum_floor",
-        "label": "Cost floor (147.5) exceeds market reference (142.5) by 5.0 EUR but stays within property reference (150.0)",
-        "impact": 5.0
+        "code": "rule_cost_protected",
+        "label": "Cost floor (137.5) exceeds property reference price (90.0) by 47.5 EUR",
+        "impact": 47.5
+      },
+      {
+        "code": "minimum_stay_recommended",
+        "label": "At 1 night(s), the cost floor (137.5 EUR) exceeds the property reference price, forcing an uncompetitive price. A minimum stay of 2 nights dilutes the one-time booking cost enough to clear it (68.75 EUR/night floor relief) — a whole reservation at that length should be priced at 171.0 EUR total.",
+        "impact": 68.75
       }
     ],
     "minimum_stay_recommendation": {
-      "recommended_min_stay": 1,
-      "floor_relief_eur": 0.0,
-      "cost_per_reservation_eur": 118.0,
-      "suggested_price_per_reservation_eur": 147.5
+      "recommended_min_stay": 2,
+      "floor_relief_eur": 68.75,
+      "cost_per_reservation_eur": 110.0,
+      "suggested_price_per_reservation_eur": 171.0
     }
   },
   "output": {
-    "suggested_price_eur": 147.5,
+    "suggested_price_eur": 137.5,
     "currency": "EUR",
     "effective_margin": 0.25,
-    "below_market_by": 2.5
+    "below_market_by": -47.5
   }
 }
