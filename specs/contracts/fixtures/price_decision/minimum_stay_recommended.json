@@ -15,7 +15,13 @@
     "fixed_cost_eur": 0.0,
     "variable_cost_eur": 0.0,
     "one_time_cost_eur": 110.0,
-    "cost_lines_count": 1
+    "cost_lines_count": 1,
+    "cost_breakdown": [
+      {
+        "concept": "cleaning",
+        "amount_eur": 110.0
+      }
+    ]
   },
   "market_inputs": {
     "market_area": "Barcelona/Eixample",
@@ -37,19 +43,19 @@
     "property_attribute_factor": 1.0,
     "property_reference_price_eur": 90.0,
     "market_reference_price_eur": 85.5,
-    "rule_applied": "cost_protected",
+    "rule_applied": "minimum_profitable_price",
     "los_floor_matrix": [
       {
         "stay_length": 1,
         "minimum_price_eur": 137.5,
         "floor_type": "structural_full_margin",
         "floor_policy": "soft",
-        "rule_applied": "cost_protected",
+        "rule_applied": "minimum_profitable_price",
         "suggested_price_eur": 137.5,
         "effective_margin": 0.25,
         "decision_components": [
           {
-            "code": "rule_cost_protected",
+            "code": "rule_minimum_profitable_price",
             "label": "Cost floor (137.5) exceeds property reference price (90.0) by 47.5 EUR",
             "impact": 47.5
           }
@@ -142,13 +148,13 @@
         "impact": 0.0
       },
       {
-        "code": "rule_cost_protected",
+        "code": "rule_minimum_profitable_price",
         "label": "Cost floor (137.5) exceeds property reference price (90.0) by 47.5 EUR",
         "impact": 47.5
       },
       {
         "code": "minimum_stay_recommended",
-        "label": "At 1 night(s), the cost floor (137.5 EUR) exceeds the property reference price, forcing an uncompetitive price. A minimum stay of 2 nights dilutes the one-time booking cost enough to clear it (68.75 EUR/night floor relief) — a whole reservation at that length should be priced at 171.0 EUR total.",
+        "label": "At 1 night(s), the cost floor (137.5 EUR) exceeds the property reference price, forcing an uncompetitive price. A minimum stay of 2 nights dilutes the one-time booking cost enough to clear it (68.75 EUR/night floor relief) \u2014 a whole reservation at that length should be priced at 171.0 EUR total.",
         "impact": 68.75
       }
     ],

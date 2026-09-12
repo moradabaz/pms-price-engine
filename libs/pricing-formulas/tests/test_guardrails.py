@@ -26,13 +26,13 @@ def test_rule_decision_component_minimum_floor():
     assert component.impact == 5.0
 
 
-def test_rule_decision_component_cost_protected():
+def test_rule_decision_component_minimum_profitable_price():
     # impact is how far the floor exceeds the apartment's own reference.
     component = rule_decision_component(
-        "cost_protected",
+        "minimum_profitable_price",
         minimum_price_eur=210.0,
         market_reference_price_eur=190.0,
         property_reference_price_eur=200.0,
     )
-    assert component.code == "rule_cost_protected"
+    assert component.code == "rule_minimum_profitable_price"
     assert component.impact == 10.0

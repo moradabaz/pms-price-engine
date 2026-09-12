@@ -231,12 +231,12 @@ def test_row_from_new_image_converts_channel_price_matrix_when_populated(
             "minimum_price_eur": 113.4,
             "floor_type": "contribution",
             "floor_policy": "hard",
-            "rule_applied": "cost_protected",
+            "rule_applied": "minimum_profitable_price",
             "suggested_price_eur": 113.4,
             "effective_margin": 0.0309,
             "decision_components": [
                 {
-                    "code": "rule_cost_protected",
+                    "code": "rule_minimum_profitable_price",
                     "label": "Cost floor (113.4) exceeds property reference "
                     "price (97.2) by 16.2 EUR",
                     "impact": 16.2,
@@ -252,7 +252,41 @@ def test_row_from_new_image_converts_channel_price_matrix_when_populated(
     assert len(matrix) == 1
     assert matrix[0]["platform"] == "airbnb"
     assert matrix[0]["commission_pct"] == 0.03
-    assert matrix[0]["decision_components"][0]["code"] == "rule_cost_protected"
+    assert (
+        matrix[0]["decision_components"][0]["code"] == "rule_minimum_profitable_price"
+    )
+
+
+def test_row_from_new_image_defaults_missing_cost_breakdown_to_empty_list(
+    sample_new_image,
+):
+    # A record predating Phase 17 (ADR-0011 backlog #3) has no
+    # cost_inputs.cost_breakdown key at all — [] is the honest answer, same
+    # convention channel_price_matrix itself established.
+    image = sample_new_image("ffffffff-ffff-ffff-ffff-ffffffffffff", 132.0)
+    assert "cost_breakdown" not in image["cost_inputs"]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["cost_inputs"]["cost_breakdown"] == []
+
+
+def test_row_from_new_image_converts_cost_breakdown_when_populated(sample_new_image):
+    image = sample_new_image("00000000-1111-2222-3333-444444444444", 132.0)
+    image["cost_inputs"]["cost_breakdown"] = [
+        {"concept": "electricity", "amount_eur": 3.5},
+        {"concept": "cleaning", "amount_eur": 1.0},
+    ]
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    breakdown = row["cost_inputs"]["cost_breakdown"]
+    assert breakdown == [
+        {"concept": "electricity", "amount_eur": 3.5},
+        {"concept": "cleaning", "amount_eur": 1.0},
+    ]
 
 
 def test_row_from_new_image_derives_missing_floor_policy_from_floor_type_hard(

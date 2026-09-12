@@ -179,18 +179,19 @@ def recommend_minimum_stay(
     non-increasing in stay_length (only one_time_cost_eur / n varies with n;
     floor_type/market_reference_price_eur/property_reference_price_eur are
     constant across candidates in one decision), so rule_applied can only
-    move cost_protected -> minimum_floor -> market_competitive as n grows,
-    never backwards — the shortest non-cost_protected candidate is therefore
-    the unique correct threshold, not a heuristic. Alongside that stay
-    length, also surfaces what the whole reservation would cost and what it
-    should be priced at in total — a price already guaranteed to clear the
-    cost floor and be at/below the market reference, since it's exactly the
-    LOS candidate's own suggested_price_eur (never itself cost_protected)
-    multiplied by the nights it covers. Returns the recommendation."""
+    move minimum_profitable_price -> minimum_floor -> market_competitive as n grows,
+    never backwards — the shortest non-minimum_profitable_price candidate is
+    therefore the unique correct threshold, not a heuristic. Alongside that
+    stay length, also surfaces what the whole reservation would cost and
+    what it should be priced at in total — a price already guaranteed to
+    clear the cost floor and be at/below the market reference, since it's
+    exactly the LOS candidate's own suggested_price_eur (never itself
+    minimum_profitable_price) multiplied by the nights it covers. Returns the
+    recommendation."""
     ordered = sorted(candidates, key=lambda c: c.stay_length)
     at_one_night = ordered[0]
 
-    if at_one_night.rule_applied != "cost_protected":
+    if at_one_night.rule_applied != "minimum_profitable_price":
         return MinimumStayRecommendation(
             recommended_min_stay=at_one_night.stay_length,
             floor_relief_eur=0.0,
@@ -207,7 +208,7 @@ def recommend_minimum_stay(
         )
 
     for candidate in ordered[1:]:
-        if candidate.rule_applied != "cost_protected":
+        if candidate.rule_applied != "minimum_profitable_price":
             floor_relief_eur = round(
                 at_one_night.minimum_price_eur - candidate.minimum_price_eur, 2
             )

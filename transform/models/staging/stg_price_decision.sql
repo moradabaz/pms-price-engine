@@ -17,6 +17,7 @@ select
     cost_inputs.variable_cost_eur,
     cost_inputs.one_time_cost_eur,
     cost_inputs.cost_lines_count,
+    cost_inputs.cost_breakdown,
 
     market_inputs.market_area,
     market_inputs.avg_nightly_rate_eur,

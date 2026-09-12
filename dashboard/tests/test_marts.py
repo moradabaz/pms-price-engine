@@ -24,7 +24,8 @@ def settings(tmp_path) -> DashboardSettings:
     con.execute(
         "insert into fct_daily_price values"
         " ('BCN-001', '2026-09-01', 120.0, 'market_competitive', 'structural', 0.2),"
-        " ('BCN-001', '2026-09-02', 130.0, 'cost_protected', 'structural', 0.25)"
+        " ('BCN-001', '2026-09-02', 130.0, 'minimum_profitable_price',"
+        " 'structural', 0.25)"
     )
 
     con.execute(
@@ -36,19 +37,22 @@ def settings(tmp_path) -> DashboardSettings:
         "  market_reference_price_eur double, minimum_price_eur double,"
         "  rule_applied varchar, suggested_price_eur double,"
         "  effective_margin double"
-        " )[]"
+        " )[],"
+        " cost_breakdown STRUCT(concept varchar, amount_eur double)[]"
         ")"
     )
     con.execute(
         "insert into fct_price_decision values"
         " ('BCN-001', '2026-09-01', 'market_competitive', '2026-08-06T10:00:00',"
-        "  '2026-08-06T10:00:00', NULL),"
-        " ('BCN-001', '2026-09-02', 'cost_protected', '2026-08-06T10:15:00',"
+        "  '2026-08-06T10:00:00', NULL, NULL),"
+        " ('BCN-001', '2026-09-02', 'minimum_profitable_price', '2026-08-06T10:15:00',"
         "  '2026-08-06T10:15:00',"
         "  [{'platform': 'airbnb', 'avg_nightly_rate_eur': 97.2,"
         "    'commission_pct': 0.03, 'market_reference_price_eur': 92.34,"
-        "    'minimum_price_eur': 113.4, 'rule_applied': 'cost_protected',"
-        "    'suggested_price_eur': 113.4, 'effective_margin': 0.0309}])"
+        "    'minimum_price_eur': 113.4, 'rule_applied': 'minimum_profitable_price',"
+        "    'suggested_price_eur': 113.4, 'effective_margin': 0.0309}],"
+        "  [{'concept': 'electricity', 'amount_eur': 3.5},"
+        "   {'concept': 'cleaning', 'amount_eur': 1.0}])"
     )
 
     con.execute(
@@ -75,7 +79,7 @@ def test_price_evolution_orders_by_target_date(settings):
     assert list(df["suggested_price_eur"]) == [120.0, 130.0]
 
 
-def test_margin_alerts_only_cost_protected(settings):
+def test_margin_alerts_only_minimum_profitable_price(settings):
     df = marts.margin_alerts(settings)
 
     assert len(df) == 1
@@ -87,7 +91,7 @@ def test_channel_pricing_returns_rows_for_known_night(settings):
 
     assert list(df["platform"]) == ["airbnb"]
     assert df.iloc[0]["commission_pct"] == 0.03
-    assert df.iloc[0]["rule_applied"] == "cost_protected"
+    assert df.iloc[0]["rule_applied"] == "minimum_profitable_price"
 
 
 def test_channel_pricing_empty_when_no_channel_data_yet(settings):
@@ -98,6 +102,19 @@ def test_channel_pricing_empty_when_no_channel_data_yet(settings):
 
 def test_channel_pricing_empty_when_night_unknown(settings):
     df = marts.channel_pricing(settings, "BCN-001", "2026-01-01")
+
+    assert df.empty
+
+
+def test_cost_breakdown_returns_rows_for_most_recent_decision(settings):
+    df = marts.cost_breakdown(settings, "BCN-001")
+
+    assert list(df["concept"]) == ["electricity", "cleaning"]
+    assert list(df["amount_eur"]) == [3.5, 1.0]
+
+
+def test_cost_breakdown_empty_when_apartment_unknown(settings):
+    df = marts.cost_breakdown(settings, "BCN-999")
 
     assert df.empty
 

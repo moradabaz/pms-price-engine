@@ -1,7 +1,11 @@
 from datetime import date
 
 import pytest
-from flink_jobs.cost_aggregation import aggregate_cost, retained_billing_period_ends
+from flink_jobs.cost_aggregation import (
+    ConceptAmount,
+    aggregate_cost,
+    retained_billing_period_ends,
+)
 from shared_schemas.payment_line import PaymentLine
 
 
@@ -177,6 +181,76 @@ def test_no_ota_or_cleaning_lines_yields_zero_sub_totals():
     result = aggregate_cost(lines)
     assert result.ota_related_cost_eur == 0.0
     assert result.cleaning_cost_eur == 0.0
+
+
+def test_cost_breakdown_groups_by_concept_per_day():
+    # Phase 17 (ADR-0011 backlog #3): every concept observed, not just the 2
+    # (ota_fee/channel_manager, cleaning) Phase 11 already split out.
+    lines = [
+        _line(
+            "00000000-0000-0000-0000-000000000001",
+            300.0,
+            "2026-06-01",
+            "2026-06-30",
+            cost_type="variable",
+            concept="electricity",
+        ),
+        _line(
+            "00000000-0000-0000-0000-000000000002",
+            60.0,
+            "2026-06-01",
+            "2026-06-30",
+            cost_type="variable",
+            concept="electricity",
+        ),
+        _line(
+            "00000000-0000-0000-0000-000000000003",
+            120.0,
+            "2026-06-01",
+            "2026-06-30",
+            cost_type="fixed",
+            concept="water",
+        ),
+    ]
+    result = aggregate_cost(lines)
+    assert result.cost_breakdown == (
+        ConceptAmount(concept="electricity", amount_eur=12.0),  # (300+60)/30
+        ConceptAmount(concept="water", amount_eur=4.0),  # 120/30
+    )
+
+
+def test_cost_breakdown_follows_canonical_concept_order_not_input_order():
+    lines = [
+        _line(
+            "00000000-0000-0000-0000-000000000001",
+            30.0,
+            "2026-06-01",
+            "2026-06-30",
+            concept="other",
+        ),
+        _line(
+            "00000000-0000-0000-0000-000000000002",
+            30.0,
+            "2026-06-01",
+            "2026-06-30",
+            concept="electricity",
+        ),
+    ]
+    result = aggregate_cost(lines)
+    assert [entry.concept for entry in result.cost_breakdown] == [
+        "electricity",
+        "other",
+    ]
+
+
+def test_cost_breakdown_omits_concepts_with_no_lines():
+    lines = [
+        _line("00000000-0000-0000-0000-000000000001", 100.0, "2026-06-01", "2026-06-30")
+    ]
+    result = aggregate_cost(lines)
+    assert result.cost_breakdown == (
+        ConceptAmount(concept="electricity", amount_eur=round(100 / 30, 2)),
+    )
 
 
 def test_retained_billing_period_ends_keeps_top_two():

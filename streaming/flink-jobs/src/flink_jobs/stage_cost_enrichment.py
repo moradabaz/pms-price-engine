@@ -75,6 +75,7 @@ class CostEnrichmentFunction(KeyedBroadcastProcessFunction):
             # resolves the real values.
             ota_related_cost_eur=aggregation.ota_related_cost_eur,
             cleaning_cost_eur=aggregation.cleaning_cost_eur,
+            cost_breakdown=aggregation.cost_breakdown,
             property_attribute_factor=property_attribute_factor(
                 quality_tier=assignment.quality_tier,
                 rating=assignment.rating,

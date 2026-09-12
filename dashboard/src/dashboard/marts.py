@@ -62,7 +62,7 @@ def price_evolution(settings: DashboardSettings, apartment_id: str) -> pd.DataFr
 
 
 def margin_alerts(settings: DashboardSettings) -> pd.DataFrame:
-    """cost_protected decisions, most recent first."""
+    """minimum_profitable_price decisions (ex-"cost_protected"), most recent first."""
     return _read_with_retry(
         settings,
         lambda con: con.execute(
@@ -97,6 +97,26 @@ def channel_pricing(
             " where apartment_id = ? and target_date = ?"
             " order by decided_at desc limit 1",
             [apartment_id, target_date],
+        ).fetchone()
+        if row is None or not row[0]:
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame(row[0])[columns]
+
+    return _read_with_retry(settings, _query)
+
+
+def cost_breakdown(settings: DashboardSettings, apartment_id: str) -> pd.DataFrame:
+    """This apartment's most recent decision's cost_breakdown (Phase 17,
+    ADR-0011 backlog #3), one row per concept — empty DataFrame if none
+    (a record predating this phase, or genuinely no matching lines)."""
+    columns = ["concept", "amount_eur"]
+
+    def _query(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+        row = con.execute(
+            "select cost_breakdown from fct_price_decision"
+            " where apartment_id = ?"
+            " order by decided_at desc limit 1",
+            [apartment_id],
         ).fetchone()
         if row is None or not row[0]:
             return pd.DataFrame(columns=columns)

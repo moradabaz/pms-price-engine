@@ -11,7 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field
 FloorType = Literal[
     "structural_full_margin", "structural_reduced_margin", "contribution"
 ]
-RuleApplied = Literal["market_competitive", "minimum_floor", "cost_protected"]
+# Renamed 2026-09-12 (ex-"cost_protected"): the cost floor exceeded the
+# property's own market reference, so the floor is charged instead of a
+# market-derived price — this protects profitability, it does not mean the
+# price fell BELOW cost (see docs/profitable-pricing-glossary.md §5's
+# "Profitable Floor" — the same concept this value names).
+RuleApplied = Literal["market_competitive", "minimum_floor", "minimum_profitable_price"]
 # Phase 11 (ADR-0011 backlog #5): which revenue base commission_pct is
 # charged against.
 CommissionBase = Literal[
@@ -20,6 +25,24 @@ CommissionBase = Literal[
 # Phase 12 (ADR-0011 backlog #10): explicit classification of floor_type
 # into the external spec's Hard/Soft floor vocabulary.
 FloorPolicy = Literal["hard", "soft"]
+# Phase 17 (ADR-0011 backlog #3): mirrors payment_line.v1's concept enum
+# field-for-field — a cost_breakdown entry's concept is always one of the
+# 13 values a PaymentLine can carry.
+CostConcept = Literal[
+    "electricity",
+    "water",
+    "gas",
+    "internet",
+    "pms_subscription",
+    "ota_fee",
+    "channel_manager",
+    "office_rent",
+    "cleaning",
+    "maintenance",
+    "insurance",
+    "community_fee",
+    "other",
+]
 
 # Phase 10 (ADR-0011 backlog #4): closed reason-code vocabulary shared by
 # Calculation.decision_components and LosFloorCandidate.decision_components.
@@ -30,7 +53,7 @@ ReasonCode = Literal[
     "property_parking",
     "rule_market_competitive",
     "rule_minimum_floor",
-    "rule_cost_protected",
+    "rule_minimum_profitable_price",
     # Phase 11 (ADR-0011 backlog #5): only on Calculation.decision_components,
     # never on LosFloorCandidate.decision_components (spec 11 §F/AC-06).
     "commission_base_netting",
@@ -54,6 +77,21 @@ class BillingPeriod(BaseModel):
     end: date
 
 
+class CostConceptAmount(BaseModel):
+    """One payment_line.concept's own per-day cost for the current billing
+    period (Phase 17, ADR-0011 backlog #3) — already fully counted inside
+    fixed_cost_eur/variable_cost_eur/one_time_cost_eur above, same
+    "additional breakdown, not a new cost" convention Phase 11's
+    ota_related_cost_eur/cleaning_cost_eur established. Only concepts with
+    at least one matching line in the period appear — a concept absent from
+    the period has no entry, never a fabricated zero one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    concept: CostConcept
+    amount_eur: float = Field(ge=0)
+
+
 class CostInputs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -64,6 +102,11 @@ class CostInputs(BaseModel):
     variable_cost_eur: float = Field(ge=0)
     one_time_cost_eur: float = Field(ge=0)
     cost_lines_count: int | None = Field(default=None, ge=0)
+    # Phase 17 (ADR-0011 backlog #3): always present but legitimately can be
+    # empty ([]) — same "required list, sparse content" convention Phase 16's
+    # channel_price_matrix established, not the "always min_length=1"
+    # convention los_floor_matrix/decision_components use.
+    cost_breakdown: list[CostConceptAmount] = Field(default_factory=list)
 
 
 class MarketInputs(BaseModel):
@@ -124,7 +167,7 @@ class MinimumStayRecommendation(BaseModel):
     # iff recommended_min_stay is None.
     cost_per_reservation_eur: float | None = Field(default=None, ge=0)
     # The recommended_min_stay LOS candidate's own suggested_price_eur
-    # (never itself cost_protected) x its stay_length — a total reservation
+    # (never itself minimum_profitable_price) x its stay_length — a total reservation
     # price already guaranteed to clear the cost floor and sit at/below the
     # market reference. None iff recommended_min_stay is None.
     suggested_price_per_reservation_eur: float | None = Field(default=None, ge=0)

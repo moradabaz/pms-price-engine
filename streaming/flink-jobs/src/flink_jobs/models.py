@@ -4,6 +4,8 @@ from datetime import date, datetime
 from pricing_formulas.decision_components import DecisionComponent
 from pricing_formulas.layers.commercial import CommissionBase
 
+from flink_jobs.cost_aggregation import ConceptAmount
+
 
 @dataclass(frozen=True)
 class SegmentAssignment:
@@ -173,6 +175,11 @@ class CostAggregate:
     # breakdowns for decide_price()'s commission-base netting, not new costs.
     ota_related_cost_eur: float = 0.0
     cleaning_cost_eur: float = 0.0
+    # Phase 17 (ADR-0011 backlog #3): resolved once in Stage A alongside
+    # ota_related_cost_eur/cleaning_cost_eur above, from the same
+    # cost_aggregation.py computation — every concept observed in the
+    # current billing period, not just those two special-cased groups.
+    cost_breakdown: tuple[ConceptAmount, ...] = field(default_factory=tuple)
 
     @property
     def segment_key(self) -> tuple[str, str, str, int]:

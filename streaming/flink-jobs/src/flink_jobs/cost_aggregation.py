@@ -11,6 +11,32 @@ from shared_schemas.payment_line import PaymentLine
 OTA_RELATED_CONCEPTS = frozenset({"ota_fee", "channel_manager"})
 CLEANING_CONCEPTS = frozenset({"cleaning"})
 
+# Phase 17 (ADR-0011 backlog #3): the remaining 10 of 13 concept values,
+# which fall through undifferentiated into fixed_cost_eur/variable_cost_eur
+# today — canonical display order for cost_breakdown, matching
+# payment_line.v1's own enum order (specs/events/payment_line.v1.json).
+CONCEPT_ORDER = (
+    "electricity",
+    "water",
+    "gas",
+    "internet",
+    "pms_subscription",
+    "ota_fee",
+    "channel_manager",
+    "office_rent",
+    "cleaning",
+    "maintenance",
+    "insurance",
+    "community_fee",
+    "other",
+)
+
+
+@dataclass(frozen=True)
+class ConceptAmount:
+    concept: str
+    amount_eur: float
+
 
 def retained_billing_period_ends(
     period_ends: Iterable[date], keep: int = 2
@@ -32,6 +58,7 @@ class CostAggregationResult:
     one_time_cost_eur: float
     ota_related_cost_eur: float
     cleaning_cost_eur: float
+    cost_breakdown: tuple[ConceptAmount, ...]
 
 
 def aggregate_cost(
@@ -93,6 +120,27 @@ def aggregate_cost(
         round(cleaning_total / available_days, 2) if available_days > 0 else 0.0
     )
 
+    # Phase 17 (ADR-0011 backlog #3): every concept observed in the period,
+    # not just the 2 (ota_fee/channel_manager, cleaning) Phase 11 already
+    # split out — reporting granularity, same per-day averaging convention
+    # as fixed_cost_eur/ota_related_cost_eur above. Only concepts with at
+    # least one matching line appear (never a fabricated zero entry).
+    concepts_present = {line.concept for line in matching}
+    cost_breakdown = tuple(
+        ConceptAmount(
+            concept=concept,
+            amount_eur=round(
+                sum(line.amount_gross for line in matching if line.concept == concept)
+                / available_days,
+                2,
+            )
+            if available_days > 0
+            else 0.0,
+        )
+        for concept in CONCEPT_ORDER
+        if concept in concepts_present
+    )
+
     return CostAggregationResult(
         billing_period_start=period_start,
         billing_period_end=current_end,
@@ -104,4 +152,5 @@ def aggregate_cost(
         one_time_cost_eur=one_time_cost_eur,
         ota_related_cost_eur=ota_related_cost_eur,
         cleaning_cost_eur=cleaning_cost_eur,
+        cost_breakdown=cost_breakdown,
     )

@@ -98,7 +98,7 @@ def test_contribution_tier_ignores_fixed_cost():
     assert with_fixed.minimum_price_eur == 58.82  # (30 + 20) / (1 - 0.15)
 
 
-def test_cost_protected():
+def test_minimum_profitable_price():
     result = decide_price(
         fixed_cost_eur=0.0,
         variable_cost_eur=100.0,
@@ -109,7 +109,7 @@ def test_cost_protected():
         competitiveness_discount=0.05,
         days_to_arrival=45,
     )
-    assert result.rule_applied == "cost_protected"
+    assert result.rule_applied == "minimum_profitable_price"
     assert result.below_market_by < 0
 
 
@@ -150,7 +150,7 @@ def test_property_attribute_factor_changes_rule_applied():
     assert neutral.minimum_price_eur == 210.0
     # 210.0 exceeds Apartment A's own (unboosted) market reference (200.0) —
     # its costs price it out of its own market.
-    assert neutral.rule_applied == "cost_protected"
+    assert neutral.rule_applied == "minimum_profitable_price"
     assert neutral.suggested_price_eur == 210.0
     # Apartment B's boosted reference (294.0) comfortably clears the same floor.
     assert boosted.property_reference_price_eur == 294.0
@@ -343,7 +343,7 @@ def test_decide_price_los_matrix_rule_applied_can_differ_across_candidates():
     )
     by_stay_length = {c.stay_length: c for c in matrix}
     assert by_stay_length[1].minimum_price_eur == 137.5
-    assert by_stay_length[1].rule_applied == "cost_protected"
+    assert by_stay_length[1].rule_applied == "minimum_profitable_price"
     assert by_stay_length[1].suggested_price_eur == 137.5
     for n in (3, 7, 14):
         assert by_stay_length[n].rule_applied == "market_competitive"
@@ -557,7 +557,7 @@ def test_rule_applied_boundary_survives_rounding_at_the_market_comparison():
     # market_competitive. Both round to 100.0 at 2dp, so a refactor that
     # rounds once and reuses that rounded value for the comparison (instead
     # of comparing unrounded, as apply_guardrails() must) would wrongly see
-    # 100.0 <= 100.0 and pick market_competitive instead of cost_protected.
+    # 100.0 <= 100.0 and pick market_competitive instead of minimum_profitable_price.
     result = decide_price(
         fixed_cost_eur=0.0,
         variable_cost_eur=100.004,
@@ -568,7 +568,7 @@ def test_rule_applied_boundary_survives_rounding_at_the_market_comparison():
         competitiveness_discount=0.0,
         days_to_arrival=45,
     )
-    assert result.rule_applied == "cost_protected"
+    assert result.rule_applied == "minimum_profitable_price"
     assert result.minimum_price_eur == 100.0
     assert result.market_reference_price_eur == 100.0
     assert result.suggested_price_eur == 100.0
@@ -576,7 +576,7 @@ def test_rule_applied_boundary_survives_rounding_at_the_market_comparison():
 
 def test_rule_applied_boundary_survives_rounding_at_the_property_comparison():
     # AC-04 (spec 13 §F): minimum_price_eur (100.004 unrounded) is genuinely
-    # ABOVE property_reference_price_eur (99.997 unrounded) -> cost_protected,
+    # ABOVE property_reference_price_eur (99.997 unrounded) -> minimum_profitable_price,
     # not minimum_floor, even though market_reference_price_eur (94.99715,
     # from the 5% discount) is comfortably below both, and minimum_price_eur/
     # property_reference_price_eur both round to the same 100.0 at 2dp. A
@@ -592,7 +592,7 @@ def test_rule_applied_boundary_survives_rounding_at_the_property_comparison():
         competitiveness_discount=0.05,
         days_to_arrival=45,
     )
-    assert result.rule_applied == "cost_protected"
+    assert result.rule_applied == "minimum_profitable_price"
     assert result.minimum_price_eur == 100.0
     assert result.property_reference_price_eur == 100.0
     assert result.market_reference_price_eur == 95.0
@@ -631,7 +631,7 @@ def test_performance_and_inventory_layers_multiply_into_property_reference_price
 
 
 def test_recommend_minimum_stay_already_fine_at_one_night():
-    # AC-01: stay_length=1 not cost_protected -> recommend 1, no relief,
+    # AC-01: stay_length=1 not minimum_profitable_price -> recommend 1, no relief,
     # no decision component (nothing to explain).
     matrix = decide_price_los_matrix(
         fixed_cost_eur=0.0,
@@ -672,8 +672,8 @@ def test_recommend_minimum_stay_already_fine_at_one_night():
     assert recommendation.decision_component is None
 
 
-def test_recommend_minimum_stay_finds_shortest_non_cost_protected_candidate():
-    # AC-02: spec 15 §4's worked example — LOS 1 is cost_protected, LOS 2 is
+def test_recommend_minimum_stay_finds_shortest_non_minimum_profitable_price_candidate():
+    # AC-02: spec 15 §4's worked example — LOS 1 is minimum_profitable_price, LOS 2 is
     # the shortest candidate that clears it.
     matrix = decide_price_los_matrix(
         fixed_cost_eur=0.0,
@@ -686,7 +686,7 @@ def test_recommend_minimum_stay_finds_shortest_non_cost_protected_candidate():
         days_to_arrival=45,
     )
     by_stay_length = {c.stay_length: c for c in matrix}
-    assert by_stay_length[1].rule_applied == "cost_protected"
+    assert by_stay_length[1].rule_applied == "minimum_profitable_price"
     assert by_stay_length[2].rule_applied == "market_competitive"
 
     recommendation = recommend_minimum_stay(
@@ -709,8 +709,8 @@ def test_recommend_minimum_stay_finds_shortest_non_cost_protected_candidate():
     assert recommendation.decision_component.impact == recommendation.floor_relief_eur
 
 
-def test_recommend_minimum_stay_not_viable_when_every_candidate_cost_protected():
-    # AC-03: even the longest candidate (14 nights) stays cost_protected —
+def test_recommend_minimum_stay_not_viable_when_no_candidate_clears_the_floor():
+    # AC-03: even the longest candidate (14 nights) stays minimum_profitable_price —
     # a structural fixed/variable cost problem, not a one-time-cost dilution
     # one. No recommendation exists.
     matrix = decide_price_los_matrix(
@@ -723,7 +723,7 @@ def test_recommend_minimum_stay_not_viable_when_every_candidate_cost_protected()
         competitiveness_discount=0.05,
         days_to_arrival=45,
     )
-    assert all(c.rule_applied == "cost_protected" for c in matrix)
+    assert all(c.rule_applied == "minimum_profitable_price" for c in matrix)
 
     recommendation = recommend_minimum_stay(
         matrix,
@@ -769,7 +769,11 @@ def test_minimum_price_eur_is_monotonically_non_increasing_in_stay_length():
         floors = [c.minimum_price_eur for c in ordered]
         assert floors == sorted(floors, reverse=True)
 
-        rule_rank = {"cost_protected": 0, "minimum_floor": 1, "market_competitive": 2}
+        rule_rank = {
+            "minimum_profitable_price": 0,
+            "minimum_floor": 1,
+            "market_competitive": 2,
+        }
         ranks = [rule_rank[c.rule_applied] for c in ordered]
         assert ranks == sorted(ranks)
 
@@ -841,7 +845,7 @@ def test_decide_price_by_channel_rule_applied_can_differ_per_channel():
     )
     by_platform = {c.platform: c for c in candidates}
     assert by_platform["airbnb"].rule_applied == "market_competitive"
-    assert by_platform["booking"].rule_applied == "cost_protected"
+    assert by_platform["booking"].rule_applied == "minimum_profitable_price"
 
 
 def test_decide_price_by_channel_top_level_calculation_is_unaffected():

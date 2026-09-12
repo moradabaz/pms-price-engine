@@ -15,7 +15,15 @@
     "fixed_cost_eur": 8.0,
     "variable_cost_eur": 5.67,
     "one_time_cost_eur": 0.0,
-    "cost_lines_count": 6
+    "cost_lines_count": 6,
+    "cost_breakdown": [
+      { "concept": "electricity", "amount_eur": 3.5 },
+      { "concept": "water", "amount_eur": 1.2 },
+      { "concept": "internet", "amount_eur": 1.0 },
+      { "concept": "pms_subscription", "amount_eur": 2.0 },
+      { "concept": "ota_fee", "amount_eur": 4.97 },
+      { "concept": "cleaning", "amount_eur": 1.0 }
+    ]
   },
   "market_inputs": {
     "market_area": "Barcelona/Eixample",

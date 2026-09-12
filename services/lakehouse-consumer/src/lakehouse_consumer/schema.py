@@ -16,6 +16,9 @@ from pyiceberg.types import (
 # Field ID note (Phase 16, ADR-0011 backlog #2): the highest ID in use before
 # this phase is 72 (Phase 15's suggested_price_per_reservation_eur). This
 # phase's new IDs therefore start at 73.
+# Field ID note (Phase 17, ADR-0011 backlog #3): the highest ID in use before
+# this phase is 89 (Phase 16's channel_price_matrix.decision_components.impact).
+# This phase's new IDs therefore start at 90.
 
 # Mirrors specs/events/price_decision.v1.json field-for-field (spec 05 §4),
 # plus dynamodb_event_name/ingested_at appended by this consumer. Field IDs
@@ -45,6 +48,22 @@ ICEBERG_SCHEMA = Schema(
             NestedField(13, "variable_cost_eur", DoubleType()),
             NestedField(14, "one_time_cost_eur", DoubleType()),
             NestedField(15, "cost_lines_count", IntegerType()),
+            # Phase 17 (ADR-0011 backlog #3): required at the struct/list
+            # level (like los_floor_matrix/channel_price_matrix) — always
+            # present, but legitimately an empty list for a record predating
+            # this phase.
+            NestedField(
+                90,
+                "cost_breakdown",
+                ListType(
+                    element_id=91,
+                    element_type=StructType(
+                        NestedField(92, "concept", StringType()),
+                        NestedField(93, "amount_eur", DoubleType()),
+                    ),
+                    element_required=True,
+                ),
+            ),
         ),
     ),
     NestedField(

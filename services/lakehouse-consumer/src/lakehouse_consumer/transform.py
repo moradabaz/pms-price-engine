@@ -104,6 +104,21 @@ def _channel_price_matrix(calculation: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _cost_breakdown(cost_inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    """Coerces cost_inputs.cost_breakdown (Phase 17, ADR-0011 backlog #3).
+    [] both for a record predating this phase (key absent) and for one with
+    no matching lines in the period (shouldn't happen in practice, but the
+    same honest answer either way) — same convention channel_price_matrix
+    already established."""
+    return [
+        {
+            "concept": entry["concept"],
+            "amount_eur": _num(entry["amount_eur"]),
+        }
+        for entry in cost_inputs.get("cost_breakdown", [])
+    ]
+
+
 def row_from_new_image(
     new_image: dict[str, Any], event_name: str, ingested_at: datetime
 ) -> dict[str, Any]:
@@ -137,6 +152,8 @@ def row_from_new_image(
             "variable_cost_eur": _num(cost_inputs["variable_cost_eur"]),
             "one_time_cost_eur": _num(cost_inputs["one_time_cost_eur"]),
             "cost_lines_count": _int(cost_inputs.get("cost_lines_count")),
+            # Phase 17 (ADR-0011 backlog #3).
+            "cost_breakdown": _cost_breakdown(cost_inputs),
         },
         "market_inputs": {
             "market_area": market_inputs["market_area"],

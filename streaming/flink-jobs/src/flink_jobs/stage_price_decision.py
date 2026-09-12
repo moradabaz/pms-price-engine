@@ -20,6 +20,7 @@ from shared_schemas.price_decision import (
     BillingPeriod,
     Calculation,
     ChannelPriceCandidate,
+    CostConceptAmount,
     CostInputs,
     DecisionComponent,
     LosFloorCandidate,
@@ -280,6 +281,11 @@ def _build_price_decision(
             variable_cost_eur=cost.variable_cost_eur,
             one_time_cost_eur=cost.one_time_cost_eur,
             cost_lines_count=cost.cost_lines_count,
+            # Phase 17 (ADR-0011 backlog #3).
+            cost_breakdown=[
+                CostConceptAmount(concept=c.concept, amount_eur=c.amount_eur)
+                for c in cost.cost_breakdown
+            ],
         ),
         market_inputs=MarketInputs(
             market_area=market.market_area,

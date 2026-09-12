@@ -15,7 +15,41 @@
     "fixed_cost_eur": 70.0,
     "variable_cost_eur": 38.0,
     "one_time_cost_eur": 10.0,
-    "cost_lines_count": 8
+    "cost_lines_count": 8,
+    "cost_breakdown": [
+      {
+        "concept": "office_rent",
+        "amount_eur": 50.0
+      },
+      {
+        "concept": "electricity",
+        "amount_eur": 12.0
+      },
+      {
+        "concept": "water",
+        "amount_eur": 4.0
+      },
+      {
+        "concept": "internet",
+        "amount_eur": 4.0
+      },
+      {
+        "concept": "ota_fee",
+        "amount_eur": 28.0
+      },
+      {
+        "concept": "cleaning",
+        "amount_eur": 10.0
+      },
+      {
+        "concept": "insurance",
+        "amount_eur": 10.0
+      },
+      {
+        "concept": "other",
+        "amount_eur": 10.0
+      }
+    ]
   },
   "market_inputs": {
     "market_area": "Madrid/Centro",

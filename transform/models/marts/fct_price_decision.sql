@@ -11,6 +11,7 @@ select
     variable_cost_eur,
     one_time_cost_eur,
     cost_lines_count,
+    cost_breakdown,
     avg_nightly_rate_eur,
     occupancy_rate,
     sample_size,

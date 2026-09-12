@@ -26,10 +26,12 @@ def test_valid_minimum_floor_decision_conforms(schema):
     validate(schema, load_fixture("price_decision", "valid_minimum_floor.json"))
 
 
-def test_valid_cost_protected_decision_conforms(schema):
-    # rule_applied=cost_protected: the cost floor pushed the price above
+def test_valid_minimum_profitable_price_decision_conforms(schema):
+    # rule_applied=minimum_profitable_price: the cost floor pushed the price above
     # avg_nightly_rate_eur — below_market_by is negative by design (ADR-0007).
-    validate(schema, load_fixture("price_decision", "valid_cost_protected.json"))
+    validate(
+        schema, load_fixture("price_decision", "valid_minimum_profitable_price.json")
+    )
 
 
 def test_valid_manual_override_decision_conforms(schema):
@@ -43,7 +45,7 @@ def test_valid_manual_override_decision_conforms(schema):
 def test_valid_minimum_stay_recommended_decision_conforms(schema):
     # calculation.minimum_stay_recommendation populated with a real
     # recommendation (Phase 15, ADR-0011 backlog #12): stay_length=1 is
-    # cost_protected, but LOS 2 already clears it.
+    # minimum_profitable_price, but LOS 2 already clears it.
     validate(schema, load_fixture("price_decision", "minimum_stay_recommended.json"))
 
 

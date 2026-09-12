@@ -1,10 +1,15 @@
+from decimal import Decimal
+
 import pandas as pd
 import pyarrow as pa
 from dashboard.hot_path import (
     current_prices,
+    descrub,
+    descrub_df,
     price_status,
     query_latest_decision,
     to_display_row,
+    to_native,
 )
 
 
@@ -69,7 +74,12 @@ def test_to_display_row_flattens_cost_market_and_output():
             "one_time_cost_eur": 2.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 145.0},
-        "calculation": {"rule_applied": "cost_protected", "target_margin": 0.05},
+        "calculation": {
+            "rule_applied": "minimum_profitable_price",
+            "target_margin": 0.05,
+            "property_reference_price_eur": 160.95,
+            "property_attribute_factor": 1.11,
+        },
         "output": {
             "suggested_price_eur": 130.27,
             "effective_margin": 0.25,
@@ -84,6 +94,8 @@ def test_to_display_row_flattens_cost_market_and_output():
         "target_date": "2026-08-08",
         "total_cost_eur": 39.8,
         "avg_market_price_eur": 145.0,
+        "property_reference_price_eur": 160.95,
+        "property_attribute_factor": 1.11,
         "suggested_price_eur": 130.27,
         "effective_margin": 0.25,
         "status": "Market Competitive",
@@ -104,6 +116,8 @@ def test_to_display_row_surfaces_minimum_stay_recommendation_when_present():
         "market_inputs": {"avg_nightly_rate_eur": 90.0},
         "calculation": {
             "target_margin": 0.05,
+            "property_reference_price_eur": 99.9,
+            "property_attribute_factor": 1.11,
             "minimum_stay_recommendation": {
                 "recommended_min_stay": 2,
                 "floor_relief_eur": 68.75,
@@ -134,7 +148,11 @@ def test_to_display_row_defaults_minimum_stay_recommendation_to_none_when_absent
             "one_time_cost_eur": 2.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 145.0},
-        "calculation": {"target_margin": 0.05},
+        "calculation": {
+            "target_margin": 0.05,
+            "property_reference_price_eur": 160.95,
+            "property_attribute_factor": 1.11,
+        },
         "output": {
             "suggested_price_eur": 130.27,
             "effective_margin": 0.25,
@@ -152,7 +170,7 @@ def test_to_display_row_defaults_minimum_stay_recommendation_to_none_when_absent
 def test_display_rows_with_and_without_a_recommendation_convert_to_arrow():
     # Regression test: caught live against a real running stack — one
     # apartment's minimum_stay_recommendation was still None (job just
-    # restarted, no fresh cost_protected decision yet) while another already
+    # restarted, no fresh minimum_profitable_price decision yet) while another already
     # had a real int/float recommendation. Returning "—" for the missing
     # case made pandas/Arrow raise ArrowInvalid ("Could not convert '—' ...
     # tried to convert to double") the moment Streamlit rendered both rows
@@ -171,7 +189,11 @@ def test_display_rows_with_and_without_a_recommendation_convert_to_arrow():
                     "one_time_cost_eur": 110.0,
                 },
                 "market_inputs": {"avg_nightly_rate_eur": 90.0},
-                "calculation": {"target_margin": 0.05},
+                "calculation": {
+                    "target_margin": 0.05,
+                    "property_reference_price_eur": 99.9,
+                    "property_attribute_factor": 1.11,
+                },
                 "output": {
                     "suggested_price_eur": 137.5,
                     "effective_margin": 0.25,
@@ -191,6 +213,8 @@ def test_display_rows_with_and_without_a_recommendation_convert_to_arrow():
                 "market_inputs": {"avg_nightly_rate_eur": 90.0},
                 "calculation": {
                     "target_margin": 0.05,
+                    "property_reference_price_eur": 99.9,
+                    "property_attribute_factor": 1.11,
                     "minimum_stay_recommendation": {
                         "recommended_min_stay": 2,
                         "floor_relief_eur": 68.75,
@@ -210,6 +234,116 @@ def test_display_rows_with_and_without_a_recommendation_convert_to_arrow():
     df = pd.DataFrame(rows)
 
     pa.Table.from_pandas(df)  # raises ArrowInvalid if the bug regresses
+
+
+def test_to_display_row_surfaces_property_reference_price_and_factor():
+    # Regression test: a premium property (property_attribute_factor > 1)
+    # can have suggested_price_eur land above avg_market_price_eur (the raw,
+    # unadjusted segment average) even under rule_applied=market_competitive
+    # — not a bug, but confusing without these two fields visible alongside
+    # it (real case: BCN-003, 2026-09-12 live stack, factor 1.11 net of a
+    # 5% competitiveness_discount still nets +5.45% over the raw average).
+    item = {
+        "target_date": "2026-09-24",
+        "cost_inputs": {
+            "fixed_cost_eur": 8.13,
+            "variable_cost_eur": 17.73,
+            "one_time_cost_eur": 0.0,
+        },
+        "market_inputs": {"avg_nightly_rate_eur": 305.41},
+        "calculation": {
+            "target_margin": 0.05,
+            "property_reference_price_eur": 339.01,
+            "property_attribute_factor": 1.11,
+        },
+        "output": {
+            "suggested_price_eur": 322.05,
+            "effective_margin": 11.4538,
+            "below_market_by": 16.96,
+        },
+    }
+
+    row = to_display_row("BCN-003", item)
+
+    assert row["property_reference_price_eur"] == 339.01
+    assert row["property_attribute_factor"] == 1.11
+    assert row["suggested_price_eur"] > row["avg_market_price_eur"]
+
+
+def test_to_native_converts_integral_decimal_to_int():
+    assert to_native(Decimal("6")) == 6
+    assert isinstance(to_native(Decimal("6")), int)
+
+
+def test_to_native_converts_fractional_decimal_to_float():
+    assert to_native(Decimal("6.61")) == 6.61
+    assert isinstance(to_native(Decimal("6.61")), float)
+
+
+def test_to_native_recurses_through_nested_dicts_and_lists():
+    value = {
+        "cost_inputs": {
+            "fixed_cost_eur": Decimal("8.13"),
+            "cost_breakdown": [
+                {"concept": "electricity", "amount_eur": Decimal("6.61")},
+                {"concept": "cleaning", "amount_eur": Decimal("110")},
+            ],
+        },
+        "apartment_id": "BCN-003",
+    }
+
+    result = to_native(value)
+
+    assert result["cost_inputs"]["fixed_cost_eur"] == 8.13
+    assert result["cost_inputs"]["cost_breakdown"][0]["amount_eur"] == 6.61
+    assert result["cost_inputs"]["cost_breakdown"][1]["amount_eur"] == 110
+    assert isinstance(result["cost_inputs"]["cost_breakdown"][1]["amount_eur"], int)
+    assert result["apartment_id"] == "BCN-003"
+
+
+def test_descrub_rewrites_bare_legacy_value():
+    # A record decided before the 2026-09-12 rename still carries the old
+    # rule_applied value verbatim — never shown to a viewer.
+    assert descrub("cost_protected") == "minimum_profitable_price"
+
+
+def test_descrub_rewrites_prefixed_reason_code():
+    # "cost_protected" is a substring of "rule_cost_protected" too — one
+    # fix handles both without a second lookup table.
+    assert descrub("rule_cost_protected") == "rule_minimum_profitable_price"
+
+
+def test_descrub_leaves_current_values_unchanged():
+    assert descrub("market_competitive") == "market_competitive"
+    assert descrub("minimum_profitable_price") == "minimum_profitable_price"
+
+
+def test_descrub_df_rewrites_every_matching_cell():
+    df = pd.DataFrame(
+        [
+            {"code": "rule_cost_protected", "rule_applied": "cost_protected"},
+            {"code": "rule_market_competitive", "rule_applied": "market_competitive"},
+        ]
+    )
+
+    result = descrub_df(df)
+
+    assert list(result["code"]) == [
+        "rule_minimum_profitable_price",
+        "rule_market_competitive",
+    ]
+    assert list(result["rule_applied"]) == [
+        "minimum_profitable_price",
+        "market_competitive",
+    ]
+
+
+def test_descrub_df_passes_through_empty_dataframe():
+    df = pd.DataFrame(columns=["rule_applied"])
+
+    result = descrub_df(df)
+
+    assert result.empty
 
 
 def test_price_status_below_cost_when_suggested_price_under_cost():

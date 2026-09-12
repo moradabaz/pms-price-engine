@@ -1,4 +1,56 @@
+from decimal import Decimal
 from typing import Any
+
+import pandas as pd
+
+# Defensive display-layer fix: any record decided before the 2026-09-12
+# rename ("cost_protected" -> "minimum_profitable_price") still carries the
+# old string verbatim in rule_applied and the rule_cost_protected reason
+# code — Iceberg/DynamoDB are never rewritten in place (the same "audit
+# trail keeps the vocabulary of its time" convention every prior phase
+# followed). A viewer must never see that raw legacy string again
+# regardless of how old the underlying record is.
+_LEGACY_TERM_FIX = {"cost_protected": "minimum_profitable_price"}
+
+
+def descrub(value: str) -> str:
+    """Rewrites any legacy term substring in one string value. Handles both
+    the bare enum value and the "rule_"-prefixed reason code in one pass,
+    since "cost_protected" is a substring of "rule_cost_protected" too.
+    Returns the rewritten string, unchanged if no legacy term is present."""
+    for old, new in _LEGACY_TERM_FIX.items():
+        value = value.replace(old, new)
+    return value
+
+
+def descrub_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Same fix applied across every cell of a DataFrame before it's shown —
+    covers rule_applied and decision_components.code wherever they show up,
+    without needing to enumerate every column by name. Returns a rewritten
+    copy; an empty DataFrame passes through untouched."""
+    if df.empty:
+        return df
+    for old, new in _LEGACY_TERM_FIX.items():
+        df = df.replace(old, new, regex=True)
+    return df
+
+
+def to_native(value: Any) -> Any:
+    """Recursively converts DynamoDB's Decimal values (boto3's native numeric
+    type) into int/float so pandas/Streamlit can render them anywhere in a
+    nested price_decision item — not just the handful of fields
+    to_display_row() picks out. An integral Decimal (e.g. cost_lines_count)
+    becomes int, never a needlessly-.0 float. Returns the converted value,
+    recursing through dicts and lists; any other type passes through
+    unchanged."""
+    if isinstance(value, Decimal):
+        as_int = int(value)
+        return as_int if as_int == value else float(value)
+    if isinstance(value, dict):
+        return {key: to_native(v) for key, v in value.items()}
+    if isinstance(value, list):
+        return [to_native(v) for v in value]
+    return value
 
 
 def query_latest_decision(table: Any, apartment_id: str) -> dict[str, Any] | None:
@@ -65,6 +117,17 @@ def to_display_row(apartment_id: str, item: dict[str, Any]) -> dict[str, Any]:
     avg_market_price_eur = float(item["market_inputs"]["avg_nightly_rate_eur"])
     suggested_price_eur = float(item["output"]["suggested_price_eur"])
     target_margin = float(item["calculation"]["target_margin"])
+    # Phase 8 (ADR-0011 backlog #6): property_reference_price_eur is
+    # avg_market_price_eur adjusted by property_attribute_factor (Bonus/
+    # Malus) — surfaced here so a premium property's suggested_price_eur
+    # landing above avg_market_price_eur is visibly explained, not silently
+    # inflated. Both fields exist on every decision since Phase 8; no
+    # None-fallback needed the way minimum_stay_recommendation (Phase 15)
+    # requires below.
+    property_reference_price_eur = float(
+        item["calculation"]["property_reference_price_eur"]
+    )
+    property_attribute_factor = float(item["calculation"]["property_attribute_factor"])
     # Phase 15 (ADR-0011 backlog #12): may be absent on a record predating
     # this phase. Kept as None (never "—") so pandas/Arrow sees a uniform
     # numeric column across rows instead of a str/float mix, which raises
@@ -84,6 +147,8 @@ def to_display_row(apartment_id: str, item: dict[str, Any]) -> dict[str, Any]:
         "target_date": item["target_date"],
         "total_cost_eur": total_cost_eur,
         "avg_market_price_eur": avg_market_price_eur,
+        "property_reference_price_eur": property_reference_price_eur,
+        "property_attribute_factor": property_attribute_factor,
         "suggested_price_eur": suggested_price_eur,
         "effective_margin": float(item["output"]["effective_margin"]),
         "status": price_status(

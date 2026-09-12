@@ -3,7 +3,11 @@ from typing import Literal
 
 from pricing_formulas.decision_components import DecisionComponent
 
-RuleApplied = Literal["market_competitive", "minimum_floor", "cost_protected"]
+# Renamed 2026-09-12 (ex-"cost_protected"): the cost floor exceeded the
+# property's own market reference, so the floor is charged instead of a
+# market-derived price — protects profitability, doesn't mean the price fell
+# below cost (docs/profitable-pricing-glossary.md §5's "Profitable Floor").
+RuleApplied = Literal["market_competitive", "minimum_floor", "minimum_profitable_price"]
 
 
 def rule_decision_component(
@@ -38,10 +42,10 @@ def rule_decision_component(
         )
     impact = round(minimum_price_eur - property_reference_price_eur, 2)
     return DecisionComponent(
-        code="rule_cost_protected",
+        code="rule_minimum_profitable_price",
         label=(
-            f"Cost floor ({minimum_price_eur}) exceeds property reference "
-            f"price ({property_reference_price_eur}) by {impact} EUR"
+            f"Minimum profitable price ({minimum_price_eur}) exceeds property "
+            f"reference price ({property_reference_price_eur}) by {impact} EUR"
         ),
         impact=impact,
     )
@@ -76,7 +80,7 @@ def apply_guardrails(
         rule_applied = "minimum_floor"
         suggested_price_eur = minimum_price_eur
     else:
-        rule_applied = "cost_protected"
+        rule_applied = "minimum_profitable_price"
         suggested_price_eur = minimum_price_eur
 
     below_market_by = property_reference_price_eur - suggested_price_eur
