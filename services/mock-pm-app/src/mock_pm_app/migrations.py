@@ -235,3 +235,347 @@ def ensure_manual_overrides_schema(conn: Any) -> None:
     with conn.cursor() as cur:
         cur.execute(_ENSURE_MANUAL_OVERRIDES_SQL)
     conn.commit()
+
+
+# Phase 18 (ADR-0011 backlog #13 prerequisite): byte-identical (schema-wise)
+# to specs/phases/01-mock-app-db/bookings.sql. Reuses the existing
+# dbz_publication/connector — no new connector, slot, or publication.
+_ENSURE_BOOKINGS_SQL = """
+CREATE TABLE IF NOT EXISTS public.bookings (
+    booking_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schema_version TEXT NOT NULL DEFAULT '1.0' CHECK (schema_version = '1.0'),
+    apartment_id   TEXT NOT NULL
+                       REFERENCES public.apartment_market_segments(apartment_id),
+    check_in       DATE NOT NULL,
+    check_out      DATE NOT NULL CHECK (check_out > check_in),
+    channel        TEXT NOT NULL
+                       CHECK (channel IN ('airbnb', 'booking', 'vrbo', 'direct')),
+    guests         SMALLINT NOT NULL CHECK (guests >= 1),
+    revenue_eur    NUMERIC(10,2) NOT NULL CHECK (revenue_eur >= 0),
+    status         TEXT NOT NULL DEFAULT 'confirmed'
+                       CHECK (status IN ('confirmed', 'cancelled')),
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ
+);
+
+-- Self-healing for a bookings table created before schema_version existed
+-- (same pattern apartment_market_segments.sql's own column additions use).
+ALTER TABLE public.bookings
+    ADD COLUMN IF NOT EXISTS schema_version TEXT NOT NULL DEFAULT '1.0';
+ALTER TABLE public.bookings
+    DROP CONSTRAINT IF EXISTS bookings_schema_version_check;
+ALTER TABLE public.bookings
+    ADD CONSTRAINT bookings_schema_version_check CHECK (schema_version = '1.0');
+
+CREATE INDEX IF NOT EXISTS idx_bookings_apartment_id ON public.bookings (apartment_id);
+
+CREATE OR REPLACE FUNCTION public.set_booking_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_bookings_updated_at
+    BEFORE UPDATE ON public.bookings
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_booking_updated_at();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'dbz_publication'
+          AND schemaname = 'public'
+          AND tablename = 'bookings'
+    ) THEN
+        ALTER PUBLICATION dbz_publication ADD TABLE public.bookings;
+    END IF;
+END $$;
+"""
+
+
+def ensure_bookings_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_BOOKINGS_SQL)
+    conn.commit()
+
+
+# Phase 19 (ADR-0011 backlog #13, ADR-0012): byte-identical (schema-wise) to
+# specs/phases/01-mock-app-db/cost_definitions.sql. Never carries an amount/
+# rate — classifies an already-known amount, never computes one.
+_ENSURE_COST_DEFINITIONS_SQL = """
+CREATE TABLE IF NOT EXISTS public.cost_definitions (
+    cost_definition_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    concept            TEXT NOT NULL CHECK (concept IN (
+                           'electricity', 'water', 'gas', 'internet',
+                           'pms_subscription', 'ota_fee', 'channel_manager',
+                           'office_rent', 'cleaning', 'maintenance', 'insurance',
+                           'community_fee', 'other'
+                       )),
+    scope              TEXT NOT NULL
+                           CHECK (scope IN ('booking', 'property', 'company')),
+    behavior           TEXT NOT NULL
+                           CHECK (behavior IN ('fixed', 'variable', 'semi_variable')),
+    trigger            TEXT NOT NULL CHECK (trigger IN
+                           ('reservation', 'night', 'guest', 'time',
+                            'revenue', 'event')),
+    calculation_base   TEXT NOT NULL CHECK (calculation_base IN
+                           ('fixed_amount', 'pct_revenue', 'pct_adjusted_revenue',
+                            'per_night', 'per_guest')),
+    recurrence         TEXT NOT NULL CHECK (recurrence IN
+                           ('per_booking', 'daily', 'monthly', 'quarterly',
+                            'annual', 'one_off')),
+    revenue_base       TEXT CHECK (revenue_base IN
+                           ('total_revenue', 'revenue_minus_ota',
+                            'revenue_minus_ota_minus_cleaning')),
+    validity_start     DATE NOT NULL DEFAULT CURRENT_DATE,
+    validity_end       DATE
+                           CHECK (validity_end IS NULL
+                                  OR validity_end >= validity_start),
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ
+);
+
+CREATE OR REPLACE FUNCTION public.set_cost_definition_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_cost_definitions_updated_at
+    BEFORE UPDATE ON public.cost_definitions
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_cost_definition_updated_at();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'dbz_publication'
+          AND schemaname = 'public'
+          AND tablename = 'cost_definitions'
+    ) THEN
+        ALTER PUBLICATION dbz_publication ADD TABLE public.cost_definitions;
+    END IF;
+END $$;
+"""
+
+
+def ensure_cost_definitions_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_COST_DEFINITIONS_SQL)
+    conn.commit()
+
+
+# Phase 19: byte-identical (schema-wise) to
+# specs/phases/01-mock-app-db/cost_allocation_rules.sql.
+_ENSURE_COST_ALLOCATION_RULES_SQL = """
+CREATE TABLE IF NOT EXISTS public.cost_allocation_rules (
+    cost_allocation_rule_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    cost_definition_id      UUID NOT NULL UNIQUE
+                                REFERENCES public.cost_definitions(cost_definition_id),
+    method                  TEXT NOT NULL CHECK (method IN
+                                ('direct', 'calendar_day', 'available_night',
+                                 'occupied_night', 'booking', 'revenue', 'weighted')),
+    weight_config           JSONB,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ
+);
+
+CREATE OR REPLACE FUNCTION public.set_cost_allocation_rule_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_cost_allocation_rules_updated_at
+    BEFORE UPDATE ON public.cost_allocation_rules
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_cost_allocation_rule_updated_at();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'dbz_publication'
+          AND schemaname = 'public'
+          AND tablename = 'cost_allocation_rules'
+    ) THEN
+        ALTER PUBLICATION dbz_publication ADD TABLE public.cost_allocation_rules;
+    END IF;
+END $$;
+"""
+
+
+def ensure_cost_allocation_rules_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_COST_ALLOCATION_RULES_SQL)
+    conn.commit()
+
+
+# Phase 19: byte-identical (schema-wise) to
+# specs/phases/01-mock-app-db/company_cost_occurrences.sql.
+_ENSURE_COMPANY_COST_OCCURRENCES_SQL = """
+CREATE TABLE IF NOT EXISTS public.company_cost_occurrences (
+    company_cost_occurrence_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schema_version              TEXT NOT NULL DEFAULT '1.0'
+                                     CHECK (schema_version = '1.0'),
+    cost_definition_id         UUID NOT NULL
+                                   REFERENCES
+                                       public.cost_definitions(cost_definition_id),
+    billing_period_start       DATE NOT NULL,
+    billing_period_end         DATE NOT NULL
+                                   CHECK (billing_period_end >= billing_period_start),
+    amount_gross               NUMERIC(10,2) NOT NULL CHECK (amount_gross >= 0),
+    description                TEXT NOT NULL,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                 TIMESTAMPTZ
+);
+
+-- Self-healing for a table created before schema_version existed (same
+-- pattern bookings.sql's own column addition uses, Phase 18).
+ALTER TABLE public.company_cost_occurrences
+    ADD COLUMN IF NOT EXISTS schema_version TEXT NOT NULL DEFAULT '1.0';
+ALTER TABLE public.company_cost_occurrences
+    DROP CONSTRAINT IF EXISTS company_cost_occurrences_schema_version_check;
+ALTER TABLE public.company_cost_occurrences
+    ADD CONSTRAINT company_cost_occurrences_schema_version_check
+        CHECK (schema_version = '1.0');
+
+CREATE OR REPLACE FUNCTION public.set_company_cost_occurrence_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_company_cost_occurrences_updated_at
+    BEFORE UPDATE ON public.company_cost_occurrences
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_company_cost_occurrence_updated_at();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'dbz_publication'
+          AND schemaname = 'public'
+          AND tablename = 'company_cost_occurrences'
+    ) THEN
+        ALTER PUBLICATION dbz_publication ADD TABLE public.company_cost_occurrences;
+    END IF;
+END $$;
+"""
+
+
+def ensure_company_cost_occurrences_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_COMPANY_COST_OCCURRENCES_SQL)
+    conn.commit()
+
+
+# Phase 19 (ADR-0012): the breaking payment_lines migration. Adds
+# cost_definition_id (nullable at first), backfills it from every distinct
+# (concept, cost_type) pair still present, then drops the legacy columns and
+# enforces NOT NULL — all guarded so this is a harmless no-op once the
+# legacy columns are already gone (checked via information_schema, not a
+# flag column, since payment_lines itself carries no version marker beyond
+# schema_version, which Debezium messages carry, not this migration).
+#
+# The mapping is not a straight 1:1 rename: cost_type='one_time' has no
+# matching `behavior` value (behavior is fixed/variable/semi_variable, there
+# is no "one_time") — semantically, "one time" was always about *recurrence*,
+# not behavior. It maps to behavior='variable' + recurrence='one_off' (and
+# allocation method 'direct', matching one_time_cost_eur's existing
+# "average across lines in the period" semantics) instead of a value that
+# doesn't exist in the new enum.
+_MIGRATE_PAYMENT_LINES_TO_COST_DEFINITIONS_SQL = """
+ALTER TABLE public.payment_lines
+    ADD COLUMN IF NOT EXISTS cost_definition_id UUID
+        REFERENCES public.cost_definitions(cost_definition_id);
+
+DO $$
+DECLARE
+    legacy_columns_exist boolean;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'payment_lines'
+          AND column_name = 'concept'
+    ) INTO legacy_columns_exist;
+
+    IF legacy_columns_exist THEN
+        INSERT INTO public.cost_definitions
+            (concept, scope, behavior, trigger, calculation_base, recurrence)
+        SELECT DISTINCT
+            pl.concept,
+            CASE WHEN pl.concept IN ('ota_fee', 'channel_manager')
+                 THEN 'booking' ELSE 'property' END,
+            CASE WHEN pl.cost_type = 'one_time' THEN 'variable' ELSE pl.cost_type END,
+            'time',
+            'fixed_amount',
+            CASE WHEN pl.cost_type = 'one_time' THEN 'one_off' ELSE 'monthly' END
+        FROM public.payment_lines pl
+        WHERE NOT EXISTS (
+            SELECT 1 FROM public.cost_definitions cd
+            WHERE cd.concept = pl.concept
+              AND cd.behavior = CASE WHEN pl.cost_type = 'one_time'
+                                     THEN 'variable' ELSE pl.cost_type END
+              AND cd.recurrence = CASE WHEN pl.cost_type = 'one_time'
+                                       THEN 'one_off' ELSE 'monthly' END
+        );
+
+        INSERT INTO public.cost_allocation_rules (cost_definition_id, method)
+        SELECT cd.cost_definition_id,
+               CASE WHEN cd.recurrence = 'one_off' THEN 'direct' ELSE 'calendar_day' END
+        FROM public.cost_definitions cd
+        WHERE NOT EXISTS (
+            SELECT 1 FROM public.cost_allocation_rules car
+            WHERE car.cost_definition_id = cd.cost_definition_id
+        );
+
+        UPDATE public.payment_lines pl
+        SET cost_definition_id = cd.cost_definition_id
+        FROM public.cost_definitions cd
+        WHERE pl.cost_definition_id IS NULL
+          AND pl.concept = cd.concept
+          AND cd.behavior = CASE WHEN pl.cost_type = 'one_time'
+                                 THEN 'variable' ELSE pl.cost_type END
+          AND cd.recurrence = CASE WHEN pl.cost_type = 'one_time'
+                                   THEN 'one_off' ELSE 'monthly' END;
+
+        ALTER TABLE public.payment_lines
+            DROP CONSTRAINT IF EXISTS payment_lines_concept_check;
+        ALTER TABLE public.payment_lines DROP COLUMN IF EXISTS concept;
+        ALTER TABLE public.payment_lines
+            DROP CONSTRAINT IF EXISTS payment_lines_cost_type_check;
+        ALTER TABLE public.payment_lines DROP COLUMN IF EXISTS cost_type;
+        ALTER TABLE public.payment_lines DROP COLUMN IF EXISTS is_shared;
+        ALTER TABLE public.payment_lines DROP COLUMN IF EXISTS allocation_ratio;
+
+        ALTER TABLE public.payment_lines ALTER COLUMN cost_definition_id SET NOT NULL;
+
+        ALTER TABLE public.payment_lines
+            DROP CONSTRAINT IF EXISTS payment_lines_schema_version_check;
+        ALTER TABLE public.payment_lines ALTER COLUMN schema_version SET DEFAULT '2.0';
+        UPDATE public.payment_lines SET schema_version = '2.0'
+            WHERE schema_version = '1.0';
+        ALTER TABLE public.payment_lines
+            ADD CONSTRAINT payment_lines_schema_version_check
+                CHECK (schema_version = '2.0');
+    END IF;
+END $$;
+"""
+
+
+def migrate_payment_lines_to_cost_definitions(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_MIGRATE_PAYMENT_LINES_TO_COST_DEFINITIONS_SQL)
+    conn.commit()

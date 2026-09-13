@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "company_cost_occurrence.v1",
+  "title": "CompanyCostOccurrence",
+  "description": "A company-scoped cost's actual, already-known amount for one billing period (Phase 19, ADR-0011 backlog #13). Lives in its own table/topic rather than payment_line.v1 because a company-scoped cost belongs to no single apartment, and payment_line.v1 is keyed by apartment_id.",
+  "type": "object",
+  "required": [
+    "company_cost_occurrence_id",
+    "schema_version",
+    "cost_definition_id",
+    "billing_period_start",
+    "billing_period_end",
+    "amount_gross",
+    "description",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+
+    "company_cost_occurrence_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Idempotency key. Used by Flink to deduplicate on replay."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+
+    "cost_definition_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "References a CostDefinition with scope=company. Its concept/behavior/calculation_base/recurrence/allocation rule (via cost_allocation_rules, weight_config) govern how this occurrence's amount_gross is split across apartments."
+    },
+
+    "billing_period_start": {
+      "type": "string",
+      "format": "date",
+      "description": "Start of the service period this cost covers, same convention as payment_line.v1."
+    },
+    "billing_period_end": {
+      "type": "string",
+      "format": "date",
+      "description": "End of the service period this cost covers."
+    },
+
+    "amount_gross": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total amount for this company-wide cost, before any per-apartment split."
+    },
+
+    "description": {
+      "type": "string",
+      "description": "Free-text line as it appears on the invoice (e.g. 'Shared office rent - September 2026')."
+    },
+
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

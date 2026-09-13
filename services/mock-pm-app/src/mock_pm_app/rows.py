@@ -5,18 +5,18 @@ from uuid import UUID
 
 from mock_pm_app.data import PAYMENT_METHODS, Apartment, ConceptProfile
 
+# Phase 19 (ADR-0012): concept/cost_type/is_shared/allocation_ratio replaced
+# by cost_definition_id.
 INSERT_SQL = """
     INSERT INTO payment_lines (
-        apartment_id, apartment_reference, concept, cost_type,
-        is_shared, allocation_ratio, description,
+        apartment_id, apartment_reference, cost_definition_id, description,
         supplier_name, supplier_tax_id, invoice_number,
         billing_period_start, billing_period_end,
         amount_gross, vat_rate, currency,
         due_date, payment_date, payment_method, payment_status, source
     ) VALUES (
-        %(apartment_id)s, %(apartment_reference)s, %(concept)s, %(cost_type)s,
-        %(is_shared)s, %(allocation_ratio)s, %(description)s,
-        %(supplier_name)s, %(supplier_tax_id)s, %(invoice_number)s,
+        %(apartment_id)s, %(apartment_reference)s, %(cost_definition_id)s,
+        %(description)s, %(supplier_name)s, %(supplier_tax_id)s, %(invoice_number)s,
         %(billing_period_start)s, %(billing_period_end)s,
         %(amount_gross)s, %(vat_rate)s, %(currency)s,
         %(due_date)s, %(payment_date)s, %(payment_method)s, %(payment_status)s,
@@ -29,6 +29,7 @@ INSERT_SQL = """
 def _base_row(
     apartment: Apartment,
     profile: ConceptProfile,
+    cost_definition_id: str,
     period_start: date,
     period_end: date,
     rng: random.Random,
@@ -38,10 +39,7 @@ def _base_row(
     return {
         "apartment_id": apartment.apartment_id,
         "apartment_reference": apartment.apartment_reference,
-        "concept": profile.concept,
-        "cost_type": profile.cost_type,
-        "is_shared": False,
-        "allocation_ratio": None,
+        "cost_definition_id": cost_definition_id,
         "description": (
             f"{label} — {apartment.apartment_reference} {period_start:%Y-%m}"
         ),
@@ -60,11 +58,14 @@ def _base_row(
 def build_historical_row(
     apartment: Apartment,
     profile: ConceptProfile,
+    cost_definition_id: str,
     period_start: date,
     period_end: date,
     rng: random.Random,
 ) -> dict[str, Any]:
-    row = _base_row(apartment, profile, period_start, period_end, rng)
+    row = _base_row(
+        apartment, profile, cost_definition_id, period_start, period_end, rng
+    )
     due_date = period_end + timedelta(days=15)
     row.update(
         due_date=due_date,
@@ -78,11 +79,14 @@ def build_historical_row(
 def build_live_row(
     apartment: Apartment,
     profile: ConceptProfile,
+    cost_definition_id: str,
     period_start: date,
     period_end: date,
     rng: random.Random,
 ) -> dict[str, Any]:
-    row = _base_row(apartment, profile, period_start, period_end, rng)
+    row = _base_row(
+        apartment, profile, cost_definition_id, period_start, period_end, rng
+    )
     row.update(
         due_date=period_end + timedelta(days=15),
         payment_date=None,

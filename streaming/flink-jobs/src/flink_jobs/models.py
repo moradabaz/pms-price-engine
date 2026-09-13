@@ -4,7 +4,7 @@ from datetime import date, datetime
 from pricing_formulas.decision_components import DecisionComponent
 from pricing_formulas.layers.commercial import CommissionBase
 
-from flink_jobs.cost_aggregation import ConceptAmount
+from flink_jobs.cost_aggregation import ConceptAmount, PendingAllocationCorrection
 
 
 @dataclass(frozen=True)
@@ -130,6 +130,58 @@ class ManualOverrideRow:
 
 
 @dataclass(frozen=True)
+class BookingRow:
+    """One bookings CDC row, as received from Kafka (Phase 18, ADR-0011
+    backlog #13 prerequisite)."""
+
+    booking_id: str
+    apartment_id: str
+    check_in: date
+    check_out: date
+    channel: str
+    guests: int
+    revenue_eur: float
+    status: str
+
+
+@dataclass(frozen=True)
+class CostDefinitionRow:
+    """One cost_definitions CDC row, as received from Kafka (Phase 19,
+    ADR-0011 backlog #13, ADR-0012)."""
+
+    cost_definition_id: str
+    concept: str
+    scope: str
+    behavior: str
+    trigger: str
+    calculation_base: str
+    recurrence: str
+    revenue_base: str | None
+
+
+@dataclass(frozen=True)
+class CostAllocationRuleRow:
+    """One cost_allocation_rules CDC row, as received from Kafka (Phase 19)."""
+
+    cost_definition_id: str
+    method: str
+    weight_config: str | None
+
+
+@dataclass(frozen=True)
+class CompanyCostOccurrenceRow:
+    """One company_cost_occurrences CDC row, as received from Kafka (Phase
+    19) — a company-scoped cost's real amount for one period, broadcast to
+    every apartment (spec 19 §5)."""
+
+    company_cost_occurrence_id: str
+    cost_definition_id: str
+    billing_period_start: date
+    billing_period_end: date
+    amount_gross: float
+
+
+@dataclass(frozen=True)
 class CostAggregate:
     """Stage A's output: one apartment's current cost, segment, and margin config."""
 
@@ -180,6 +232,24 @@ class CostAggregate:
     # cost_aggregation.py computation — every concept observed in the
     # current billing period, not just those two special-cased groups.
     cost_breakdown: tuple[ConceptAmount, ...] = field(default_factory=tuple)
+    # Phase 18 (ADR-0011 backlog #13 prerequisite): resolved by the new
+    # booking-enrichment stage, chained right after Stage A. Default 0 until
+    # that stage has seen at least one booking event for this apartment —
+    # "available nights" is not a separate field yet, it is available_days
+    # above (no apartment-blocked/maintenance concept exists in this PoC).
+    occupied_nights: int = 0
+    # Phase 19 (ADR-0011 backlog #13): same stage as occupied_nights above,
+    # counts distinct confirmed bookings overlapping the current billing
+    # period — needed by the 'booking' allocation method.
+    booking_count: int = 0
+    # Phase 19: concepts whose allocation_method needs occupied_nights/
+    # booking_count (not yet available when Stage A runs) — resolved by
+    # Stage A-correction, chained after the booking stage. Empty once
+    # corrected (the correction folds its amount into fixed_cost_eur/
+    # variable_cost_eur and clears this tuple, so it never applies twice).
+    pending_allocation_corrections: tuple[PendingAllocationCorrection, ...] = field(
+        default_factory=tuple
+    )
 
     @property
     def segment_key(self) -> tuple[str, str, str, int]:

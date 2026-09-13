@@ -7,9 +7,12 @@ from pricing_formulas.layers.structural import (
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import KeyedBroadcastProcessFunction
 from pyflink.datastream.state import MapStateDescriptor
-from shared_schemas.payment_line import PaymentLine
 
-from flink_jobs.cost_aggregation import aggregate_cost, retained_billing_period_ends
+from flink_jobs.cost_aggregation import (
+    EnrichedPaymentLine,
+    aggregate_cost,
+    retained_billing_period_ends,
+)
 from flink_jobs.models import ApartmentSegmentRow, CostAggregate
 
 SEGMENT_BROADCAST_DESCRIPTOR = MapStateDescriptor(
@@ -22,15 +25,18 @@ COST_LINES_STATE_DESCRIPTOR = MapStateDescriptor(
 
 class CostEnrichmentFunction(KeyedBroadcastProcessFunction):
     """Stage A: aggregates cost per apartment and enriches it with segment
-    and margin config from broadcast state. Emits CostAggregate."""
+    and margin config from broadcast state. Emits CostAggregate. Phase 19
+    (ADR-0011 backlog #13): consumes EnrichedPaymentLine (Stage A0's output),
+    never PaymentLine directly — concept/behavior/etc. are already resolved
+    by then."""
 
     def open(self, runtime_context):
         self.cost_lines_state = runtime_context.get_map_state(
             COST_LINES_STATE_DESCRIPTOR
         )
 
-    def process_element(self, value: PaymentLine, ctx):
-        self.cost_lines_state.put(str(value.event_id), value)
+    def process_element(self, value: EnrichedPaymentLine, ctx):
+        self.cost_lines_state.put(value.event_id, value)
 
         current = dict(self.cost_lines_state.items())
         retained_ends = retained_billing_period_ends(
@@ -76,6 +82,9 @@ class CostEnrichmentFunction(KeyedBroadcastProcessFunction):
             ota_related_cost_eur=aggregation.ota_related_cost_eur,
             cleaning_cost_eur=aggregation.cleaning_cost_eur,
             cost_breakdown=aggregation.cost_breakdown,
+            # Phase 19: carried through as-is — resolved by Stage
+            # A-correction once occupied_nights/booking_count are available.
+            pending_allocation_corrections=aggregation.pending_allocation_corrections,
             property_attribute_factor=property_attribute_factor(
                 quality_tier=assignment.quality_tier,
                 rating=assignment.rating,

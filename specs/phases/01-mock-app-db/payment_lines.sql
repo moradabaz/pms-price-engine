@@ -10,6 +10,19 @@
 -- work, tracked in specs/phases/01-mock-app-db/spec.md. Phase 2 (CDC pipeline,
 -- specs/phases/02-cdc-pipeline/spec.md) depends on this table existing and
 -- being actively written to by the Phase 1 mock app.
+--
+-- Phase 19 (ADR-0012): schema_version 2.0. concept/cost_type/is_shared/
+-- allocation_ratio are REMOVED — cost_definition_id (references
+-- cost_definitions.sql) replaces all four. This is the fresh-install shape;
+-- an already-populated table is migrated in place (with a backfill, never a
+-- data loss) by mock_pm_app/migrations.py, not by this file.
+--
+-- No FK constraint on cost_definition_id (or on apartment_id) here: this
+-- script runs first in docker-entrypoint-initdb.d, before
+-- apartment_market_segments.sql, and cost_definitions.sql isn't part of the
+-- initdb sequence at all (only mock_pm_app/migrations.py creates it, at
+-- application startup) — a forward FK reference to either table would fail
+-- immediately on a fresh install.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- required for gen_random_uuid()
 
@@ -21,25 +34,19 @@ CREATE TABLE public.payment_lines (
     -- messages.
     event_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
-    -- Constant today, but a real column (not injected by a transform) so schema
-    -- evolution has a place to change it later without touching the connector.
-    schema_version       TEXT NOT NULL DEFAULT '1.0' CHECK (schema_version = '1.0'),
+    -- Phase 19 (ADR-0012): bumped from '1.0'. Every prior phase only added
+    -- fields; this one removes required ones (concept/cost_type/is_shared/
+    -- allocation_ratio below), which is not backward compatible.
+    schema_version       TEXT NOT NULL DEFAULT '2.0' CHECK (schema_version = '2.0'),
 
     apartment_id         TEXT NOT NULL,
     apartment_reference  TEXT NOT NULL,
 
-    concept              TEXT NOT NULL CHECK (concept IN (
-                              'electricity', 'water', 'gas', 'internet', 'pms_subscription',
-                              'ota_fee', 'channel_manager', 'office_rent', 'cleaning',
-                              'maintenance', 'insurance', 'community_fee', 'other'
-                          )),
-    cost_type            TEXT NOT NULL CHECK (cost_type IN ('fixed', 'variable', 'one_time')),
-
-    is_shared            BOOLEAN NOT NULL DEFAULT false,
-    allocation_ratio     NUMERIC(5,4) CHECK (
-                              allocation_ratio IS NULL
-                              OR (allocation_ratio >= 0 AND allocation_ratio <= 1)
-                          ),
+    -- Phase 19 (ADR-0012): replaces concept/cost_type/is_shared/
+    -- allocation_ratio entirely — CostDefinition is now the single source
+    -- of truth for what this cost is (specs/phases/01-mock-app-db/
+    -- cost_definitions.sql). No FK here — see header note above.
+    cost_definition_id   UUID NOT NULL,
 
     description          TEXT NOT NULL,
 

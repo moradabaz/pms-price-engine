@@ -2,15 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "payment_line.v1",
   "title": "PaymentLine",
-  "description": "An operational cost line in the property manager's ledger. Captured via CDC (Debezium → Kafka) whenever a row is inserted or updated in the payment_lines table.",
+  "description": "An operational cost line in the property manager's ledger. Captured via CDC (Debezium → Kafka) whenever a row is inserted or updated in the payment_lines table. schema_version 2.0 (Phase 19, ADR-0012): concept/cost_type/is_shared/allocation_ratio are replaced by cost_definition_id — a breaking change, not an additive one, see ADR-0012.",
   "type": "object",
   "required": [
     "event_id",
     "schema_version",
     "apartment_id",
     "apartment_reference",
-    "concept",
-    "cost_type",
+    "cost_definition_id",
     "description",
     "amount_gross",
     "vat_rate",
@@ -31,7 +30,7 @@
     },
     "schema_version": {
       "type": "string",
-      "const": "1.0"
+      "const": "2.0"
     },
 
     "apartment_id": {
@@ -44,42 +43,10 @@
       "examples": ["BCN-042", "MAD-007", "VLC-015"]
     },
 
-    "concept": {
+    "cost_definition_id": {
       "type": "string",
-      "description": "Standardised cost category. The pricing engine uses this to group costs by nature.",
-      "enum": [
-        "electricity",
-        "water",
-        "gas",
-        "internet",
-        "pms_subscription",
-        "ota_fee",
-        "channel_manager",
-        "office_rent",
-        "cleaning",
-        "maintenance",
-        "insurance",
-        "community_fee",
-        "other"
-      ]
-    },
-
-    "cost_type": {
-      "type": "string",
-      "description": "Nature of the cost relative to the pricing calculation. Fixed costs are divided by available days. Variable costs scale with usage or bookings. One-time costs are amortised or excluded depending on config.",
-      "enum": ["fixed", "variable", "one_time"]
-    },
-
-    "is_shared": {
-      "type": "boolean",
-      "default": false,
-      "description": "True when this cost (e.g. office rent, channel manager fee) is shared across multiple apartments and has been pre-allocated before insertion."
-    },
-    "allocation_ratio": {
-      "type": ["number", "null"],
-      "minimum": 0,
-      "maximum": 1,
-      "description": "Fraction of the original shared cost allocated to this apartment (e.g. 0.01 for 1 out of 100 apartments). Null when is_shared=false. The pricing engine uses the already-allocated amount_gross — this field is stored for audit only."
+      "format": "uuid",
+      "description": "References a CostDefinition (Phase 19, ADR-0011 backlog #13): classifies this line's concept, scope, behavior, trigger, calculation base, recurrence, and allocation rule. Replaces the old concept/cost_type/is_shared/allocation_ratio fields entirely (ADR-0012) — this line's own amount_gross remains the real, already-known figure; CostDefinition only says how to spread and interpret it, never computes one."
     },
 
     "description": {

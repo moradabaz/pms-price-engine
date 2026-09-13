@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "booking.v1",
+  "title": "Booking",
+  "description": "A reservation for one apartment. Captured via CDC (Debezium → Kafka) whenever a row is inserted or updated in the bookings table (Phase 18, ADR-0011 backlog #13 prerequisite).",
+  "type": "object",
+  "required": [
+    "booking_id",
+    "schema_version",
+    "apartment_id",
+    "check_in",
+    "check_out",
+    "channel",
+    "guests",
+    "revenue_eur",
+    "status",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+
+    "booking_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Idempotency key. Used by Flink sinks to deduplicate on replay — the same role payment_line.v1's event_id plays."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+
+    "apartment_id": {
+      "type": "string",
+      "description": "Surrogate key from the PMS database (UUID or integer as string). Matches payment_line.v1's apartment_id."
+    },
+
+    "check_in": {
+      "type": "string",
+      "format": "date",
+      "description": "First night of the stay."
+    },
+    "check_out": {
+      "type": "string",
+      "format": "date",
+      "description": "Departure date. The night of check_out itself is not occupied — nights occupied are [check_in, check_out)."
+    },
+
+    "channel": {
+      "type": "string",
+      "enum": ["airbnb", "booking", "vrbo", "direct"],
+      "description": "Sales channel this booking came through. Includes 'direct', unlike price_decision.v1's ChannelPriceCandidate.platform — this is an independent entity."
+    },
+
+    "guests": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of guests on this booking."
+    },
+
+    "revenue_eur": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total revenue for this booking, gross, in EUR."
+    },
+
+    "status": {
+      "type": "string",
+      "enum": ["confirmed", "cancelled"],
+      "description": "A cancelled booking is excluded from occupied-night calculations from the moment this status is observed — it is not retroactively removed from any decision already made using the earlier occupancy figure."
+    },
+
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

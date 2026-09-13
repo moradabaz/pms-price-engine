@@ -6,23 +6,36 @@ from common import configure_logging, get_logger
 
 from mock_pm_app.data import (
     build_apartment_pool,
+    build_bookings,
+    build_company_cost_occurrences,
     build_owner_contracts,
     build_owner_pool,
 )
 from mock_pm_app.generator import run_forever
 from mock_pm_app.migrations import (
     ensure_apartment_market_segments_schema,
+    ensure_bookings_schema,
+    ensure_company_cost_occurrences_schema,
+    ensure_cost_allocation_rules_schema,
+    ensure_cost_definitions_schema,
     ensure_manual_overrides_schema,
     ensure_owner_contracts_schema,
     ensure_owners_schema,
+    migrate_payment_lines_to_cost_definitions,
 )
 from mock_pm_app.seed import (
     already_seeded,
+    already_seeded_bookings,
+    already_seeded_company_cost_occurrences,
     already_seeded_owner_contracts,
     already_seeded_owners,
     already_seeded_segments,
+    ensure_weighted_allocation_config,
+    resolve_cost_definition_ids,
     seed,
     seed_apartment_market_segments,
+    seed_bookings,
+    seed_company_cost_occurrences,
     seed_owner_contracts,
     seed_owners,
 )
@@ -49,15 +62,54 @@ def main() -> None:
         # (spec 14 §1).
         ensure_manual_overrides_schema(conn)
         logger.info("manual_overrides_schema_ensured")
+        ensure_bookings_schema(conn)
+        logger.info("bookings_schema_ensured")
+
+        # Phase 19 (ADR-0011 backlog #13, ADR-0012): cost_definitions/
+        # cost_allocation_rules must exist before resolve_cost_definition_ids
+        # and the payment_lines migration (both reference/insert into them).
+        ensure_cost_definitions_schema(conn)
+        logger.info("cost_definitions_schema_ensured")
+        ensure_cost_allocation_rules_schema(conn)
+        logger.info("cost_allocation_rules_schema_ensured")
 
         rng = random.Random()
         apartments = build_apartment_pool(settings.seed_apartments, rng)
         owners = build_owner_pool()
 
+        # Runs every startup (not seed-once) — see resolve_cost_definition_ids'
+        # own docstring for why. Must run before the payment_lines migration
+        # below, so the canonical specs exist first and the migration's
+        # backfill can reuse them where the shape matches.
+        concept_to_cost_definition_id = resolve_cost_definition_ids(conn)
+        logger.info(
+            "cost_definitions_resolved", concepts=len(concept_to_cost_definition_id)
+        )
+        # office_rent (scope=company) needs an explicit weight_config —
+        # Flink's fan-out never discovers the apartment roster itself
+        # (spec 19 §5). Fills it in once apartments are known; a no-op once
+        # already set.
+        ensure_weighted_allocation_config(
+            conn, concept_to_cost_definition_id["office_rent"], apartments
+        )
+        logger.info("office_rent_weight_config_ensured")
+
+        # ADR-0012: breaking change, backfills existing rows, then drops
+        # concept/cost_type/is_shared/allocation_ratio. Harmless no-op once
+        # already migrated (checked via information_schema, not a flag).
+        migrate_payment_lines_to_cost_definitions(conn)
+        logger.info("payment_lines_migrated_to_cost_definitions")
+
+        ensure_company_cost_occurrences_schema(conn)
+        logger.info("company_cost_occurrences_schema_ensured")
+
         if already_seeded(conn):
             logger.info("seed_skipped", reason="payment_lines already has rows")
         else:
-            rows_inserted = seed(conn, settings, apartments, rng, date.today())
+            rows_inserted = seed(
+                conn, settings, apartments, rng, date.today(),
+                concept_to_cost_definition_id,
+            )
             logger.info("seed_complete", rows_inserted=rows_inserted)
 
         if already_seeded_segments(conn):
@@ -87,8 +139,30 @@ def main() -> None:
                 "owner_contract_seed_complete", rows_inserted=contracts_inserted
             )
 
+        if already_seeded_bookings(conn):
+            logger.info("booking_seed_skipped", reason="bookings already has rows")
+        else:
+            bookings = build_bookings(apartments, rng, date.today())
+            bookings_inserted = seed_bookings(conn, bookings)
+            logger.info("booking_seed_complete", rows_inserted=bookings_inserted)
+
+        if already_seeded_company_cost_occurrences(conn):
+            logger.info(
+                "company_cost_occurrence_seed_skipped",
+                reason="company_cost_occurrences already has rows",
+            )
+        else:
+            occurrences = build_company_cost_occurrences(
+                concept_to_cost_definition_id["office_rent"], date.today()
+            )
+            occurrences_inserted = seed_company_cost_occurrences(conn, occurrences)
+            logger.info(
+                "company_cost_occurrence_seed_complete",
+                rows_inserted=occurrences_inserted,
+            )
+
         logger.info("generator_starting")
-        run_forever(conn, settings, apartments)
+        run_forever(conn, settings, apartments, concept_to_cost_definition_id)
 
 
 if __name__ == "__main__":

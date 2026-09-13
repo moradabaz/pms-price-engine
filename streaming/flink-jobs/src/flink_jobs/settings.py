@@ -11,6 +11,12 @@ class FlinkJobSettings(BaseSettings):
     owner_contracts_topic: str = "owner-contracts.v1"
     # Phase 14 (ADR-0011 backlog #9).
     manual_overrides_topic: str = "manual-overrides.v1"
+    # Phase 18 (ADR-0011 backlog #13 prerequisite).
+    booking_events_topic: str = "booking-events.v1"
+    # Phase 19 (ADR-0011 backlog #13, ADR-0012).
+    cost_definitions_topic: str = "cost-definitions.v1"
+    cost_allocation_rules_topic: str = "cost-allocation-rules.v1"
+    company_cost_occurrences_topic: str = "company-cost-occurrences.v1"
     kafka_consumer_group_id: str = "flink-price-engine"
 
     # Read via Kafka, not Kinesis directly — no Kinesis connector runs on

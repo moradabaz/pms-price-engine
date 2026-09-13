@@ -10,7 +10,7 @@
     "database.dbname": "pms_db",
 
     "topic.prefix": "pms",
-    "table.include.list": "public.payment_lines,public.apartment_market_segments,public.owner_contracts,public.manual_overrides",
+    "table.include.list": "public.payment_lines,public.apartment_market_segments,public.owner_contracts,public.manual_overrides,public.bookings,public.cost_definitions,public.cost_allocation_rules,public.company_cost_occurrences",
 
     "slot.name": "debezium_payment_lines",
     "plugin.name": "pgoutput",
@@ -19,7 +19,7 @@
 
     "snapshot.mode": "initial",
 
-    "message.key.columns": "public.payment_lines:apartment_id",
+    "message.key.columns": "public.payment_lines:apartment_id;public.bookings:apartment_id",
 
     "decimal.handling.mode": "double",
 
@@ -27,7 +27,7 @@
     "dates.type": "com.pms.debezium.DateStringConverter",
     "dates.format.date": "yyyy-MM-dd",
 
-    "transforms": "unwrap,routePayments,routeSegments,routeOwnerContracts,routeManualOverrides",
+    "transforms": "unwrap,routePayments,routeSegments,routeOwnerContracts,routeManualOverrides,routeBookings,routeCostDefinitions,routeCostAllocationRules,routeCompanyCostOccurrences",
     "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
     "transforms.unwrap.drop.tombstones": "true",
     "transforms.unwrap.delete.handling.mode": "drop",
@@ -43,6 +43,18 @@
     "transforms.routeManualOverrides.type": "org.apache.kafka.connect.transforms.RegexRouter",
     "transforms.routeManualOverrides.regex": "pms\\.public\\.manual_overrides",
     "transforms.routeManualOverrides.replacement": "manual-overrides.v1",
+    "transforms.routeBookings.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeBookings.regex": "pms\\.public\\.bookings",
+    "transforms.routeBookings.replacement": "booking-events.v1",
+    "transforms.routeCostDefinitions.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeCostDefinitions.regex": "pms\\.public\\.cost_definitions",
+    "transforms.routeCostDefinitions.replacement": "cost-definitions.v1",
+    "transforms.routeCostAllocationRules.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeCostAllocationRules.regex": "pms\\.public\\.cost_allocation_rules",
+    "transforms.routeCostAllocationRules.replacement": "cost-allocation-rules.v1",
+    "transforms.routeCompanyCostOccurrences.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeCompanyCostOccurrences.regex": "pms\\.public\\.company_cost_occurrences",
+    "transforms.routeCompanyCostOccurrences.replacement": "company-cost-occurrences.v1",
 
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",
     "key.converter.schemas.enable": "false",

@@ -60,10 +60,19 @@ docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
   --topic owner-contracts.v1 --partitions 1 --replication-factor 1
 docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
   --topic manual-overrides.v1 --partitions 1 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic booking-events.v1 --partitions 1 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic cost-definitions.v1 --partitions 1 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic cost-allocation-rules.v1 --partitions 1 --replication-factor 1
+docker exec pms_kafka kafka-topics --bootstrap-server localhost:9092 --create \
+  --topic company-cost-occurrences.v1 --partitions 1 --replication-factor 1
 
 # 4. Register the Debezium connector (one-time — reads payment_lines +
-# apartment_market_segments + owner_contracts + manual_overrides,
-# Phase 14 ADR-0011 backlog #9)
+# apartment_market_segments + owner_contracts + manual_overrides + bookings +
+# cost_definitions + cost_allocation_rules + company_cost_occurrences,
+# Phase 19 ADR-0011 backlog #13)
 curl -X POST -H "Content-Type: application/json" \
   --data @infra/debezium/postgres-connector.json \
   http://localhost:8083/connectors
@@ -154,7 +163,7 @@ fan-out gaps):
 | Suggested price | The price Flink recommends |
 | Margin | `(suggested_price / cost) - 1` — the margin this price actually achieves |
 | Status | **`Price Below Cost`** (red) — loses money outright. **`Price Below Profit`** (orange) — covers cost but not the PM's target margin. **`Price Above Market`** (orange) — clears the target margin but prices above the raw market average. **`Market Competitive`** (green) — clears the target margin and stays at/below the market average. |
-| Min. stay reco. | Minimum Stay as a profitability lever (ADR-0011 backlog #12, Phase 15) — the shortest stay length (nights) that would clear `cost_protected` for this apartment/night, or `—` when already fine at 1 night or when no candidate stay length resolves it (see `specs/phases/15-minimum-stay-recommendation/spec.md`) |
+| Min. stay reco. | Minimum Stay as a profitability lever (ADR-0011 backlog #12, Phase 15) — the shortest stay length (nights) that would clear `minimum_profitable_price` for this apartment/night, or `—` when already fine at 1 night or when no candidate stay length resolves it (see `specs/phases/15-minimum-stay-recommendation/spec.md`) |
 | Cost per reservation | Total cost for a whole reservation at the "Min. stay reco." length — fixed/variable cost recur every night, the one-time/turnover cost is paid once per booking. `—` when there is no recommendation. |
 | Suggested price (reservation) | What the whole reservation should be priced at in total — the recommended stay length's own market-competitive per-night rate × its nights, i.e. a price already covering cost + target margin while staying at/below the market average. `—` when there is no recommendation. |
 
@@ -169,9 +178,11 @@ underlying table.
 
 ### Margin alerts
 
-Cold path — reads `fct_margin_alert`, i.e. every decision where `rule_applied = cost_protected`:
-the actionable case where an apartment's costs are pricing it above its own market average. Same
-15-minute freshness as price evolution.
+Cold path — reads `fct_margin_alert`, i.e. every decision where `rule_applied =
+minimum_profitable_price` (renamed 2026-09-12 from `cost_protected`; historical rows before the
+rename still carry the old value, see `docs/metrics-dictionary.md`): the actionable case where an
+apartment's costs are pricing it above its own market average. Same 15-minute freshness as price
+evolution.
 
 **Why two different "freshness" behaviors:** the current-price tab needs no timestamp because
 DynamoDB is read live; the other tabs show `max(ingested_at)` from the mart because dbt only
@@ -226,9 +237,9 @@ the market — and records which one won as `rule_applied`:
 minimum_price_eur          = cost floor (formula below, depends on how far out the night is)
 market_reference_price_eur = market_avg × (1 - competitiveness_discount)
 
-market_competitive  → minimum_price_eur <= market_reference_price_eur   (floor doesn't bind — price the market rate)
-minimum_floor        → market_reference_price_eur < minimum_price_eur <= market_avg   (floor wins, still ≤ raw market avg)
-cost_protected        → minimum_price_eur > market_avg   (floor pushes price above the raw market — actionable: costs are pricing the apartment out of its own market)
+market_competitive          → minimum_price_eur <= market_reference_price_eur   (floor doesn't bind — price the market rate)
+minimum_floor               → market_reference_price_eur < minimum_price_eur <= market_avg   (floor wins, still ≤ raw market avg)
+minimum_profitable_price    → minimum_price_eur > market_avg   (floor pushes price above the raw market — actionable: costs are pricing the apartment out of its own market)
 ```
 
 The floor itself gets **stricter the further out the booking is** (an owner can afford to hold

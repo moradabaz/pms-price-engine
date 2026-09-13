@@ -5,36 +5,20 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 # Mirrors specs/events/payment_line.v1.json field-for-field.
+# Phase 19 (ADR-0012): schema_version 2.0. concept/cost_type/is_shared/
+# allocation_ratio removed, replaced by cost_definition_id.
 
 
 class PaymentLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: UUID
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
 
     apartment_id: str
     apartment_reference: str
 
-    concept: Literal[
-        "electricity",
-        "water",
-        "gas",
-        "internet",
-        "pms_subscription",
-        "ota_fee",
-        "channel_manager",
-        "office_rent",
-        "cleaning",
-        "maintenance",
-        "insurance",
-        "community_fee",
-        "other",
-    ]
-    cost_type: Literal["fixed", "variable", "one_time"]
-
-    is_shared: bool = False
-    allocation_ratio: float | None = Field(default=None, ge=0, le=1)
+    cost_definition_id: UUID
 
     description: str
 

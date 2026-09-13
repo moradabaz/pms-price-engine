@@ -1,0 +1,10 @@
+{
+  "company_cost_occurrence_id": "b3f8c2a0-1234-4a5b-9c6d-7e8f9a0b1c2d",
+  "schema_version": "1.0",
+  "cost_definition_id": "1f9e6c3a-2b4d-4e5f-8a9b-0c1d2e3f4a5b",
+  "billing_period_start": "2026-09-01",
+  "billing_period_end": "2026-09-30",
+  "description": "Shared office rent - September 2026",
+  "created_at": "2026-09-01T09:00:00Z",
+  "updated_at": null
+}

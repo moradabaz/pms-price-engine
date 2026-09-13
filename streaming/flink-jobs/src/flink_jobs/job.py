@@ -14,8 +14,35 @@ from shared_schemas.market_price import MarketPrice
 from shared_schemas.payment_line import PaymentLine
 
 from flink_jobs.dynamodb_sink import DynamoDbSinkFunction
-from flink_jobs.models import ApartmentSegmentRow, ManualOverrideRow, OwnerContractRow
+from flink_jobs.models import (
+    ApartmentSegmentRow,
+    BookingRow,
+    CompanyCostOccurrenceRow,
+    CostAllocationRuleRow,
+    CostDefinitionRow,
+    ManualOverrideRow,
+    OwnerContractRow,
+)
 from flink_jobs.settings import FlinkJobSettings
+from flink_jobs.stage_allocation_correction import AllocationCorrectionFunction
+from flink_jobs.stage_booking_enrichment import BookingEnrichmentFunction
+from flink_jobs.stage_company_cost_enrichment import (
+    COMPANY_COST_OCCURRENCE_BROADCAST_DESCRIPTOR as A4_OCCURRENCE_DESCRIPTOR,
+)
+from flink_jobs.stage_company_cost_enrichment import (
+    COST_ALLOCATION_RULE_BROADCAST_DESCRIPTOR as A4_RULE_DESCRIPTOR,
+)
+from flink_jobs.stage_company_cost_enrichment import (
+    COST_DEFINITION_BROADCAST_DESCRIPTOR as A4_DEFINITION_DESCRIPTOR,
+)
+from flink_jobs.stage_company_cost_enrichment import CompanyCostEnrichmentFunction
+from flink_jobs.stage_cost_definition_resolution import (
+    COST_ALLOCATION_RULE_BROADCAST_DESCRIPTOR as A0_RULE_DESCRIPTOR,
+)
+from flink_jobs.stage_cost_definition_resolution import (
+    COST_DEFINITION_BROADCAST_DESCRIPTOR as A0_DEFINITION_DESCRIPTOR,
+)
+from flink_jobs.stage_cost_definition_resolution import CostDefinitionResolutionFunction
 from flink_jobs.stage_cost_enrichment import (
     SEGMENT_BROADCAST_DESCRIPTOR,
     CostEnrichmentFunction,
@@ -107,6 +134,62 @@ def _parse_manual_override_row(raw: str) -> ManualOverrideRow:
     )
 
 
+def _parse_booking_row(raw: str) -> BookingRow:
+    """Parses one bookings CDC message (Phase 18, ADR-0011 backlog #13
+    prerequisite). No defensive defaults needed — this topic has no history
+    predating this phase, same reasoning _parse_manual_override_row uses."""
+    data = json.loads(raw)
+    return BookingRow(
+        booking_id=data["booking_id"],
+        apartment_id=data["apartment_id"],
+        check_in=date.fromisoformat(data["check_in"]),
+        check_out=date.fromisoformat(data["check_out"]),
+        channel=data["channel"],
+        guests=int(data["guests"]),
+        revenue_eur=float(data["revenue_eur"]),
+        status=data["status"],
+    )
+
+
+def _parse_cost_definition_row(raw: str) -> CostDefinitionRow:
+    """Parses one cost_definitions CDC message (Phase 19, ADR-0011 backlog
+    #13). No defensive defaults — this topic has no history predating this
+    phase."""
+    data = json.loads(raw)
+    return CostDefinitionRow(
+        cost_definition_id=data["cost_definition_id"],
+        concept=data["concept"],
+        scope=data["scope"],
+        behavior=data["behavior"],
+        trigger=data["trigger"],
+        calculation_base=data["calculation_base"],
+        recurrence=data["recurrence"],
+        revenue_base=data.get("revenue_base"),
+    )
+
+
+def _parse_cost_allocation_rule_row(raw: str) -> CostAllocationRuleRow:
+    """Parses one cost_allocation_rules CDC message (Phase 19)."""
+    data = json.loads(raw)
+    return CostAllocationRuleRow(
+        cost_definition_id=data["cost_definition_id"],
+        method=data["method"],
+        weight_config=data.get("weight_config"),
+    )
+
+
+def _parse_company_cost_occurrence_row(raw: str) -> CompanyCostOccurrenceRow:
+    """Parses one company_cost_occurrences CDC message (Phase 19)."""
+    data = json.loads(raw)
+    return CompanyCostOccurrenceRow(
+        company_cost_occurrence_id=data["company_cost_occurrence_id"],
+        cost_definition_id=data["cost_definition_id"],
+        billing_period_start=date.fromisoformat(data["billing_period_start"]),
+        billing_period_end=date.fromisoformat(data["billing_period_end"]),
+        amount_gross=float(data["amount_gross"]),
+    )
+
+
 def build_job(env, settings: FlinkJobSettings) -> None:
     """Wires sources, Stage A/B, and the DynamoDB sink onto env."""
     env.set_max_parallelism(settings.max_parallelism)
@@ -150,8 +233,118 @@ def build_job(env, settings: FlinkJobSettings) -> None:
     ).map(_parse_apartment_segment_row)
     broadcast_segment_stream = segment_stream.broadcast(SEGMENT_BROADCAST_DESCRIPTOR)
 
-    cost_aggregates = payment_stream.connect(broadcast_segment_stream).process(
-        CostEnrichmentFunction()
+    # Phase 19 (ADR-0011 backlog #13, ADR-0012, spec 19 §4): Stage A0,
+    # chained before Stage A. cost_definition_stream/cost_allocation_rule_
+    # stream are each read from Kafka exactly once here and reused below for
+    # Stage A4's own broadcast — a DataStream can fan out to multiple
+    # downstream operators without re-subscribing to the topic (re-reading
+    # the same topic under the same consumer group a second time would
+    # instead split its single partition between two competing consumers).
+    cost_definition_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.cost_definitions_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
+    cost_allocation_rule_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.cost_allocation_rules_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
+    cost_definition_stream = env.from_source(
+        cost_definition_source, WatermarkStrategy.no_watermarks(), "cost-definitions"
+    ).map(_parse_cost_definition_row)
+    cost_allocation_rule_stream = env.from_source(
+        cost_allocation_rule_source,
+        WatermarkStrategy.no_watermarks(),
+        "cost-allocation-rules",
+    ).map(_parse_cost_allocation_rule_row)
+
+    broadcast_cost_config_stream_a0 = cost_definition_stream.union(
+        cost_allocation_rule_stream
+    ).broadcast(A0_DEFINITION_DESCRIPTOR, A0_RULE_DESCRIPTOR)
+
+    enriched_payment_stream = payment_stream.connect(
+        broadcast_cost_config_stream_a0
+    ).process(CostDefinitionResolutionFunction())
+
+    cost_aggregates = (
+        enriched_payment_stream.key_by(lambda line: line.apartment_id)
+        .connect(broadcast_segment_stream)
+        .process(CostEnrichmentFunction())
+    )
+
+    # Phase 18 (ADR-0011 backlog #13 prerequisite, spec 18 §4): a regular
+    # two-keyed-stream join (not a broadcast, unlike Stage A2 below) —
+    # bookings vary per apartment, not shared config every apartment reads
+    # alike. Chained right after Stage A, before Stage A2.
+    booking_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.booking_events_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
+    booking_stream = (
+        env.from_source(booking_source, WatermarkStrategy.no_watermarks(), "bookings")
+        .map(_parse_booking_row)
+        .key_by(lambda row: row.apartment_id)
+    )
+    cost_aggregates_with_occupancy = (
+        cost_aggregates.key_by(lambda ca: ca.apartment_id)
+        .connect(booking_stream)
+        .process(BookingEnrichmentFunction())
+    )
+
+    # Phase 19 (ADR-0011 backlog #13, spec 19 §4): Stage A-correction —
+    # resolves the occupied_night/booking allocation methods Stage A
+    # couldn't compute yet (needed Phase 18's occupied_nights/booking_count,
+    # only available from here on). Plain MapFunction, no state, no
+    # broadcast.
+    cost_aggregates_corrected = cost_aggregates_with_occupancy.map(
+        AllocationCorrectionFunction()
+    )
+
+    # Phase 19: Stage A4, the corrected company-cost fan-out (spec 19 §5) —
+    # reuses cost_definition_stream/cost_allocation_rule_stream from Stage
+    # A0 above (same DataStream objects, fanned out again, not re-read from
+    # Kafka) plus company_cost_occurrence_stream, its own 3-way broadcast.
+    company_cost_occurrence_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.company_cost_occurrences_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
+    company_cost_occurrence_stream = env.from_source(
+        company_cost_occurrence_source,
+        WatermarkStrategy.no_watermarks(),
+        "company-cost-occurrences",
+    ).map(_parse_company_cost_occurrence_row)
+
+    broadcast_cost_config_stream_a4 = cost_definition_stream.union(
+        cost_allocation_rule_stream, company_cost_occurrence_stream
+    ).broadcast(
+        A4_DEFINITION_DESCRIPTOR,
+        A4_RULE_DESCRIPTOR,
+        A4_OCCURRENCE_DESCRIPTOR,
+    )
+
+    cost_aggregates_with_company_costs = (
+        cost_aggregates_corrected.key_by(lambda ca: ca.apartment_id)
+        .connect(broadcast_cost_config_stream_a4)
+        .process(CompanyCostEnrichmentFunction())
     )
 
     # Phase 11 (ADR-0011 backlog #5, spec 11 §C): Stage A2, chained after
@@ -174,7 +367,7 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         OWNER_CONTRACT_BROADCAST_DESCRIPTOR
     )
     cost_aggregates_with_commission = (
-        cost_aggregates.key_by(lambda ca: ca.apartment_id)
+        cost_aggregates_with_company_costs.key_by(lambda ca: ca.apartment_id)
         .connect(broadcast_owner_contract_stream)
         .process(OwnerContractEnrichmentFunction())
     )

@@ -1,12 +1,9 @@
 {
   "event_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "apartment_id": "a1b2c3d4-0001",
   "apartment_reference": "BCN-042",
-  "concept": "electricity",
-  "cost_type": "fixed",
-  "is_shared": false,
-  "allocation_ratio": null,
+  "cost_definition_id": "9c858901-8a57-4791-81fe-4c455b099bc9",
   "description": "Endesa luz enero 2026 - Calle Gracia 42",
   "supplier": {
     "name": "Endesa",

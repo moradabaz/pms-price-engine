@@ -3,10 +3,10 @@ from datetime import date
 import pytest
 from flink_jobs.cost_aggregation import (
     ConceptAmount,
+    EnrichedPaymentLine,
     aggregate_cost,
     retained_billing_period_ends,
 )
-from shared_schemas.payment_line import PaymentLine
 
 
 def _line(
@@ -14,27 +14,29 @@ def _line(
     amount,
     period_start,
     period_end,
-    cost_type="variable",
+    behavior="variable",
     concept="electricity",
+    recurrence="monthly",
+    allocation_method="calendar_day",
+    scope="property",
+    calculation_base="fixed_amount",
 ):
-    return PaymentLine.model_validate(
-        {
-            "event_id": event_id,
-            "schema_version": "1.0",
-            "apartment_id": "BCN-001",
-            "apartment_reference": "BCN-001",
-            "concept": concept,
-            "cost_type": cost_type,
-            "description": "test",
-            "amount_gross": amount,
-            "vat_rate": 0.21,
-            "currency": "EUR",
-            "billing_period_start": period_start,
-            "billing_period_end": period_end,
-            "payment_status": "paid",
-            "source": "synthetic",
-            "created_at": "2026-07-01T00:00:00Z",
-        }
+    return EnrichedPaymentLine(
+        event_id=event_id,
+        apartment_id="BCN-001",
+        apartment_reference="BCN-001",
+        billing_period_start=date.fromisoformat(period_start),
+        billing_period_end=date.fromisoformat(period_end),
+        amount_gross=amount,
+        concept=concept,
+        scope=scope,
+        behavior=behavior,
+        trigger="time",
+        calculation_base=calculation_base,
+        recurrence=recurrence,
+        revenue_base=None,
+        allocation_method=allocation_method,
+        weight_config=None,
     )
 
 
@@ -44,13 +46,9 @@ def test_empty_returns_none():
 
 def test_sums_only_current_period():
     lines = [
-        _line(
-            "00000000-0000-0000-0000-000000000001", 100.0, "2026-06-01", "2026-06-30"
-        ),
-        _line("00000000-0000-0000-0000-000000000002", 50.0, "2026-06-01", "2026-06-30"),
-        _line(
-            "00000000-0000-0000-0000-000000000003", 999.0, "2026-05-01", "2026-05-31"
-        ),
+        _line("e1", 100.0, "2026-06-01", "2026-06-30"),
+        _line("e2", 50.0, "2026-06-01", "2026-06-30"),
+        _line("e3", 999.0, "2026-05-01", "2026-05-31"),
     ]
     result = aggregate_cost(lines)
     assert result.total_monthly_cost_eur == 150.0
@@ -59,36 +57,27 @@ def test_sums_only_current_period():
 
 
 def test_available_days_is_calendar_length():
-    lines = [
-        _line("00000000-0000-0000-0000-000000000001", 300.0, "2026-06-01", "2026-06-30")
-    ]
+    lines = [_line("e1", 300.0, "2026-06-01", "2026-06-30")]
     result = aggregate_cost(lines)
     assert result.available_days == 30
     assert result.variable_cost_eur == 10.0
 
 
-def test_cost_type_split_fixed_variable_one_time():
+def test_behavior_split_fixed_variable_one_off():
+    # Phase 19 (ADR-0011 backlog #13): behavior (fixed/variable) plus
+    # recurrence=one_off (not a 'one_time' behavior value, which doesn't
+    # exist — see ADR-0012's own note on why) drive the split now.
     lines = [
+        _line("e1", 300.0, "2026-06-01", "2026-06-30", behavior="fixed"),
+        _line("e2", 60.0, "2026-06-01", "2026-06-30", behavior="variable"),
         _line(
-            "00000000-0000-0000-0000-000000000001",
-            300.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="fixed",
-        ),
-        _line(
-            "00000000-0000-0000-0000-000000000002",
-            60.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="variable",
-        ),
-        _line(
-            "00000000-0000-0000-0000-000000000003",
+            "e3",
             70.0,
             "2026-06-01",
             "2026-06-30",
-            cost_type="one_time",
+            behavior="variable",
+            recurrence="one_off",
+            allocation_method="direct",
         ),
     ]
     result = aggregate_cost(lines)
@@ -96,36 +85,88 @@ def test_cost_type_split_fixed_variable_one_time():
     assert result.variable_cost_eur == 2.0  # 60 / 30 days
 
 
-def test_one_time_cost_is_averaged_not_summed():
-    # Two cleaning invoices in the same period — each already the cost of one
-    # turnover; the floor needs one representative value, not their sum
-    # (ADR-0009 D3).
+def test_semi_variable_folds_into_variable_bucket():
+    lines = [
+        _line("e1", 300.0, "2026-06-01", "2026-06-30", behavior="semi_variable"),
+    ]
+    result = aggregate_cost(lines)
+    assert result.variable_cost_eur == 10.0
+    assert result.fixed_cost_eur == 0.0
+
+
+def test_annual_recurrence_is_divided_by_twelve_before_allocation():
+    # The "annual lump sum" fix (ADR-0011 backlog #13's own motivating case):
+    # a 1200 EUR annual premium becomes 100 EUR/month, then 100/30 per night —
+    # not 1200/30, which would spike this one month's fixed_cost_eur 12x.
     lines = [
         _line(
-            "00000000-0000-0000-0000-000000000001",
-            60.0,
+            "e1",
+            1200.0,
             "2026-06-01",
             "2026-06-30",
-            cost_type="one_time",
+            behavior="fixed",
+            recurrence="annual",
+        )
+    ]
+    result = aggregate_cost(lines)
+    assert result.fixed_cost_eur == round(100.0 / 30, 2)
+
+
+def test_one_off_line_is_averaged_not_summed():
+    # Two cleaning invoices in the same period — each already the cost of one
+    # turnover; the floor needs one representative value, not their sum
+    # (ADR-0009 D3). recurrence=one_off replaces the old cost_type='one_time'.
+    lines = [
+        _line(
+            "e1", 60.0, "2026-06-01", "2026-06-30",
+            recurrence="one_off", allocation_method="direct",
         ),
         _line(
-            "00000000-0000-0000-0000-000000000002",
-            80.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="one_time",
+            "e2", 80.0, "2026-06-01", "2026-06-30",
+            recurrence="one_off", allocation_method="direct",
         ),
     ]
     result = aggregate_cost(lines)
     assert result.one_time_cost_eur == 70.0  # average, not 140.0
 
 
-def test_no_one_time_lines_yields_zero():
-    lines = [
-        _line("00000000-0000-0000-0000-000000000001", 100.0, "2026-06-01", "2026-06-30")
-    ]
+def test_no_one_off_lines_yields_zero():
+    lines = [_line("e1", 100.0, "2026-06-01", "2026-06-30")]
     result = aggregate_cost(lines)
     assert result.one_time_cost_eur == 0.0
+
+
+def test_occupied_night_and_booking_methods_deferred_not_in_fixed_variable():
+    # Phase 19: these two allocation methods need Phase 18 data
+    # (occupied_nights/booking_count) not available in Stage A yet — they
+    # must NOT be folded into fixed_cost_eur/variable_cost_eur here, and
+    # must surface as a pending correction instead.
+    lines = [
+        _line(
+            "e1", 300.0, "2026-06-01", "2026-06-30",
+            behavior="variable", concept="cleaning", allocation_method="occupied_night",
+        ),
+        _line(
+            "e2", 150.0, "2026-06-01", "2026-06-30",
+            behavior="fixed", concept="other", allocation_method="booking",
+        ),
+        _line("e3", 60.0, "2026-06-01", "2026-06-30", behavior="variable"),
+    ]
+    result = aggregate_cost(lines)
+    assert result.variable_cost_eur == 2.0  # only e3: 60/30
+    assert result.fixed_cost_eur == 0.0
+    corrections = {c.concept: c for c in result.pending_allocation_corrections}
+    assert corrections["cleaning"].monthly_equivalent_eur == 300.0
+    assert corrections["cleaning"].behavior == "variable"
+    assert corrections["cleaning"].allocation_method == "occupied_night"
+    assert corrections["other"].monthly_equivalent_eur == 150.0
+    assert corrections["other"].allocation_method == "booking"
+
+
+def test_no_deferred_lines_yields_empty_pending_corrections():
+    lines = [_line("e1", 100.0, "2026-06-01", "2026-06-30")]
+    result = aggregate_cost(lines)
+    assert result.pending_allocation_corrections == ()
 
 
 def test_ota_related_and_cleaning_sub_totals_are_split_from_concept():
@@ -134,50 +175,32 @@ def test_ota_related_and_cleaning_sub_totals_are_split_from_concept():
     # cleaning -> cleaning, both still fully counted in fixed/variable above.
     lines = [
         _line(
-            "00000000-0000-0000-0000-000000000001",
-            300.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="variable",
-            concept="ota_fee",
+            "e1", 300.0, "2026-06-01", "2026-06-30",
+            behavior="variable", concept="ota_fee",
         ),
         _line(
-            "00000000-0000-0000-0000-000000000002",
-            150.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="fixed",
-            concept="channel_manager",
+            "e2", 150.0, "2026-06-01", "2026-06-30",
+            behavior="fixed", concept="channel_manager",
         ),
         _line(
-            "00000000-0000-0000-0000-000000000003",
-            120.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="variable",
-            concept="cleaning",
+            "e3", 120.0, "2026-06-01", "2026-06-30",
+            behavior="variable", concept="cleaning",
         ),
         _line(
-            "00000000-0000-0000-0000-000000000004",
-            60.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="variable",
-            concept="electricity",
+            "e4", 60.0, "2026-06-01", "2026-06-30",
+            behavior="variable", concept="electricity",
         ),
     ]
     result = aggregate_cost(lines)
     assert result.ota_related_cost_eur == 15.0  # (300 + 150) / 30 days
     assert result.cleaning_cost_eur == 4.0  # 120 / 30 days
-    # Still fully counted in the existing cost_type totals — not removed.
+    # Still fully counted in the existing behavior totals — not removed.
     assert result.fixed_cost_eur == 5.0  # 150 / 30
     assert result.variable_cost_eur == 16.0  # (300 + 120 + 60) / 30
 
 
 def test_no_ota_or_cleaning_lines_yields_zero_sub_totals():
-    lines = [
-        _line("00000000-0000-0000-0000-000000000001", 100.0, "2026-06-01", "2026-06-30")
-    ]
+    lines = [_line("e1", 100.0, "2026-06-01", "2026-06-30")]
     result = aggregate_cost(lines)
     assert result.ota_related_cost_eur == 0.0
     assert result.cleaning_cost_eur == 0.0
@@ -188,28 +211,16 @@ def test_cost_breakdown_groups_by_concept_per_day():
     # (ota_fee/channel_manager, cleaning) Phase 11 already split out.
     lines = [
         _line(
-            "00000000-0000-0000-0000-000000000001",
-            300.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="variable",
-            concept="electricity",
+            "e1", 300.0, "2026-06-01", "2026-06-30",
+            behavior="variable", concept="electricity",
         ),
         _line(
-            "00000000-0000-0000-0000-000000000002",
-            60.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="variable",
-            concept="electricity",
+            "e2", 60.0, "2026-06-01", "2026-06-30",
+            behavior="variable", concept="electricity",
         ),
         _line(
-            "00000000-0000-0000-0000-000000000003",
-            120.0,
-            "2026-06-01",
-            "2026-06-30",
-            cost_type="fixed",
-            concept="water",
+            "e3", 120.0, "2026-06-01", "2026-06-30",
+            behavior="fixed", concept="water",
         ),
     ]
     result = aggregate_cost(lines)
@@ -221,20 +232,8 @@ def test_cost_breakdown_groups_by_concept_per_day():
 
 def test_cost_breakdown_follows_canonical_concept_order_not_input_order():
     lines = [
-        _line(
-            "00000000-0000-0000-0000-000000000001",
-            30.0,
-            "2026-06-01",
-            "2026-06-30",
-            concept="other",
-        ),
-        _line(
-            "00000000-0000-0000-0000-000000000002",
-            30.0,
-            "2026-06-01",
-            "2026-06-30",
-            concept="electricity",
-        ),
+        _line("e1", 30.0, "2026-06-01", "2026-06-30", concept="other"),
+        _line("e2", 30.0, "2026-06-01", "2026-06-30", concept="electricity"),
     ]
     result = aggregate_cost(lines)
     assert [entry.concept for entry in result.cost_breakdown] == [
@@ -244,9 +243,7 @@ def test_cost_breakdown_follows_canonical_concept_order_not_input_order():
 
 
 def test_cost_breakdown_omits_concepts_with_no_lines():
-    lines = [
-        _line("00000000-0000-0000-0000-000000000001", 100.0, "2026-06-01", "2026-06-30")
-    ]
+    lines = [_line("e1", 100.0, "2026-06-01", "2026-06-30")]
     result = aggregate_cost(lines)
     assert result.cost_breakdown == (
         ConceptAmount(concept="electricity", amount_eur=round(100 / 30, 2)),

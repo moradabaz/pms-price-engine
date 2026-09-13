@@ -1,34 +1,41 @@
+from datetime import date
+
 from fakes import (
     FakeBroadcastContext,
     FakeMapState,
     FakeReadOnlyContext,
     FakeRuntimeContext,
 )
+from flink_jobs.cost_aggregation import EnrichedPaymentLine
 from flink_jobs.models import ApartmentSegmentRow
 from flink_jobs.stage_cost_enrichment import CostEnrichmentFunction
 from pricing_formulas.layers.structural import property_attribute_components
-from shared_schemas.payment_line import PaymentLine
 
 
-def _line(event_id, amount, period_start="2026-06-01", period_end="2026-06-30"):
-    return PaymentLine.model_validate(
-        {
-            "event_id": event_id,
-            "schema_version": "1.0",
-            "apartment_id": "BCN-001",
-            "apartment_reference": "BCN-001",
-            "concept": "electricity",
-            "cost_type": "variable",
-            "description": "test",
-            "amount_gross": amount,
-            "vat_rate": 0.21,
-            "currency": "EUR",
-            "billing_period_start": period_start,
-            "billing_period_end": period_end,
-            "payment_status": "paid",
-            "source": "synthetic",
-            "created_at": "2026-07-01T00:00:00Z",
-        }
+def _line(
+    event_id,
+    amount,
+    period_start="2026-06-01",
+    period_end="2026-06-30",
+    behavior="variable",
+    concept="electricity",
+):
+    return EnrichedPaymentLine(
+        event_id=event_id,
+        apartment_id="BCN-001",
+        apartment_reference="BCN-001",
+        billing_period_start=date.fromisoformat(period_start),
+        billing_period_end=date.fromisoformat(period_end),
+        amount_gross=amount,
+        concept=concept,
+        scope="property",
+        behavior=behavior,
+        trigger="time",
+        calculation_base="fixed_amount",
+        recurrence="monthly",
+        revenue_base=None,
+        allocation_method="calendar_day",
+        weight_config=None,
     )
 
 
@@ -43,9 +50,7 @@ def _make_function():
 def test_no_emission_before_segment_assignment_arrives():
     fn, broadcast_state = _make_function()
     ctx = FakeReadOnlyContext(broadcast_state)
-    results = list(
-        fn.process_element(_line("00000000-0000-0000-0000-000000000001", 100.0), ctx)
-    )
+    results = list(fn.process_element(_line("e1", 100.0), ctx))
     assert results == []
 
 
@@ -60,11 +65,7 @@ def test_emits_cost_aggregate_after_segment_arrives():
         ),
         broadcast_ctx,
     )
-    results = list(
-        fn.process_element(
-            _line("00000000-0000-0000-0000-000000000001", 100.0), read_ctx
-        )
-    )
+    results = list(fn.process_element(_line("e1", 100.0), read_ctx))
 
     assert len(results) == 1
     aggregate = results[0]
@@ -102,11 +103,7 @@ def test_property_attribute_factor_resolved_from_broadcast_attributes():
         ),
         FakeBroadcastContext(broadcast_state),
     )
-    results = list(
-        fn.process_element(
-            _line("00000000-0000-0000-0000-000000000001", 100.0), read_ctx
-        )
-    )
+    results = list(fn.process_element(_line("e1", 100.0), read_ctx))
 
     # 0.30 (luxury) + 0.08 (rating) + 0.05 (view) + 0.04 (parking) = 1.47
     assert results[0].property_attribute_factor == 1.47
@@ -133,11 +130,7 @@ def test_property_decision_components_resolved_from_broadcast_attributes():
         ),
         FakeBroadcastContext(broadcast_state),
     )
-    results = list(
-        fn.process_element(
-            _line("00000000-0000-0000-0000-000000000001", 100.0), read_ctx
-        )
-    )
+    results = list(fn.process_element(_line("e1", 100.0), read_ctx))
 
     expected = property_attribute_components(
         quality_tier="luxury", rating=4.8, has_view=True, has_parking=True
@@ -156,25 +149,7 @@ def test_ota_related_and_cleaning_sub_totals_pass_through_from_aggregation():
         ),
         FakeBroadcastContext(broadcast_state),
     )
-    line = PaymentLine.model_validate(
-        {
-            "event_id": "00000000-0000-0000-0000-000000000001",
-            "schema_version": "1.0",
-            "apartment_id": "BCN-001",
-            "apartment_reference": "BCN-001",
-            "concept": "ota_fee",
-            "cost_type": "variable",
-            "description": "test",
-            "amount_gross": 300.0,
-            "vat_rate": 0.21,
-            "currency": "EUR",
-            "billing_period_start": "2026-06-01",
-            "billing_period_end": "2026-06-30",
-            "payment_status": "paid",
-            "source": "synthetic",
-            "created_at": "2026-07-01T00:00:00Z",
-        }
-    )
+    line = _line("e1", 300.0, concept="ota_fee")
     results = list(fn.process_element(line, read_ctx))
 
     assert results[0].ota_related_cost_eur == round(300.0 / 30, 2)
@@ -191,7 +166,7 @@ def test_upsert_by_event_id_does_not_double_count():
         FakeBroadcastContext(broadcast_state),
     )
 
-    event_id = "00000000-0000-0000-0000-000000000001"
+    event_id = "e1"
     list(fn.process_element(_line(event_id, 100.0), read_ctx))
     results = list(fn.process_element(_line(event_id, 150.0), read_ctx))
 

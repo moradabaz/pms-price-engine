@@ -62,3 +62,12 @@ def test_legacy_nested_shape_rejected(schema):
         validate(
             schema, load_fixture("payment_line", "invalid_legacy_nested_supplier.json")
         )
+
+
+def test_legacy_v1_shape_rejected(schema):
+    """ADR-0012 (Phase 19): the pre-Phase-19 shape (concept/cost_type/
+    is_shared/allocation_ratio, schema_version 1.0) must fail against the
+    schema_version 2.0 contract — regression guard against ever reverting
+    the cost_definition_id substitution."""
+    with pytest.raises(jsonschema.ValidationError):
+        validate(schema, load_fixture("payment_line", "invalid_legacy_v1_shape.json"))

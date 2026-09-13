@@ -54,6 +54,10 @@ module = [
     "flink_jobs.stage_cost_enrichment",
     "flink_jobs.stage_owner_contract_enrichment",
     "flink_jobs.stage_manual_override_enrichment",
+    "flink_jobs.stage_booking_enrichment",
+    "flink_jobs.stage_cost_definition_resolution",
+    "flink_jobs.stage_company_cost_enrichment",
+    "flink_jobs.stage_allocation_correction",
     "flink_jobs.stage_price_decision",
     "flink_jobs.dynamodb_sink",
 ]
