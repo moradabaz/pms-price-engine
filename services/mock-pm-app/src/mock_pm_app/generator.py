@@ -20,6 +20,35 @@ def _current_month_bounds(today: date) -> tuple[date, date]:
     return start, end
 
 
+def _already_has_line_for_period(
+    conn: Any, apartment_id: str, cost_definition_id: str, period_start: date
+) -> bool:
+    """A real PMS records one bill per (apartment, concept, month) — not
+    an unbounded, ever-growing ledger. Without this guard, insert_one()
+    running for hours keeps adding more lines for the same concept into the
+    same still-open billing period, so total cost (and therefore the
+    profitability floor) only ever grows the longer the demo has been up,
+    regardless of how reasonable any single amount is. Returns True if a
+    synthetic line already covers this apartment/concept/period."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM payment_lines
+            WHERE apartment_id = %(apartment_id)s
+              AND cost_definition_id = %(cost_definition_id)s
+              AND billing_period_start = %(period_start)s
+              AND source = 'synthetic'
+            LIMIT 1
+            """,
+            {
+                "apartment_id": apartment_id,
+                "cost_definition_id": cost_definition_id,
+                "period_start": period_start,
+            },
+        )
+        return cur.fetchone() is not None
+
+
 def insert_one(
     conn: Any,
     apartments: list[Apartment],
@@ -29,10 +58,22 @@ def insert_one(
     apartment = rng.choice(apartments)
     profile = rng.choice(CONCEPT_PROFILES)
     period_start, period_end = _current_month_bounds(date.today())
+    cost_definition_id = concept_to_cost_definition_id[profile.concept]
+
+    if _already_has_line_for_period(
+        conn, apartment.apartment_id, cost_definition_id, period_start
+    ):
+        logger.info(
+            "skipped_duplicate_concept_for_period",
+            apartment_id=apartment.apartment_id,
+            concept=profile.concept,
+        )
+        return
+
     row = build_live_row(
         apartment,
         profile,
-        concept_to_cost_definition_id[profile.concept],
+        cost_definition_id,
         period_start,
         period_end,
         rng,

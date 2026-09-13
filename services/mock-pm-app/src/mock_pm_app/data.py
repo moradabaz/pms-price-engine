@@ -218,7 +218,15 @@ CONCEPT_PROFILES = [
     ConceptProfile("ota_fee", 0.21, (50.0, 400.0)),
     ConceptProfile("channel_manager", 0.21, (15.0, 40.0)),
     ConceptProfile("cleaning", 0.10, (40.0, 120.0)),
-    ConceptProfile("maintenance", 0.21, (30.0, 500.0)),
+    # Deliberately narrower than a real repair invoice's full range (which
+    # can genuinely spike into the hundreds) — this is the one concept whose
+    # entire amount lands on a single stay_length=1 decision (recurrence=
+    # one_off, no dilution across nights the way LOS-matrix candidates get,
+    # spec 20's per_booking_cost_eur). A wide range here overwhelmingly
+    # skews the "Current price" dashboard (which only shows the 1-night
+    # figure) toward "Price Above Market" regardless of how reasonable every
+    # other concept is.
+    ConceptProfile("maintenance", 0.21, (20.0, 150.0)),
     ConceptProfile("insurance", 0.0, (20.0, 60.0)),
     ConceptProfile("community_fee", 0.0, (50.0, 150.0)),
 ]
