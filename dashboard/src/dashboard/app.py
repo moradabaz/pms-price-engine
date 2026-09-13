@@ -311,22 +311,21 @@ def render_apartment_detail() -> None:
         help=_RULE_APPLIED_HELP,
     )
     # Sign flipped for display (below_market_by itself is positive when
-    # priced below market) so delta_color="inverse" reads naturally: negative
-    # (priced below market, good) shows green, positive (priced above
-    # market) shows red.
+    # priced below market): negative (priced below market, good) renders
+    # green, positive (priced above market) renders red.
     below_market_display_eur = -output["below_market_by"]
-    cols[3].metric(
-        "Below market by",
-        f"{below_market_display_eur:.2f} €",
-        delta=f"{below_market_display_eur:.2f} €",
-        delta_color="inverse",
-        help=(
-            "How far the suggested price sits from your property's own market "
-            "reference price. Negative (green) means priced below it. Positive "
-            "(red) means priced above it (expected when the rule applied is "
-            "'Minimum profitable price')."
-        ),
-    )
+    below_market_color = "green" if below_market_display_eur < 0 else "red"
+    with cols[3]:
+        st.caption(
+            "Below market by",
+            help=(
+                "How far the suggested price sits from your property's own market "
+                "reference price. Negative (green) means priced below it. Positive "
+                "(red) means priced above it (expected when the rule applied is "
+                "'Minimum profitable price')."
+            ),
+        )
+        st.markdown(f"### :{below_market_color}[{below_market_display_eur:.2f} €]")
 
     st.markdown("**Cost** — what it costs you to host one night here.")
     st.dataframe(
