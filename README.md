@@ -75,7 +75,7 @@ A property manager running ~100 vacation rentals adjusts prices manually today. 
 
 Cost plus a minimum margin is a floor the engine never crosses; above that floor, it competes on
 market price. Which force won is recorded on every decision as `rule_applied`
-(`market_competitive` / `minimum_floor` / `cost_protected`). `target_margin`,
+(`market_competitive` / `minimum_floor` / `minimum_profitable_price`). `target_margin`,
 `competitiveness_discount`, and `commission_pct` are configured **per apartment** — set by the
 property owner, never derived by the engine. Full formula, worked examples, and which fields come
 from where: [`docs/manual/MANUAL.md §5`](docs/manual/MANUAL.md#5-phase-4--what-flink-does-and-what-data-the-client-provides).

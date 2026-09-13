@@ -5,64 +5,206 @@ models:
     description: 1 row per apartment (SCD1).
     columns:
       - name: apartment_id
+        description: "{{ doc('apartment_id') }}"
         tests:
           - unique
           - not_null
+      - name: apartment_reference
+        description: "{{ doc('apartment_reference') }}"
+      - name: city
+        description: "First segment of market_area, split out for filtering."
+      - name: neighborhood
+        description: >
+          Second segment of market_area, split out for filtering. Null
+          when market_area carries no neighborhood.
 
   - name: dim_date
     description: Conformed calendar dimension.
     columns:
       - name: date_day
+        description: "One calendar day, 2025-01-01 through 2027-12-31."
         tests:
           - unique
           - not_null
+      - name: year
+        description: "date_day's year."
+      - name: month
+        description: "date_day's month (1-12)."
+      - name: quarter
+        description: "date_day's quarter (1-4)."
+      - name: day_of_week
+        description: "date_day's day of week (0=Sunday .. 6=Saturday)."
+      - name: is_weekend
+        description: "True for Saturday/Sunday."
+      - name: season_label
+        description: >
+          Seasonality band (e.g. low/mid/high) from seeds/seasonality.csv,
+          joined by month.
+      - name: seasonality_multiplier
+        description: >
+          Seasonality multiplier for this month, from
+          seeds/seasonality.csv. The raw input a Revenue Management season
+          rule would apply, not itself part of any decision row.
 
   - name: fct_price_decision
     description: 1 row per decision emitted (transaction fact).
     columns:
       - name: decision_id
+        description: "{{ doc('decision_id') }}"
         tests:
           - unique
           - not_null
       - name: apartment_id
+        description: "{{ doc('apartment_id') }}"
         tests:
           - not_null
           - relationships:
               to: ref('dim_apartment')
               field: apartment_id
       - name: target_date
+        description: "{{ doc('target_date') }}"
         tests:
           - not_null
           - relationships:
               to: ref('dim_date')
               field: date_day
+      - name: decided_at
+        description: "{{ doc('decided_at') }}"
+
+      - name: total_monthly_cost_eur
+        description: "{{ doc('total_monthly_cost_eur') }}"
+      - name: fixed_cost_eur
+        description: "{{ doc('fixed_cost_eur') }}"
+      - name: variable_cost_eur
+        description: "{{ doc('variable_cost_eur') }}"
+      - name: one_time_cost_eur
+        description: "{{ doc('one_time_cost_eur') }}"
+      - name: cost_lines_count
+        description: "{{ doc('cost_lines_count') }}"
+      - name: cost_breakdown
+        description: "{{ doc('cost_breakdown') }}"
+
+      - name: avg_nightly_rate_eur
+        description: "{{ doc('avg_nightly_rate_eur') }}"
+      - name: occupancy_rate
+        description: "{{ doc('occupancy_rate') }}"
+      - name: sample_size
+        description: "{{ doc('sample_size') }}"
+      - name: market_collected_at
+        description: "{{ doc('market_collected_at') }}"
+      - name: data_age_seconds
+        description: "{{ doc('data_age_seconds') }}"
+
+      - name: target_margin
+        description: "{{ doc('target_margin') }}"
+      - name: minimum_price_eur
+        description: "{{ doc('minimum_price_eur') }}"
+      - name: floor_type
+        description: "{{ doc('floor_type') }}"
+      - name: floor_policy
+        description: "{{ doc('floor_policy') }}"
+      - name: commission_pct
+        description: "{{ doc('commission_pct') }}"
+      - name: commission_base
+        description: "{{ doc('commission_base') }}"
+      - name: days_to_arrival
+        description: "{{ doc('days_to_arrival') }}"
+      - name: competitiveness_discount
+        description: "{{ doc('competitiveness_discount') }}"
+      - name: property_attribute_factor
+        description: "{{ doc('property_attribute_factor') }}"
+      - name: property_reference_price_eur
+        description: "{{ doc('property_reference_price_eur') }}"
+      - name: market_reference_price_eur
+        description: "{{ doc('market_reference_price_eur') }}"
+      - name: rule_applied
+        description: "{{ doc('rule_applied') }}"
+        tests:
+          # cost_protected is the pre-2026-09-12 name for
+          # minimum_profitable_price. Iceberg never rewrites old rows, so
+          # this stays an accepted value forever, not a transitional one.
+          - accepted_values:
+              values:
+                [
+                  "market_competitive",
+                  "minimum_floor",
+                  "minimum_profitable_price",
+                  "cost_protected",
+                ]
+      - name: los_floor_matrix
+        description: "{{ doc('los_floor_matrix') }}"
+      - name: decision_components
+        description: "{{ doc('decision_components') }}"
+      - name: manual_override
+        description: "{{ doc('manual_override') }}"
+      - name: minimum_stay_recommendation
+        description: "{{ doc('minimum_stay_recommendation') }}"
+      - name: channel_price_matrix
+        description: "{{ doc('channel_price_matrix') }}"
+
+      - name: suggested_price_eur
+        description: "{{ doc('suggested_price_eur') }}"
+      - name: currency
+        description: "{{ doc('currency') }}"
+      - name: effective_margin
+        description: "{{ doc('effective_margin') }}"
+      - name: below_market_by
+        description: "{{ doc('below_market_by') }}"
+
+      - name: dynamodb_event_name
+        description: "{{ doc('dynamodb_event_name') }}"
+      - name: ingested_at
+        description: "{{ doc('ingested_at') }}"
 
   - name: fct_daily_price
-    description: 1 row per (apartment, target_date, day) — last known decision that day.
+    description: 1 row per (apartment, target_date, day). Last known decision that day.
     columns:
       - name: apartment_id
+        description: "{{ doc('apartment_id') }}"
         tests:
           - not_null
           - relationships:
               to: ref('dim_apartment')
               field: apartment_id
       - name: target_date
+        description: "{{ doc('target_date') }}"
         tests:
           - not_null
           - relationships:
               to: ref('dim_date')
               field: date_day
+      - name: snapshot_day
+        description: >
+          Calendar day (derived from decided_at) this row represents "the
+          latest decision as of". This is what a price-evolution chart's
+          x-axis actually plots.
       - name: decision_id
+        description: "{{ doc('decision_id') }}"
         tests:
           - not_null
+      - name: suggested_price_eur
+        description: "{{ doc('suggested_price_eur') }}"
+      - name: rule_applied
+        description: "{{ doc('rule_applied') }}"
+      - name: floor_type
+        description: "{{ doc('floor_type') }}"
+      - name: effective_margin
+        description: "{{ doc('effective_margin') }}"
 
   - name: fct_margin_alert
-    description: 1 row per decision where rule_applied = cost_protected (AC-09).
+    description: >
+      1 row per decision where rule_applied = minimum_profitable_price
+      (or its pre-rename equivalent, cost_protected). The market price
+      alone would have gone below the cost floor, so the cost-derived
+      floor was charged instead (AC-09; renamed 2026-09-12, see
+      docs/metrics-dictionary.md).
     columns:
       - name: decision_id
+        description: "{{ doc('decision_id') }}"
         tests:
           - not_null
       - name: rule_applied
+        description: "{{ doc('rule_applied') }}"
         tests:
           - accepted_values:
-              values: ["cost_protected"]
+              values: ["minimum_profitable_price", "cost_protected"]

@@ -1,0 +1,106 @@
+version: 2
+
+models:
+  - name: stg_price_decision
+    description: >
+      1:1 flatten of the Iceberg source's nested structs (spec 05 §7). No
+      business logic here, just renaming a couple of ambiguous fields.
+      Canonical column definitions for the whole project live here. Marts
+      built on top reuse the same doc blocks (transform/models/_docs.md)
+      instead of redefining them.
+    columns:
+      - name: decision_id
+        description: "{{ doc('decision_id') }}"
+      - name: apartment_id
+        description: "{{ doc('apartment_id') }}"
+      - name: apartment_reference
+        description: "{{ doc('apartment_reference') }}"
+      - name: target_date
+        description: "{{ doc('target_date') }}"
+      - name: decided_at
+        description: "{{ doc('decided_at') }}"
+
+      - name: billing_period_start
+        description: >
+          Start of the service period cost_inputs covers (e.g. a January
+          electricity bill's period, not its payment date).
+      - name: billing_period_end
+        description: "End of the service period cost_inputs covers."
+      - name: total_monthly_cost_eur
+        description: "{{ doc('total_monthly_cost_eur') }}"
+      - name: available_days
+        description: "{{ doc('available_days') }}"
+      - name: fixed_cost_eur
+        description: "{{ doc('fixed_cost_eur') }}"
+      - name: variable_cost_eur
+        description: "{{ doc('variable_cost_eur') }}"
+      - name: one_time_cost_eur
+        description: "{{ doc('one_time_cost_eur') }}"
+      - name: cost_lines_count
+        description: "{{ doc('cost_lines_count') }}"
+      - name: cost_breakdown
+        description: "{{ doc('cost_breakdown') }}"
+
+      - name: market_area
+        description: >
+          "city/neighborhood" comp-set used as this decision's market
+          reference (see docs/profitable-pricing-glossary.md §12).
+      - name: avg_nightly_rate_eur
+        description: "{{ doc('avg_nightly_rate_eur') }}"
+      - name: occupancy_rate
+        description: "{{ doc('occupancy_rate') }}"
+      - name: sample_size
+        description: "{{ doc('sample_size') }}"
+      - name: market_collected_at
+        description: "{{ doc('market_collected_at') }}"
+      - name: data_age_seconds
+        description: "{{ doc('data_age_seconds') }}"
+
+      - name: target_margin
+        description: "{{ doc('target_margin') }}"
+      - name: minimum_price_eur
+        description: "{{ doc('minimum_price_eur') }}"
+      - name: floor_type
+        description: "{{ doc('floor_type') }}"
+      - name: floor_policy
+        description: "{{ doc('floor_policy') }}"
+      - name: commission_pct
+        description: "{{ doc('commission_pct') }}"
+      - name: commission_base
+        description: "{{ doc('commission_base') }}"
+      - name: days_to_arrival
+        description: "{{ doc('days_to_arrival') }}"
+      - name: competitiveness_discount
+        description: "{{ doc('competitiveness_discount') }}"
+      - name: property_attribute_factor
+        description: "{{ doc('property_attribute_factor') }}"
+      - name: property_reference_price_eur
+        description: "{{ doc('property_reference_price_eur') }}"
+      - name: market_reference_price_eur
+        description: "{{ doc('market_reference_price_eur') }}"
+      - name: rule_applied
+        description: "{{ doc('rule_applied') }}"
+      - name: los_floor_matrix
+        description: "{{ doc('los_floor_matrix') }}"
+      - name: decision_components
+        description: "{{ doc('decision_components') }}"
+      - name: manual_override
+        description: "{{ doc('manual_override') }}"
+      - name: minimum_stay_recommendation
+        description: "{{ doc('minimum_stay_recommendation') }}"
+      - name: channel_price_matrix
+        description: "{{ doc('channel_price_matrix') }}"
+
+      - name: suggested_price_eur
+        description: "{{ doc('suggested_price_eur') }}"
+      - name: currency
+        description: "{{ doc('currency') }}"
+      - name: effective_margin
+        description: "{{ doc('effective_margin') }}"
+      - name: below_market_by
+        description: "{{ doc('below_market_by') }}"
+
+      - name: dynamodb_event_name
+        description: "{{ doc('dynamodb_event_name') }}"
+      - name: ingested_at
+        description: "{{ doc('ingested_at') }}"

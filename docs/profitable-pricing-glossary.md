@@ -1,216 +1,217 @@
-# Glosario — Profitable Dynamic Pricing (explicado sin jerga del sector)
+# Glossary: Profitable Dynamic Pricing (explained without industry jargon)
 
-**Para quién es este documento:** alguien sin experiencia previa en alquiler vacacional / revenue
-management que necesita entender qué significan los conceptos de
-`docs/adr/ADR-0011-profitable-pricing-target-architecture.md` y `docs/post-poc-roadmap.md`, y por
-qué importan.
+**Who this is for:** someone with no prior background in vacation rental or revenue management
+who needs to understand what the concepts in
+`docs/adr/ADR-0011-profitable-pricing-target-architecture.md` and `docs/post-poc-roadmap.md`
+mean, and why they matter.
 
-**Qué no es:** ni un ADR (no registra una decisión tomada) ni un spec de fase (no define criterios
-de aceptación para implementar). Es un mapa de conceptos, en español llano, con su estado actual en
-este repo. Cuando un concepto ya está implementado, se referencia la fase; cuando no, se referencia
-el ítem del backlog en `post-poc-roadmap.md`.
-
----
-
-## 1. La idea central en una frase
-
-En alquiler vacacional, dos motores compiten por decidir el precio de una noche: **el mercado**
-(cuánto está dispuesta a pagar la gente) y **el coste real de esa reserva concreta** (limpieza,
-comisión de la OTA, parte proporcional del alquiler del piso, etc.). Un motor de pricing
-"normal" solo mira el mercado. Este proyecto construye uno que **nunca deja que el precio de
-mercado tumbe el precio por debajo de lo que cuesta operar esa reserva** — y que además explica por
-qué llegó a ese número.
+**What this is not:** it is not an ADR (it does not record a decision) and not a phase spec (it
+does not define acceptance criteria to implement anything). It is a map of concepts, in plain
+language, with its current status in this repo. When a concept is already implemented, it links to
+the phase that implemented it. When it is not, it links to the backlog item in
+`post-poc-roadmap.md`.
 
 ---
 
-## 2. La escalera de precios (de abstracto a concreto)
+## 1. The core idea, in one sentence
 
-Son 6 conceptos que **no son sinónimos**, aunque a veces se confundan. Cada uno es un paso más
-concreto que el anterior:
+In vacation rental, two forces compete to decide the price of a night: the market (how much people
+are willing to pay) and the real cost of that specific booking (cleaning, OTA commission, the
+apartment's own share of rent, and so on). A "normal" pricing engine only looks at the market. This
+project builds one that never lets the market price push the price below what it actually costs to
+run that booking, and that also explains why it landed on that number.
 
-| Concepto | En una frase | Analogía |
+---
+
+## 2. The price ladder (from abstract to concrete)
+
+These are 6 concepts that are not synonyms, even though they are sometimes confused. Each one is a
+more concrete step than the previous one.
+
+| Concept | In one line | Analogy |
 |---|---|---|
-| **Market Reference Price** | Lo que cobran pisos parecidos en la misma zona ahora mismo. | El precio "de mercado" de un coche de segunda mano, según el modelo. |
-| **Property Reference Price** | El anterior, ajustado porque *este* piso concreto es mejor o peor que la media (tiene piscina, no tiene ascensor, etc.). | El mismo coche, pero corregido por su estado real y sus extras. |
-| **Base Price** | El Property Reference Price, ajustado por la estrategia comercial elegida (agresiva, conservadora...). | El precio de salida que pondrías en el anuncio antes de negociar. |
-| **Break-Even ADR** | El precio mínimo para **no perder dinero** en esa reserva concreta. | El precio al que un vendedor de coches ni gana ni pierde. |
-| **Profitable Floor** | El Break-Even más el margen mínimo que el negocio exige ganar. | El precio mínimo al que el vendedor acepta vender y sigue durmiendo tranquilo. |
-| **Final Rate** | El precio que de verdad se publica, después de aplicar mercado, canal y reglas — nunca por debajo del Floor (salvo excepción autorizada). | El precio final en la etiqueta. |
+| Market Reference Price | What comparable apartments in the same area are charging right now. | The "market price" of a used car of the same model. |
+| Property Reference Price | The above, adjusted because this specific apartment is better or worse than average (it has a pool, no elevator, and so on). | The same car, corrected for its real condition and extras. |
+| Base Price | The Property Reference Price, adjusted by the chosen commercial strategy (aggressive, conservative, and so on). | The listing price you would set before negotiating. |
+| Break-Even ADR | The minimum price to avoid losing money on that specific booking. | The price at which a car dealer neither gains nor loses. |
+| Profitable Floor | The Break-Even price plus the minimum margin the business requires. | The lowest price the dealer accepts and still sleeps soundly. |
+| Final Rate | The price that actually gets published, after market, channel, and rules are applied. Never below the Floor, except with an authorised exception. | The final price on the tag. |
 
-**Por qué importa:** herramientas como PriceLabs o Beyond solo calculan hasta "Base Price" ajustado
-por mercado — no conocen el coste real de *esa* reserva, así que a veces recomiendan precios por
-debajo del Break-Even sin saberlo. Este proyecto calcula la escalera completa.
+**Why it matters:** tools like PriceLabs or Beyond only calculate up to a market-adjusted "Base
+Price". They do not know the real cost of this specific booking, so they sometimes recommend
+prices below Break-Even without knowing it. This project calculates the full ladder.
 
 ---
 
 ## 3. Bonus/Malus (Property Attribute Factor)
 
-**Qué es:** un multiplicador que sube o baja el precio de mercado según las características propias
-del piso — terraza, piscina, planta, ruido, calidad percibida (reviews) — en vez de tratar todos los
-pisos de una zona como si valieran lo mismo.
+**What it is:** a multiplier that raises or lowers the market price based on the apartment's own
+features (terrace, pool, floor, noise, review quality) instead of treating every apartment in an
+area as worth the same.
 
-**Ejemplo:** si el mercado paga 185 €/noche de media en la zona, pero este piso concreto no tiene
-ascensor ni parking, el Bonus/Malus podría bajarlo a ~157 €. Ese es el "valor estructural" del piso,
-no el precio final de una noche concreta.
+**Example:** if the market pays an average of 185 euros a night in the area, but this specific
+apartment has no elevator and no parking, Bonus/Malus might lower it to around 157 euros. That is
+the apartment's "structural value", not the final price for one specific night.
 
-**Estado:** implementado — [Fase 8](../specs/phases/08-property-bonus-malus/spec.md).
-
----
-
-## 4. Coste de una estancia (Stay Cost) y por qué la duración importa (LOS)
-
-**LOS = Length of Stay**, es decir, cuántas noches dura la reserva.
-
-**La idea contraintuitiva:** un coste fijo de la reserva (limpieza + lavandería, por ejemplo 110 €)
-pesa muchísimo si solo se queda 1 noche (110 €/noche) pero casi nada si se queda 10 noches
-(11 €/noche). Por eso **la misma fecha puede ser rentable para una reserva larga e inviable para una
-de una sola noche**, con el mismo precio por noche.
-
-**Consecuencia práctica:** el "precio mínimo rentable" no es un número único por piso — es una
-**matriz**: uno por cada combinación de fecha de llegada y número de noches.
-
-**Estado:** implementado — [Fase 9](../specs/phases/09-los-floor-matrix/spec.md) calcula esa matriz.
-Lo que **no** está hecho todavía: usar esa matriz para *recomendar activamente* subir la estancia
-mínima cuando una noche suelta no es rentable (ver `post-poc-roadmap.md`, ítem nuevo "min-stay
-lever").
+**Status:** implemented. See [Phase 8](../specs/phases/08-property-bonus-malus/spec.md).
 
 ---
 
-## 5. Break-Even y Profitable Floor (la fórmula, en palabras)
+## 4. Stay cost and why duration matters (LOS)
 
-- **Break-Even Revenue:** cuánto hay que facturar como mínimo para cubrir gastos. Si además hay
-  costes que son un % de lo que se cobra (comisión de la OTA, comisión de cobro), la fórmula no es
-  "sumar costes" — hay que **dividir** entre lo que queda después de esos porcentajes, porque cuanto
-  más subes el precio, más sube también la comisión.
-- **Profitable Floor:** lo mismo, pero exigiendo además el margen de beneficio mínimo del negocio,
-  no solo cubrir gastos.
+**LOS means Length of Stay**: how many nights the booking lasts.
 
-**Estado:** implementado, con la fórmula correcta (división, no multiplicación) — fijado en
-ADR-0009 tras detectar y corregir un error de cálculo previo.
+**The counterintuitive part:** a fixed booking cost (cleaning plus laundry, say 110 euros) weighs a
+lot if the stay is 1 night (110 euros per night), but almost nothing if the stay is 10 nights (11
+euros per night). Because of this, the same date can be profitable for a long booking and not
+viable for a single-night one, at the same nightly price.
 
----
+**Practical consequence:** the "minimum profitable price" is not a single number per apartment. It
+is a matrix: one value per combination of arrival date and number of nights.
 
-## 6. Owner Contract (contrato con el propietario del piso)
-
-**El problema:** la mayoría de gestoras (property managers) no se quedan con toda la reserva —
-pagan una comisión o un "payout" al dueño del piso. Pero esa comisión **no siempre se calcula sobre
-lo mismo**: puede ser sobre el total de la reserva, sobre el total menos la comisión de la OTA,
-sobre el total menos OTA y limpieza, etc. Si el motor de pricing asume la base equivocada, calcula
-mal cuánto le queda realmente a la gestora — y por tanto calcula mal el floor.
-
-**Estado:** implementado para los casos habituales (bases cerradas y conocidas) —
-[Fase 11](../specs/phases/11-owner-contract/spec.md). Deliberadamente **no** implementado: un
-"solver" genérico para fórmulas de contrato no estándar/no lineales — decisión consciente, no
-olvido (documentado en el propio spec de Fase 11).
+**Status:** implemented. [Phase 9](../specs/phases/09-los-floor-matrix/spec.md) calculates that
+matrix. What is not done yet: using that matrix to actively recommend raising the minimum stay when
+a single night is not profitable (see the "min-stay lever" item in `post-poc-roadmap.md`).
 
 ---
 
-## 7. Revenue Management por capas
+## 5. Break-Even and Profitable Floor (the formula, in words)
 
-**Qué es "Revenue Management":** el conjunto de reglas que ajustan el precio hacia arriba o hacia
-abajo según el contexto — temporada alta, fin de semana, poca ocupación propia, reserva de última
-hora, un evento cercano (concierto, feria), etc. Es la parte "inteligente" que reacciona al momento,
-por encima del precio estructural del piso.
+- Break-Even Revenue: the minimum you need to charge to cover expenses. When some costs are a
+  percentage of what you charge (OTA commission, payment processing commission), the formula is
+  not "add up the costs". It requires dividing by what remains after those percentages, because
+  the more you raise the price, the more the commission grows too.
+- Profitable Floor: the same idea, but also requiring the business's minimum profit margin, not
+  just covering expenses.
 
-**Por qué "por capas":** si cada regla suma o resta un porcentaje sin control, se pueden acumular
-descuentos hasta vender por debajo de coste sin que nadie lo note. Organizarlo en capas (estructura →
-mercado → rendimiento propio → antelación → disponibilidad → promociones → guardarraíles) permite
-poner límites por capa y un límite global, y sobre todo **impedir que el resultado final cruce el
-Profitable Floor** salvo excepción autorizada.
-
-**Estado:** implementado — [Fase 13](../specs/phases/13-layered-rm-engine/spec.md).
+**Status:** implemented, with the correct formula (division, not multiplication). Fixed in
+ADR-0009 after an earlier calculation error was found and corrected.
 
 ---
 
-## 8. Pricing por canal y "gross-up"
+## 6. Owner Contract (contract with the apartment owner)
 
-**El problema:** vender por Booking.com no es lo mismo que vender directo. Booking se lleva una
-comisión mucho mayor que cobrar directamente con tarjeta (en el ejemplo del spec: ~17% vs ~2%). Si
-se aplica el mismo precio en los dos canales, en uno se gana mucho menos margen sin que se note en
-el precio publicado.
+**The problem:** most property managers do not keep the entire booking revenue. They pay a
+commission or "payout" to the apartment owner. But that commission is not always calculated on the
+same base. It can be over the total booking, over the total minus the OTA commission, over the
+total minus OTA and cleaning, and so on. If the pricing engine assumes the wrong base, it
+miscalculates what the manager actually keeps, and therefore miscalculates the floor.
 
-**"Gross-up"** es simplemente: subir el precio publicado en el canal caro lo justo para que, después
-de que el canal se lleve su comisión, quede el mismo margen que en el canal barato. No es un markup
-arbitrario — es matemática derivada del coste real de vender por ese canal.
-
-**Estado:** no implementado — el sistema hoy usa una comisión única, ciega al canal. Ítems #2 y #8
-del backlog (`post-poc-roadmap.md`).
-
----
-
-## 9. Guardarraíles (Guardrails) y política de Floor Hard/Soft
-
-**Qué es:** la regla que decide qué pasa cuando el precio que "quiere" el mercado o las reglas
-comerciales cae por debajo del Profitable Floor.
-
-- **Hard floor:** nunca se publica por debajo del floor, punto.
-- **Soft floor:** se puede vender por debajo, pero solo con autorización explícita y dejando
-  constancia de la pérdida esperada — nunca en silencio.
-
-**Estado:** implementado — [Fase 12](../specs/phases/12-floor-policy/spec.md).
+**Status:** implemented for the common cases (closed, known bases). See
+[Phase 11](../specs/phases/11-owner-contract/spec.md). Deliberately not implemented: a generic
+"solver" for non-standard or non-linear contract formulas. This was a conscious decision, not an
+oversight, documented in Phase 11's own spec.
 
 ---
 
-## 10. Explicabilidad (Decision Components / reason codes)
+## 7. Layered Revenue Management
 
-**El problema que resuelve:** un gestor de propiedades no va a confiar en un precio que "la máquina
-dijo que sí" sin más. Necesita poder ver: "este precio subió un 10% por temporada, bajó un 3% por
-baja ocupación, y el suelo de rentabilidad era 142 € para esta combinación de fecha/canal/duración".
+**What "Revenue Management" is:** the set of rules that adjust the price up or down based on
+context: high season, weekends, low occupancy, last-minute bookings, a nearby event (concert,
+trade fair), and so on. This is the "smart" part that reacts to the moment, on top of the
+apartment's structural price.
 
-**Qué son los "reason codes":** en vez de solo un texto libre, cada ajuste queda guardado como un
-dato estructurado (p. ej. `RULE_SEASON_HIGH`, `FLOOR_PROTECTED`) que se puede consultar, filtrar y
-auditar — no solo leer.
+**Why "layered":** if every rule adds or subtracts a percentage with no control, discounts can
+stack up until the price falls below cost without anyone noticing. Organising this into layers
+(structure, market, own performance, lead time, availability, promotions, guardrails) allows a
+limit per layer and a global limit, and above all it prevents the final result from crossing the
+Profitable Floor, except with an authorised exception.
 
-**Estado:** implementado — [Fase 10](../specs/phases/10-decision-components/spec.md).
-
----
-
-## 11. Manual Override (excepción manual autorizada)
-
-**Qué es:** a veces el negocio quiere vender deliberadamente por debajo del floor de rentabilidad
-— por ejemplo, para no dejar un piso vacío antes de un evento, o por una relación comercial
-puntual. Eso debe poder hacerse, pero **con un usuario responsable, un motivo, una fecha de
-caducidad, y quedando registrada la pérdida esperada** — nunca como una excepción silenciosa que
-rompe la confianza en el sistema.
-
-**Estado:** no implementado. Hoy el sistema es de solo lectura aguas abajo del motor de precios —
-no existe ningún camino para que un humano escriba una excepción de vuelta al sistema. Es el cambio
-de arquitectura más grande pendiente (ítem #9 del backlog).
+**Status:** implemented. See [Phase 13](../specs/phases/13-layered-rm-engine/spec.md).
 
 ---
 
-## 12. Market Snapshot / comp-set
+## 8. Channel pricing and "gross-up"
 
-**Comp-set** ("competitive set"): el grupo de pisos comparables (misma zona, tamaño, calidad) que se
-usa como referencia de mercado — comparar con la media de *toda* la ciudad sin filtrar sería
-comparar peras con manzanas.
+**The problem:** selling through Booking.com is not the same as selling direct. Booking takes a
+much higher commission than charging directly by card (in the spec's example, around 17% versus
+around 2%). If the same price is applied on both channels, one of them earns much less margin
+without it showing in the published price.
 
-**Market Snapshot:** una "foto" del mercado en un momento dado (precio medio, percentiles,
-ocupación, fuente y fecha de la foto), para poder auditar más tarde con qué información se decidió
-un precio.
+**"Gross-up"** simply means raising the published price on the expensive channel just enough that,
+after the channel takes its commission, the same margin remains as on the cheap channel. It is not
+an arbitrary markup. It is math derived from the real cost of selling through that channel.
 
-**Estado:** el modelo de datos ya está preparado (percentiles, fuente, fecha de captura) —
-[Fase 3](../specs/phases/03-market-ingestion/spec.md) — pero la fuente sigue siendo sintética
-(segmentos simulados), no datos reales de mercado. Ítem #11 del backlog.
+**Status:** not implemented. The system today uses a single commission figure, blind to channel.
+See backlog items `#2` and `#8` (`post-poc-roadmap.md`).
 
 ---
 
-## 13. Glosario rápido de siglas
+## 9. Guardrails and Hard/Soft Floor policy
 
-| Sigla | Significado |
+**What it is:** the rule that decides what happens when the price the market or the commercial
+rules "want" falls below the Profitable Floor.
+
+- Hard floor: never publish below the floor, period.
+- Soft floor: selling below is allowed, but only with explicit authorisation, and it always
+  records the expected loss. Never silently.
+
+**Status:** implemented. See [Phase 12](../specs/phases/12-floor-policy/spec.md).
+
+---
+
+## 10. Explainability (Decision Components and reason codes)
+
+**The problem this solves:** a property manager will not trust a price just because "the machine
+said so". They need to see something like: "this price went up 10% for high season, down 3% for
+low occupancy, and the profitability floor was 142 euros for this date and channel combination."
+
+**What "reason codes" are:** instead of just free text, each adjustment is stored as structured
+data (for example `RULE_SEASON_HIGH`, `FLOOR_PROTECTED`) that can be queried, filtered, and
+audited, not just read.
+
+**Status:** implemented. See [Phase 10](../specs/phases/10-decision-components/spec.md).
+
+---
+
+## 11. Manual Override (authorised manual exception)
+
+**What it is:** sometimes the business deliberately wants to sell below the profitability floor.
+For example, to avoid leaving an apartment empty before an event, or for a one-off commercial
+relationship. This should be possible, but with a responsible user, a reason, an expiry date, and
+the expected loss recorded. Never as a silent exception that breaks trust in the system.
+
+**Status:** not implemented. Today the system is read-only downstream of the pricing engine. There
+is no path for a human to write an exception back into the system. This is the largest pending
+architecture change (backlog item `#9`).
+
+---
+
+## 12. Market Snapshot and comp-set
+
+**Comp-set** ("competitive set"): the group of comparable apartments (same area, size, quality)
+used as the market reference. Comparing against the average of an entire city with no filtering
+would compare apples to oranges.
+
+**Market Snapshot:** a "photo" of the market at a given moment (average price, percentiles,
+occupancy, source, and date of the photo), so a price decision can be audited later against the
+information it was made with.
+
+**Status:** the data model is already prepared for this (percentiles, source, capture date). See
+[Phase 3](../specs/phases/03-market-ingestion/spec.md). The source is still synthetic (simulated
+segments), not real market data. See backlog item `#11`.
+
+---
+
+## 13. Quick acronym glossary
+
+| Acronym | Meaning |
 |---|---|
-| **ADR** | Average Daily Rate — precio medio por noche. |
-| **LOS** | Length of Stay — número de noches de la reserva. |
-| **OTA** | Online Travel Agency — Booking, Airbnb, Vrbo, etc. |
-| **RM** | Revenue Management. |
-| **PMS** | Property Management System — el software de gestión del piso/reservas. |
-| **PoC** | Proof of Concept — este proyecto, una prueba técnica, no el producto final. |
+| ADR | Average Daily Rate. Average price per night. |
+| LOS | Length of Stay. Number of nights in the booking. |
+| OTA | Online Travel Agency. Booking, Airbnb, Vrbo, and so on. |
+| RM | Revenue Management. |
+| PMS | Property Management System. The software used to manage the apartment and bookings. |
+| PoC | Proof of Concept. This project, a technical trial, not a finished product. |
 
 ---
 
-## Cómo se relaciona con el resto de la documentación
+## How this relates to the rest of the documentation
 
-- `docs/adr/ADR-0011-profitable-pricing-target-architecture.md` — decisión de adoptar el spec
-  externo como arquitectura objetivo.
-- `docs/post-poc-roadmap.md` — backlog priorizado, ítem por ítem, con qué está hecho y qué falta.
-- Este documento — el "traductor" de esos dos para alguien nuevo en el dominio.
+- `docs/adr/ADR-0011-profitable-pricing-target-architecture.md`: the decision to adopt the
+  external spec as the target architecture.
+- `docs/post-poc-roadmap.md`: the prioritised backlog, item by item, with what is done and what is
+  missing.
+- `docs/metrics-dictionary.md`: the field-by-field reference (cost types, cost concepts, and every
+  metric column), one level more concrete than this document.
+- This document: the "translator" of the above two, for someone new to the domain.

@@ -1,0 +1,20 @@
+version: 2
+
+models:
+  - name: int_latest_decision_per_night
+    description: >
+      "Last known decision per (apartment, target_date, day)". If Stage B
+      re-decides the same apartment/night more than once on the same
+      calendar day, only the latest one as of that day survives. Same
+      column shape as stg_price_decision, plus snapshot_day.
+    columns:
+      - name: apartment_id
+        description: "{{ doc('apartment_id') }}"
+      - name: target_date
+        description: "{{ doc('target_date') }}"
+      - name: snapshot_day
+        description: >
+          Calendar day (derived from decided_at) this row represents "the
+          latest decision as of".
+      - name: decision_id
+        description: "{{ doc('decision_id') }}"
