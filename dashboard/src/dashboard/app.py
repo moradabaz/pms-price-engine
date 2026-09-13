@@ -312,20 +312,32 @@ def render_apartment_detail() -> None:
     )
     # Sign flipped for display (below_market_by itself is positive when
     # priced below market): negative (priced below market, good) renders
-    # green, positive (priced above market) renders red.
+    # green, positive (priced above market) renders red. Uses the same
+    # st.metric widget as the other 3 columns (via a keyed container +
+    # scoped CSS) so it lines up with them pixel-for-pixel — a plain
+    # st.markdown/caption combo doesn't share st.metric's padding/line-height.
     below_market_display_eur = -output["below_market_by"]
     below_market_color = "green" if below_market_display_eur < 0 else "red"
     with cols[3]:
-        st.caption(
-            "Below market by",
-            help=(
-                "How far the suggested price sits from your property's own market "
-                "reference price. Negative (green) means priced below it. Positive "
-                "(red) means priced above it (expected when the rule applied is "
-                "'Minimum profitable price')."
-            ),
+        with st.container(key="below_market_metric"):
+            st.metric(
+                "Below market by",
+                f"{below_market_display_eur:.2f} €",
+                help=(
+                    "How far the suggested price sits from your property's own "
+                    "market reference price. Negative (green) means priced below "
+                    "it. Positive (red) means priced above it (expected when the "
+                    "rule applied is 'Minimum profitable price')."
+                ),
+            )
+        st.markdown(
+            f"""<style>
+            .st-key-below_market_metric [data-testid="stMetricValue"] {{
+                color: {below_market_color};
+            }}
+            </style>""",
+            unsafe_allow_html=True,
         )
-        st.markdown(f"### :{below_market_color}[{below_market_display_eur:.2f} €]")
 
     st.markdown("**Cost** — what it costs you to host one night here.")
     st.dataframe(
