@@ -310,13 +310,21 @@ def render_apartment_detail() -> None:
         _RULE_APPLIED_LABEL.get(rule_applied, rule_applied),
         help=_RULE_APPLIED_HELP,
     )
+    # Sign flipped for display (below_market_by itself is positive when
+    # priced below market) so delta_color="inverse" reads naturally: negative
+    # (priced below market, good) shows green, positive (priced above
+    # market) shows red.
+    below_market_display_eur = -output["below_market_by"]
     cols[3].metric(
         "Below market by",
-        f"{output['below_market_by']:.2f} €",
+        f"{below_market_display_eur:.2f} €",
+        delta=f"{below_market_display_eur:.2f} €",
+        delta_color="inverse",
         help=(
-            "How far the suggested price sits below your property's own market "
-            "reference price. Negative means priced above it (expected when the rule "
-            "applied is 'Minimum profitable price')."
+            "How far the suggested price sits from your property's own market "
+            "reference price. Negative (green) means priced below it. Positive "
+            "(red) means priced above it (expected when the rule applied is "
+            "'Minimum profitable price')."
         ),
     )
 
