@@ -52,11 +52,41 @@ _IMMEDIATE_ALLOCATION_METHODS = frozenset(
     {"direct", "calendar_day", "available_night", "weighted", "revenue"}
 )
 
+# Phase 20 (ADR-0013 §3): a CostDefinition is percentage-based iff its
+# calculation_base is one of these two — such lines never contribute an EUR
+# amount to fixed_cost_eur/variable_cost_eur (their real amount_gross is
+# historical, not the prospective figure the Break-Even/Profitable Floor
+# formula needs); only their CostDefinition.rate matters going forward.
+_PERCENTAGE_CALCULATION_BASES = frozenset({"pct_revenue", "pct_adjusted_revenue"})
+
 
 @dataclass(frozen=True)
 class ConceptAmount:
     concept: str
     amount_eur: float
+    # Phase 20 (ADR-0013, spec 20 §2): the CostDefinition's own dimensions,
+    # alongside the concept/amount above — display-only, mirrors
+    # price_decision.v1's own cost_breakdown shape field-for-field.
+    scope: str
+    behavior: str
+    trigger: str
+    calculation_base: str
+    recurrence: str
+    allocation_method: str
+
+
+@dataclass(frozen=True)
+class PercentageCostComponent:
+    """One percentage CostDefinition applicable to this apartment/period
+    (Phase 20, ADR-0013 §3) — contributes `rate` to the Break-Even/
+    Profitable Floor formula's `p` term, and (via revenue_base) to the
+    generalized revenue-base netting stage_price_decision.py computes.
+    Never carries an EUR amount — CostOccurrence's real invoiced figure for
+    such a line is historical, not the prospective rate the formula needs."""
+
+    concept: str
+    rate: float
+    revenue_base: str | None
 
 
 @dataclass(frozen=True)
@@ -82,6 +112,10 @@ class EnrichedPaymentLine:
     revenue_base: str | None
     allocation_method: str
     weight_config: str | None
+    # Phase 20 (ADR-0013 §3): only meaningful when calculation_base is
+    # percentage-based (enforced at the DB level by cost_definitions'
+    # own pairing CHECK constraint).
+    rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -115,11 +149,17 @@ class CostAggregationResult:
     cost_lines_count: int
     fixed_cost_eur: float
     variable_cost_eur: float
-    one_time_cost_eur: float
+    # Renamed from one_time_cost_eur (Phase 20, ADR-0013) — still an average
+    # (not sum) of allocation_method='booking' lines, unchanged mechanically.
+    per_booking_cost_eur: float
     ota_related_cost_eur: float
     cleaning_cost_eur: float
     cost_breakdown: tuple[ConceptAmount, ...]
     pending_allocation_corrections: tuple[PendingAllocationCorrection, ...]
+    # Phase 20 (ADR-0013 §3): one entry per distinct percentage CostDefinition
+    # concept observed this period — feeds `p` downstream (stage_price_
+    # decision.py), never an EUR amount here.
+    percentage_costs: tuple[PercentageCostComponent, ...]
 
 
 def aggregate_cost(
@@ -144,8 +184,25 @@ def aggregate_cost(
     total = round(sum(line.amount_gross for line in matching), 2)
     available_days = (current_end - period_start).days + 1
 
-    one_time_lines = [line for line in matching if line.recurrence == "one_off"]
-    recurring_lines = [line for line in matching if line.recurrence != "one_off"]
+    # Phase 20 (ADR-0013 §3): percentage-based lines never contribute an EUR
+    # amount to fixed/variable/per-booking — their real amount_gross is
+    # historical, not the prospective rate the Break-Even/Profitable Floor
+    # formula needs. Excluded from every bucket below; handled separately.
+    percentage_lines = [
+        line for line in matching
+        if line.calculation_base in _PERCENTAGE_CALCULATION_BASES
+    ]
+    non_percentage_lines = [
+        line for line in matching
+        if line.calculation_base not in _PERCENTAGE_CALCULATION_BASES
+    ]
+
+    one_time_lines = [
+        line for line in non_percentage_lines if line.recurrence == "one_off"
+    ]
+    recurring_lines = [
+        line for line in non_percentage_lines if line.recurrence != "one_off"
+    ]
 
     immediate_recurring = [
         line for line in recurring_lines
@@ -180,12 +237,33 @@ def aggregate_cost(
     # Averaged, not summed: a one_time line is already "the cost of one
     # turnover" (e.g. one cleaning invoice) — summing a period's worth would
     # conflate one reservation's cost with the whole period's (ADR-0009 D3).
-    one_time_cost_eur = (
+    per_booking_cost_eur = (
         round(
             sum(line.amount_gross for line in one_time_lines) / len(one_time_lines), 2
         )
         if one_time_lines
         else 0.0
+    )
+
+    # Phase 20 (ADR-0013 §3): one PercentageCostComponent per distinct
+    # concept among percentage_lines — rate is a CostDefinition-level
+    # constant (same for every line sharing that cost_definition_id), so it
+    # is taken once per concept, never summed across lines.
+    percentage_concepts = {line.concept for line in percentage_lines}
+    percentage_costs = tuple(
+        PercentageCostComponent(
+            concept=concept,
+            rate=next(
+                line.rate for line in percentage_lines if line.concept == concept
+            )
+            or 0.0,
+            revenue_base=next(
+                line.revenue_base
+                for line in percentage_lines
+                if line.concept == concept
+            ),
+        )
+        for concept in percentage_concepts
     )
 
     # Phase 19: one PendingAllocationCorrection per concept among the
@@ -253,6 +331,25 @@ def aggregate_cost(
             )
             if available_days > 0
             else 0.0,
+            # Phase 20 (ADR-0013, spec 20 §2): every line sharing a concept
+            # shares the same CostDefinition (Stage A0 resolved it), so its
+            # dimensions are taken from any one matching line.
+            scope=next(line.scope for line in matching if line.concept == concept),
+            behavior=next(
+                line.behavior for line in matching if line.concept == concept
+            ),
+            trigger=next(
+                line.trigger for line in matching if line.concept == concept
+            ),
+            calculation_base=next(
+                line.calculation_base for line in matching if line.concept == concept
+            ),
+            recurrence=next(
+                line.recurrence for line in matching if line.concept == concept
+            ),
+            allocation_method=next(
+                line.allocation_method for line in matching if line.concept == concept
+            ),
         )
         for concept in CONCEPT_ORDER
         if concept in concepts_present
@@ -266,7 +363,8 @@ def aggregate_cost(
         cost_lines_count=len(matching),
         fixed_cost_eur=fixed_cost_eur,
         variable_cost_eur=variable_cost_eur,
-        one_time_cost_eur=one_time_cost_eur,
+        per_booking_cost_eur=per_booking_cost_eur,
+        percentage_costs=percentage_costs,
         ota_related_cost_eur=ota_related_cost_eur,
         cleaning_cost_eur=cleaning_cost_eur,
         cost_breakdown=cost_breakdown,

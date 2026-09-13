@@ -19,7 +19,7 @@ def _cost(
         bedrooms=0,
         fixed_cost_eur=0.0,
         variable_cost_eur=100.0,
-        one_time_cost_eur=0.0,
+        per_booking_cost_eur=0.0,
         total_monthly_cost_eur=3000.0,
         available_days=30,
         cost_lines_count=1,
@@ -81,6 +81,8 @@ def test_cost_side_then_booking_side_recomputes_occupied_nights():
     )
     assert len(results) == 1
     assert results[0].occupied_nights == 3
+    # Phase 20 (ADR-0013 §2): _booking() always seeds guests=2.
+    assert results[0].avg_guests == 2.0
 
 
 def test_booking_side_then_cost_side_recomputes_occupied_nights():

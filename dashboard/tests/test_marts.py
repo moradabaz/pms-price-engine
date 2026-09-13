@@ -18,14 +18,14 @@ def settings(tmp_path) -> DashboardSettings:
 
     con.execute(
         "create table fct_daily_price (apartment_id varchar, target_date date,"
-        " suggested_price_eur double, rule_applied varchar, floor_type varchar,"
+        " suggested_price_eur double, rule_applied varchar, floor_policy varchar,"
         " effective_margin double)"
     )
     con.execute(
         "insert into fct_daily_price values"
-        " ('BCN-001', '2026-09-01', 120.0, 'market_competitive', 'structural', 0.2),"
+        " ('BCN-001', '2026-09-01', 120.0, 'market_competitive', 'soft', 0.2),"
         " ('BCN-001', '2026-09-02', 130.0, 'minimum_profitable_price',"
-        " 'structural', 0.25)"
+        " 'soft', 0.25)"
     )
 
     con.execute(
@@ -38,7 +38,10 @@ def settings(tmp_path) -> DashboardSettings:
         "  rule_applied varchar, suggested_price_eur double,"
         "  effective_margin double"
         " )[],"
-        " cost_breakdown STRUCT(concept varchar, amount_eur double)[]"
+        " cost_breakdown STRUCT(concept varchar, amount_eur double,"
+        "  scope varchar, behavior varchar, trigger varchar,"
+        "  calculation_base varchar, recurrence varchar,"
+        "  allocation_method varchar)[]"
         ")"
     )
     con.execute(
@@ -51,18 +54,24 @@ def settings(tmp_path) -> DashboardSettings:
         "    'commission_pct': 0.03, 'market_reference_price_eur': 92.34,"
         "    'minimum_price_eur': 113.4, 'rule_applied': 'minimum_profitable_price',"
         "    'suggested_price_eur': 113.4, 'effective_margin': 0.0309}],"
-        "  [{'concept': 'electricity', 'amount_eur': 3.5},"
-        "   {'concept': 'cleaning', 'amount_eur': 1.0}])"
+        "  [{'concept': 'electricity', 'amount_eur': 3.5,"
+        "    'scope': 'property', 'behavior': 'variable', 'trigger': 'time',"
+        "    'calculation_base': 'fixed_amount', 'recurrence': 'monthly',"
+        "    'allocation_method': 'calendar_day'},"
+        "   {'concept': 'cleaning', 'amount_eur': 1.0,"
+        "    'scope': 'booking', 'behavior': 'variable', 'trigger': 'reservation',"
+        "    'calculation_base': 'fixed_amount', 'recurrence': 'per_booking',"
+        "    'allocation_method': 'occupied_night'}])"
     )
 
     con.execute(
         "create table fct_margin_alert (apartment_id varchar, target_date date,"
         " decided_at timestamp, suggested_price_eur double, effective_margin double,"
-        " floor_type varchar)"
+        " floor_policy varchar)"
     )
     con.execute(
         "insert into fct_margin_alert values"
-        " ('BCN-001', '2026-09-02', '2026-08-06T10:15:00', 130.0, 0.25, 'structural')"
+        " ('BCN-001', '2026-09-02', '2026-08-06T10:15:00', 130.0, 0.25, 'soft')"
     )
     con.close()
 

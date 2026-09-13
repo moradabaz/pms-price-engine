@@ -65,3 +65,13 @@ def test_missing_required_field_rejected(schema):
         validate(
             schema, load_fixture("price_decision", "invalid_missing_required.json")
         )
+
+
+def test_legacy_v1_shape_rejected(schema):
+    # ADR-0013 §8: a pre-Phase-20 (schema_version="1.0") message — floor_type
+    # present, fixed_and_allocated_costs_eur/per_booking_cost_eur/p/
+    # break_even_revenue_eur/profitable_floor_eur absent — must be rejected
+    # outright, same regression precedent ADR-0012 established for
+    # payment_line.v1's own breaking bump.
+    with pytest.raises(jsonschema.ValidationError):
+        validate(schema, load_fixture("price_decision", "invalid_legacy_v1_shape.json"))

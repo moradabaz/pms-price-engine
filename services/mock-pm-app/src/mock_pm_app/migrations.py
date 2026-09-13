@@ -132,19 +132,21 @@ def ensure_owners_schema(conn: Any) -> None:
 # specs/phases/01-mock-app-db/owner_contracts.sql. Reuses the existing
 # dbz_publication/connector (spec 11 pre-spec §B) — no new connector, slot,
 # or publication, one more captured table on the one already there.
+#
+# Phase 20 (ADR-0013 §4): commission_base/commission_pct are no longer part
+# of a fresh table's shape — cost_definition_id replaces them (a real
+# CostDefinition, resolved elsewhere). An already-populated table (still
+# carrying the old columns) is migrated by
+# migrate_owner_contracts_to_cost_definitions() below, not by this
+# CREATE-TABLE-IF-NOT-EXISTS statement.
 _ENSURE_OWNER_CONTRACTS_SQL = """
 CREATE TABLE IF NOT EXISTS public.owner_contracts (
-    apartment_id     TEXT PRIMARY KEY
-                          REFERENCES public.apartment_market_segments(apartment_id),
-    owner_id         TEXT NOT NULL REFERENCES public.owners(owner_id),
-    commission_base  TEXT NOT NULL DEFAULT 'total_revenue'
-                          CHECK (commission_base IN
-                              ('total_revenue', 'revenue_minus_ota',
-                               'revenue_minus_ota_minus_cleaning')),
-    commission_pct   NUMERIC(5,4) NOT NULL DEFAULT 0.15
-                          CHECK (commission_pct >= 0 AND commission_pct <= 1),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ
+    apartment_id       TEXT PRIMARY KEY
+                            REFERENCES public.apartment_market_segments(apartment_id),
+    owner_id           TEXT NOT NULL REFERENCES public.owners(owner_id),
+    cost_definition_id UUID NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ
 );
 
 CREATE OR REPLACE FUNCTION public.set_owner_contract_updated_at()
@@ -303,8 +305,11 @@ def ensure_bookings_schema(conn: Any) -> None:
 
 
 # Phase 19 (ADR-0011 backlog #13, ADR-0012): byte-identical (schema-wise) to
-# specs/phases/01-mock-app-db/cost_definitions.sql. Never carries an amount/
-# rate — classifies an already-known amount, never computes one.
+# specs/phases/01-mock-app-db/cost_definitions.sql. Never carries an amount —
+# classifies an already-known amount, never computes one. Phase 20 (ADR-0013
+# §3) adds `rate`, the one exception: a percentage cost's rate is real
+# configuration (like owner_contracts.commission_pct always was), not an
+# amount, and the Break-Even formula needs it prospectively.
 _ENSURE_COST_DEFINITIONS_SQL = """
 CREATE TABLE IF NOT EXISTS public.cost_definitions (
     cost_definition_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -312,7 +317,7 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
                            'electricity', 'water', 'gas', 'internet',
                            'pms_subscription', 'ota_fee', 'channel_manager',
                            'office_rent', 'cleaning', 'maintenance', 'insurance',
-                           'community_fee', 'other'
+                           'community_fee', 'other', 'owner_commission'
                        )),
     scope              TEXT NOT NULL
                            CHECK (scope IN ('booking', 'property', 'company')),
@@ -337,6 +342,43 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ
 );
+
+-- Self-healing for a cost_definitions table created before Phase 20 (same
+-- pattern apartment_market_segments.sql's own column additions use):
+-- widen the concept enum to include owner_commission, and add rate.
+ALTER TABLE public.cost_definitions
+    DROP CONSTRAINT IF EXISTS cost_definitions_concept_check;
+ALTER TABLE public.cost_definitions
+    ADD CONSTRAINT cost_definitions_concept_check CHECK (concept IN (
+        'electricity', 'water', 'gas', 'internet', 'pms_subscription',
+        'ota_fee', 'channel_manager', 'office_rent', 'cleaning',
+        'maintenance', 'insurance', 'community_fee', 'other', 'owner_commission'
+    ));
+
+ALTER TABLE public.cost_definitions
+    ADD COLUMN IF NOT EXISTS rate NUMERIC(6,4);
+ALTER TABLE public.cost_definitions
+    DROP CONSTRAINT IF EXISTS cost_definitions_rate_check;
+ALTER TABLE public.cost_definitions
+    ADD CONSTRAINT cost_definitions_rate_check
+        CHECK (rate IS NULL OR (rate >= 0 AND rate <= 1));
+
+-- Backfill BEFORE the pairing constraint below, not after (same ordering
+-- bug fixed once already in the payment_lines schema_version migration) —
+-- a pre-Phase-20 percentage CostDefinition (e.g. ota_fee) has rate=NULL
+-- from the ADD COLUMN above and would otherwise immediately violate it.
+UPDATE public.cost_definitions
+    SET rate = 0.15
+    WHERE calculation_base IN ('pct_revenue', 'pct_adjusted_revenue')
+      AND rate IS NULL;
+
+ALTER TABLE public.cost_definitions
+    DROP CONSTRAINT IF EXISTS cost_definitions_rate_matches_calculation_base;
+ALTER TABLE public.cost_definitions
+    ADD CONSTRAINT cost_definitions_rate_matches_calculation_base CHECK (
+        (calculation_base IN ('pct_revenue', 'pct_adjusted_revenue'))
+        = (rate IS NOT NULL)
+    );
 
 CREATE OR REPLACE FUNCTION public.set_cost_definition_updated_at()
 RETURNS TRIGGER AS $$
@@ -578,4 +620,79 @@ END $$;
 def migrate_payment_lines_to_cost_definitions(conn: Any) -> None:
     with conn.cursor() as cur:
         cur.execute(_MIGRATE_PAYMENT_LINES_TO_COST_DEFINITIONS_SQL)
+    conn.commit()
+
+
+# Phase 20 (ADR-0013 §4): the breaking owner_contracts migration — unifies
+# commission_base/commission_pct under CostDefinition, the same real-
+# substitution pattern _MIGRATE_PAYMENT_LINES_TO_COST_DEFINITIONS_SQL already
+# established for payment_lines (ADR-0012). Must run after
+# ensure_cost_definitions_schema/ensure_cost_allocation_rules_schema (this
+# migration inserts into both). Guarded by information_schema, not a flag
+# column, same convention as the payment_lines migration — harmless no-op
+# once commission_pct is already gone.
+_MIGRATE_OWNER_CONTRACTS_TO_COST_DEFINITIONS_SQL = """
+ALTER TABLE public.owner_contracts
+    ADD COLUMN IF NOT EXISTS cost_definition_id UUID;
+
+DO $$
+DECLARE
+    legacy_columns_exist boolean;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'owner_contracts'
+          AND column_name = 'commission_pct'
+    ) INTO legacy_columns_exist;
+
+    IF legacy_columns_exist THEN
+        INSERT INTO public.cost_definitions
+            (concept, scope, behavior, trigger, calculation_base, recurrence,
+             revenue_base, rate)
+        SELECT DISTINCT
+            'owner_commission', 'booking', 'variable', 'revenue',
+            'pct_adjusted_revenue', 'per_booking',
+            oc.commission_base, oc.commission_pct
+        FROM public.owner_contracts oc
+        WHERE NOT EXISTS (
+            SELECT 1 FROM public.cost_definitions cd
+            WHERE cd.concept = 'owner_commission'
+              AND cd.revenue_base = oc.commission_base
+              AND cd.rate = oc.commission_pct
+        );
+
+        INSERT INTO public.cost_allocation_rules (cost_definition_id, method)
+        SELECT cd.cost_definition_id, 'direct'
+        FROM public.cost_definitions cd
+        WHERE cd.concept = 'owner_commission'
+          AND NOT EXISTS (
+              SELECT 1 FROM public.cost_allocation_rules car
+              WHERE car.cost_definition_id = cd.cost_definition_id
+          );
+
+        UPDATE public.owner_contracts oc
+        SET cost_definition_id = cd.cost_definition_id
+        FROM public.cost_definitions cd
+        WHERE oc.cost_definition_id IS NULL
+          AND cd.concept = 'owner_commission'
+          AND cd.revenue_base = oc.commission_base
+          AND cd.rate = oc.commission_pct;
+
+        ALTER TABLE public.owner_contracts
+            DROP CONSTRAINT IF EXISTS owner_contracts_commission_base_check;
+        ALTER TABLE public.owner_contracts DROP COLUMN IF EXISTS commission_base;
+        ALTER TABLE public.owner_contracts
+            DROP CONSTRAINT IF EXISTS owner_contracts_commission_pct_check;
+        ALTER TABLE public.owner_contracts DROP COLUMN IF EXISTS commission_pct;
+
+        ALTER TABLE public.owner_contracts
+            ALTER COLUMN cost_definition_id SET NOT NULL;
+    END IF;
+END $$;
+"""
+
+
+def migrate_owner_contracts_to_cost_definitions(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_MIGRATE_OWNER_CONTRACTS_TO_COST_DEFINITIONS_SQL)
     conn.commit()

@@ -2,9 +2,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from pricing_formulas.decision_components import DecisionComponent
-from pricing_formulas.layers.commercial import CommissionBase
+from pricing_formulas.layers.commercial import RevenueBase
 
-from flink_jobs.cost_aggregation import ConceptAmount, PendingAllocationCorrection
+from flink_jobs.cost_aggregation import (
+    ConceptAmount,
+    PendingAllocationCorrection,
+    PercentageCostComponent,
+)
 
 
 @dataclass(frozen=True)
@@ -66,10 +70,13 @@ class ApartmentSegmentRow:
 @dataclass(frozen=True)
 class OwnerContractAssignment:
     """An apartment's commission config, as stored in Stage A2's broadcast
-    state (Phase 11, ADR-0011 backlog #5)."""
+    state (Phase 11, ADR-0011 backlog #5). Phase 20 (ADR-0013 §4): holds only
+    the apartment's owner-commission CostDefinition id now — commission_base/
+    commission_pct are resolved from that CostDefinition's own
+    revenue_base/rate (the same cost_definitions/cost_allocation_rules
+    broadcast state Stage A0 already reads), not carried here directly."""
 
-    commission_base: CommissionBase
-    commission_pct: float
+    cost_definition_id: str
 
 
 @dataclass(frozen=True)
@@ -78,17 +85,12 @@ class OwnerContractRow:
 
     apartment_id: str
     owner_id: str
-    commission_base: CommissionBase
-    commission_pct: float
+    cost_definition_id: str
 
     def to_assignment(self) -> OwnerContractAssignment:
         """Drops apartment_id (used as the map key) and owner_id (unused
-        downstream of this table — decide_price() only needs the resolved
-        commission_base/commission_pct pair, spec 11 §2)."""
-        return OwnerContractAssignment(
-            commission_base=self.commission_base,
-            commission_pct=self.commission_pct,
-        )
+        downstream of this table)."""
+        return OwnerContractAssignment(cost_definition_id=self.cost_definition_id)
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,9 @@ class CostDefinitionRow:
     calculation_base: str
     recurrence: str
     revenue_base: str | None
+    # Phase 20 (ADR-0013 §3): only meaningful when calculation_base is
+    # percentage-based.
+    rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -193,7 +198,10 @@ class CostAggregate:
     bedrooms: int
     fixed_cost_eur: float
     variable_cost_eur: float
-    one_time_cost_eur: float
+    # Renamed from one_time_cost_eur (Phase 20, ADR-0013) — same "average
+    # per turnover, divided by the candidate's own stay_length inside
+    # decide_price()" semantics, unchanged mechanically.
+    per_booking_cost_eur: float
     total_monthly_cost_eur: float
     available_days: int
     cost_lines_count: int
@@ -218,13 +226,25 @@ class CostAggregate:
     # only ever observed on a CostAggregate that hasn't reached Stage A2 yet
     # (e.g. in a test constructing one directly); every CostAggregate Stage B
     # actually sees has already passed through Stage A2's broadcast join.
-    # 0.15/"total_revenue" match owner_contracts' own column defaults.
+    # 0.15/"total_revenue" match this project's pre-Phase-20 defaults. Phase
+    # 20 (ADR-0013 §4): sourced from the apartment's own owner-commission
+    # CostDefinition (rate/revenue_base) instead of owner_contracts' own
+    # columns directly — the field names/roles are otherwise unchanged.
     commission_pct: float = 0.15
-    commission_base: CommissionBase = "total_revenue"
+    commission_base: RevenueBase = "total_revenue"
+    # Phase 20 (ADR-0013 §3): every OTHER applicable percentage CostDefinition
+    # for this apartment/period (payment-line-derived, e.g. ota_fee) —
+    # resolved once in Stage A from cost_aggregation.py. The owner-commission
+    # CostDefinition (commission_pct/commission_base above) is NOT included
+    # here (it is resolved separately, by Stage A2) — stage_price_decision.py
+    # combines both into the formula's own `p`.
+    percentage_costs: tuple[PercentageCostComponent, ...] = field(
+        default_factory=tuple
+    )
     # Phase 11: resolved once in Stage A from cost_aggregation.py's new
     # concept-based sub-totals — already fully counted inside
     # fixed_cost_eur/variable_cost_eur above, these are additional
-    # breakdowns for decide_price()'s commission-base netting, not new costs.
+    # breakdowns for decide_price()'s revenue-base netting, not new costs.
     ota_related_cost_eur: float = 0.0
     cleaning_cost_eur: float = 0.0
     # Phase 17 (ADR-0011 backlog #3): resolved once in Stage A alongside
@@ -242,6 +262,10 @@ class CostAggregate:
     # counts distinct confirmed bookings overlapping the current billing
     # period — needed by the 'booking' allocation method.
     booking_count: int = 0
+    # Phase 20 (ADR-0013 §2): same stage as occupied_nights/booking_count
+    # above — average guests per confirmed, overlapping booking, needed by
+    # calculation_base='per_guest'.
+    avg_guests: float = 0.0
     # Phase 19: concepts whose allocation_method needs occupied_nights/
     # booking_count (not yet available when Stage A runs) — resolved by
     # Stage A-correction, chained after the booking stage. Empty once

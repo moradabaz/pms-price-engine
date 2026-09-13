@@ -40,7 +40,9 @@ def _decision() -> PriceDecision:
             available_days=31,
             fixed_cost_eur=1.0,
             variable_cost_eur=1.0,
-            one_time_cost_eur=10.0,
+            fixed_and_allocated_costs_eur=2.0,
+            per_booking_cost_eur=10.0,
+            p=0.15,
         ),
         market_inputs=MarketInputs(
             market_area="Barcelona/Eixample",
@@ -51,7 +53,8 @@ def _decision() -> PriceDecision:
         calculation=Calculation(
             target_margin=0.05,
             minimum_price_eur=50.0,
-            floor_type="structural_full_margin",
+            break_even_revenue_eur=2.0,
+            profitable_floor_eur=50.0,
             floor_policy="soft",
             commission_pct=0.15,
             commission_base="total_revenue",
@@ -65,7 +68,6 @@ def _decision() -> PriceDecision:
                 LosFloorCandidate(
                     stay_length=n,
                     minimum_price_eur=50.0,
-                    floor_type="structural_full_margin",
                     floor_policy="soft",
                     rule_applied="market_competitive",
                     suggested_price_eur=95.0,

@@ -115,26 +115,77 @@ def seed_owners(conn: Any, owners: list[Owner]) -> int:
     return len(owners)
 
 
+def resolve_owner_commission_cost_definition_id(
+    conn: Any, revenue_base: str, rate: float
+) -> str:
+    """Phase 20 (ADR-0013 §4): the same upsert-by-shape pattern
+    resolve_cost_definition_ids() established, specialized for
+    concept='owner_commission' — one CostDefinition per distinct
+    (revenue_base, rate) pair, since (unlike the other 13 concepts) this one
+    genuinely varies per apartment/contract, not just once globally. Reuses
+    an existing row when the exact same (revenue_base, rate) pair is already
+    present. Returns the cost_definition_id."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT cost_definition_id FROM cost_definitions
+            WHERE concept = 'owner_commission'
+              AND revenue_base = %(revenue_base)s AND rate = %(rate)s
+            """,
+            {"revenue_base": revenue_base, "rate": rate},
+        )
+        existing = cur.fetchone()
+        if existing is not None:
+            return str(existing[0])
+
+        cur.execute(
+            """
+            INSERT INTO cost_definitions
+                (concept, scope, behavior, trigger, calculation_base,
+                 recurrence, revenue_base, rate)
+            VALUES ('owner_commission', 'booking', 'variable', 'revenue',
+                    'pct_adjusted_revenue', 'per_booking', %(revenue_base)s,
+                    %(rate)s)
+            RETURNING cost_definition_id
+            """,
+            {"revenue_base": revenue_base, "rate": rate},
+        )
+        (cost_definition_id,) = cur.fetchone()
+
+        cur.execute(
+            """
+            INSERT INTO cost_allocation_rules (cost_definition_id, method)
+            VALUES (%(cost_definition_id)s, 'direct')
+            """,
+            {"cost_definition_id": cost_definition_id},
+        )
+    conn.commit()
+    return str(cost_definition_id)
+
+
 def seed_owner_contracts(conn: Any, contracts: list[OwnerContract]) -> int:
     # Phase 11 (ADR-0011 backlog #5): one contract per apartment, from
     # data.py's build_owner_contracts() — must run after both
     # seed_apartment_market_segments (FK to apartment_id) and seed_owners
-    # (FK to owner_id).
+    # (FK to owner_id). Phase 20 (ADR-0013 §4): commission_base/commission_pct
+    # are resolved into a CostDefinition first, then only cost_definition_id
+    # is stored on the contract row itself.
     with conn.cursor() as cur:
         for contract in contracts:
+            cost_definition_id = resolve_owner_commission_cost_definition_id(
+                conn, contract.commission_base, contract.commission_pct
+            )
             cur.execute(
                 """
                 INSERT INTO owner_contracts
-                    (apartment_id, owner_id, commission_base, commission_pct)
-                VALUES (%(apartment_id)s, %(owner_id)s, %(commission_base)s,
-                        %(commission_pct)s)
+                    (apartment_id, owner_id, cost_definition_id)
+                VALUES (%(apartment_id)s, %(owner_id)s, %(cost_definition_id)s)
                 ON CONFLICT (apartment_id) DO NOTHING
                 """,
                 {
                     "apartment_id": contract.apartment_id,
                     "owner_id": contract.owner_id,
-                    "commission_base": contract.commission_base,
-                    "commission_pct": contract.commission_pct,
+                    "cost_definition_id": cost_definition_id,
                 },
             )
     conn.commit()
@@ -167,6 +218,7 @@ def resolve_cost_definition_ids(
                   AND calculation_base = %(calculation_base)s
                   AND recurrence = %(recurrence)s
                   AND revenue_base IS NOT DISTINCT FROM %(revenue_base)s
+                  AND rate IS NOT DISTINCT FROM %(rate)s
                 """,
                 {
                     "concept": spec.concept,
@@ -176,6 +228,7 @@ def resolve_cost_definition_ids(
                     "calculation_base": spec.calculation_base,
                     "recurrence": spec.recurrence,
                     "revenue_base": spec.revenue_base,
+                    "rate": spec.rate,
                 },
             )
             existing = cur.fetchone()
@@ -187,9 +240,10 @@ def resolve_cost_definition_ids(
                 """
                 INSERT INTO cost_definitions
                     (concept, scope, behavior, trigger, calculation_base,
-                     recurrence, revenue_base)
+                     recurrence, revenue_base, rate)
                 VALUES (%(concept)s, %(scope)s, %(behavior)s, %(trigger)s,
-                        %(calculation_base)s, %(recurrence)s, %(revenue_base)s)
+                        %(calculation_base)s, %(recurrence)s, %(revenue_base)s,
+                        %(rate)s)
                 RETURNING cost_definition_id
                 """,
                 {
@@ -200,6 +254,7 @@ def resolve_cost_definition_ids(
                     "calculation_base": spec.calculation_base,
                     "recurrence": spec.recurrence,
                     "revenue_base": spec.revenue_base,
+                    "rate": spec.rate,
                 },
             )
             (cost_definition_id,) = cur.fetchone()

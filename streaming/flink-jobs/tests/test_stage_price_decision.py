@@ -16,7 +16,7 @@ from shared_schemas.market_price import (
 def _cost(
     apartment_id="BCN-001",
     variable_cost=100.0,
-    one_time_cost=0.0,
+    per_booking_cost=0.0,
     updated_at=None,
     property_decision_components=(),
 ):
@@ -29,7 +29,7 @@ def _cost(
         bedrooms=0,
         fixed_cost_eur=0.0,
         variable_cost_eur=variable_cost,
-        one_time_cost_eur=one_time_cost,
+        per_booking_cost_eur=per_booking_cost,
         total_monthly_cost_eur=variable_cost * 30,
         available_days=30,
         cost_lines_count=1,
@@ -91,7 +91,6 @@ def test_los_floor_matrix_stay_length_1_matches_top_level_calculation():
 
     los_1 = matrix_by_stay_length[1]
     assert los_1.minimum_price_eur == calc.minimum_price_eur
-    assert los_1.floor_type == calc.floor_type
     assert los_1.floor_policy == calc.floor_policy
     assert los_1.rule_applied == calc.rule_applied
     assert los_1.suggested_price_eur == results[0].output.suggested_price_eur
@@ -153,9 +152,13 @@ def test_market_update_fans_out_across_known_apartments():
 
 
 def test_cost_update_fans_out_across_known_nights():
+    # ADR-0013 §5: the floor no longer varies by days_to_arrival — both
+    # nights below share the exact same floor (target_margin=0.05 -> soft),
+    # only rule_applied differs, driven purely by each night's own market
+    # rate.
     fn, ctx = _make_function()
-    near_night = date.today() + timedelta(days=7)  # contribution floor
-    far_night = date.today() + timedelta(days=20)  # structural_reduced_margin floor
+    near_night = date.today() + timedelta(days=7)
+    far_night = date.today() + timedelta(days=20)
     list(fn.process_element2(_market(target_date=near_night, avg_rate=90.0), ctx))
     list(fn.process_element2(_market(target_date=far_night, avg_rate=300.0), ctx))
 
@@ -165,13 +168,13 @@ def test_cost_update_fans_out_across_known_nights():
     assert (
         by_date[str(near_night)].calculation.rule_applied == "minimum_profitable_price"
     )
-    assert by_date[str(near_night)].calculation.floor_type == "contribution"
-    # AC-02 (spec 12): contribution -> hard, structural_reduced_margin -> soft,
-    # wired end-to-end through the real PriceDecisionFunction, not just pricing.py.
-    assert by_date[str(near_night)].calculation.floor_policy == "hard"
+    assert by_date[str(near_night)].calculation.floor_policy == "soft"
     assert by_date[str(far_night)].calculation.rule_applied == "market_competitive"
-    assert by_date[str(far_night)].calculation.floor_type == "structural_reduced_margin"
     assert by_date[str(far_night)].calculation.floor_policy == "soft"
+    assert (
+        by_date[str(near_night)].calculation.minimum_price_eur
+        == by_date[str(far_night)].calculation.minimum_price_eur
+    )
 
 
 def test_past_target_date_is_dropped():
@@ -248,7 +251,9 @@ def test_minimum_stay_recommendation_found_when_one_time_cost_dilutes():
     # but LOS 2 already dilutes it enough to clear the floor.
     fn, ctx = _make_function()
     list(
-        fn.process_element1(_cost("apt-A", variable_cost=0.0, one_time_cost=110.0), ctx)
+        fn.process_element1(
+            _cost("apt-A", variable_cost=0.0, per_booking_cost=110.0), ctx
+        )
     )
     results = list(fn.process_element2(_market(days_from_today=45, avg_rate=90.0), ctx))
 
@@ -265,7 +270,7 @@ def test_minimum_stay_recommendation_found_when_one_time_cost_dilutes():
 
 
 def test_minimum_stay_recommendation_not_viable_when_only_variable_cost_is_the_issue():
-    # AC-05: one_time_cost_eur=0.0 here (the _cost() default), so
+    # AC-05: per_booking_cost_eur=0.0 here (the _cost() default), so
     # minimum_price_eur is identical across every LOS candidate (nothing to
     # dilute) — minimum_profitable_price at stay_length=1 stays that way at
     # every candidate. recommended_min_stay is correctly None, and the
@@ -358,7 +363,11 @@ def test_multiple_channels_can_have_different_rule_applied():
     # a high, uncompetitive rate for one channel and a very low rate for
     # another land on different rule_applied values within the same decision.
     fn, ctx = _make_function()
-    list(fn.process_element1(_cost("apt-A", variable_cost=5.0, one_time_cost=0.0), ctx))
+    list(
+        fn.process_element1(
+            _cost("apt-A", variable_cost=5.0, per_booking_cost=0.0), ctx
+        )
+    )
     list(fn.process_element2(_market(days_from_today=7, avg_rate=200.0), ctx))
     list(
         fn.process_element2(

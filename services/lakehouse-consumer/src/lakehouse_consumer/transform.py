@@ -91,7 +91,7 @@ def _channel_price_matrix(calculation: dict[str, Any]) -> list[dict[str, Any]]:
                 candidate["market_reference_price_eur"]
             ),
             "minimum_price_eur": _num(candidate["minimum_price_eur"]),
-            "floor_type": candidate["floor_type"],
+            "floor_type": candidate.get("floor_type"),
             "floor_policy": candidate["floor_policy"],
             "rule_applied": candidate["rule_applied"],
             "suggested_price_eur": _num(candidate["suggested_price_eur"]),
@@ -105,15 +105,24 @@ def _channel_price_matrix(calculation: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _cost_breakdown(cost_inputs: dict[str, Any]) -> list[dict[str, Any]]:
-    """Coerces cost_inputs.cost_breakdown (Phase 17, ADR-0011 backlog #3).
-    [] both for a record predating this phase (key absent) and for one with
-    no matching lines in the period (shouldn't happen in practice, but the
-    same honest answer either way) — same convention channel_price_matrix
-    already established."""
+    """Coerces cost_inputs.cost_breakdown (Phase 17, ADR-0011 backlog #3;
+    extended by Phase 20, ADR-0013, spec 20 §2). [] both for a record
+    predating Phase 17 (key absent) and for one with no matching lines in
+    the period (shouldn't happen in practice, but the same honest answer
+    either way) — same convention channel_price_matrix already established.
+    A record between Phase 17 and Phase 20 has entries without the 6 new
+    dimension keys — None for each (honest: those dimensions were never
+    computed for it), not fabricated."""
     return [
         {
             "concept": entry["concept"],
             "amount_eur": _num(entry["amount_eur"]),
+            "scope": entry.get("scope"),
+            "behavior": entry.get("behavior"),
+            "trigger": entry.get("trigger"),
+            "calculation_base": entry.get("calculation_base"),
+            "recurrence": entry.get("recurrence"),
+            "allocation_method": entry.get("allocation_method"),
         }
         for entry in cost_inputs.get("cost_breakdown", [])
     ]
@@ -150,10 +159,28 @@ def row_from_new_image(
             "available_days": _int(cost_inputs["available_days"]),
             "fixed_cost_eur": _num(cost_inputs["fixed_cost_eur"]),
             "variable_cost_eur": _num(cost_inputs["variable_cost_eur"]),
-            "one_time_cost_eur": _num(cost_inputs["one_time_cost_eur"]),
+            # Phase 20 (ADR-0013): renamed from one_time_cost_eur — a record
+            # predating this phase only has the old key, never both.
+            "per_booking_cost_eur": _num(
+                cost_inputs.get(
+                    "per_booking_cost_eur", cost_inputs.get("one_time_cost_eur")
+                )
+            ),
             "cost_lines_count": _int(cost_inputs.get("cost_lines_count")),
             # Phase 17 (ADR-0011 backlog #3).
             "cost_breakdown": _cost_breakdown(cost_inputs),
+            # Phase 20 (ADR-0013): a record predating this phase has neither
+            # key — re-derived from that same record's own fixed_cost_eur/
+            # variable_cost_eur (fixed_and_allocated_costs_eur) or left at
+            # 0.0 (p — no percentage-cost concept existed to sum), never a
+            # fabricated constant.
+            "fixed_and_allocated_costs_eur": _num(
+                cost_inputs.get(
+                    "fixed_and_allocated_costs_eur",
+                    cost_inputs["fixed_cost_eur"] + cost_inputs["variable_cost_eur"],
+                )
+            ),
+            "p": _num(cost_inputs.get("p", 0.0)),
         },
         "market_inputs": {
             "market_area": market_inputs["market_area"],
@@ -166,12 +193,19 @@ def row_from_new_image(
         "calculation": {
             "target_margin": _num(calculation["target_margin"]),
             "minimum_price_eur": _num(calculation["minimum_price_eur"]),
-            "floor_type": calculation["floor_type"],
-            # Phase 12 (ADR-0011 backlog #10): a record predating this phase
+            # Phase 20 (ADR-0013 §5): RETIRED — never written for a new
+            # record (column stays forever, just always null going forward).
+            "floor_type": calculation.get("floor_type"),
+            # Phase 12 (ADR-0011 backlog #10): a record predating that phase
             # has no floor_policy at all — re-derived from that same
-            # record's own floor_type, never a fabricated constant.
-            "floor_policy": calculation.get(
-                "floor_policy", _floor_policy_for(calculation["floor_type"])
+            # record's own floor_type when present (pre-Phase-20 shape),
+            # else from target_margin (Phase 20 onward, ADR-0013 §5), never a
+            # fabricated constant.
+            "floor_policy": calculation.get("floor_policy")
+            or (
+                _floor_policy_for(calculation["floor_type"])
+                if calculation.get("floor_type")
+                else ("hard" if calculation["target_margin"] == 0 else "soft")
             ),
             "commission_pct": _num(calculation["commission_pct"]),
             "days_to_arrival": _int(calculation["days_to_arrival"]),
@@ -201,9 +235,12 @@ def row_from_new_image(
                 {
                     "stay_length": _int(candidate["stay_length"]),
                     "minimum_price_eur": _num(candidate["minimum_price_eur"]),
-                    "floor_type": candidate["floor_type"],
-                    "floor_policy": candidate.get(
-                        "floor_policy", _floor_policy_for(candidate["floor_type"])
+                    "floor_type": candidate.get("floor_type"),
+                    "floor_policy": candidate.get("floor_policy")
+                    or (
+                        _floor_policy_for(candidate["floor_type"])
+                        if candidate.get("floor_type")
+                        else ("hard" if calculation["target_margin"] == 0 else "soft")
                     ),
                     "rule_applied": candidate["rule_applied"],
                     "suggested_price_eur": _num(candidate["suggested_price_eur"]),
@@ -235,6 +272,20 @@ def row_from_new_image(
             "minimum_stay_recommendation": _minimum_stay_recommendation(calculation),
             # Phase 16 (ADR-0011 backlog #2).
             "channel_price_matrix": _channel_price_matrix(calculation),
+            # Phase 20 (ADR-0013): a record predating this phase has neither
+            # — re-derived as best as possible from minimum_price_eur/
+            # target_margin (never fabricated from nothing), same fallback
+            # spirit as fixed_and_allocated_costs_eur above.
+            "break_even_revenue_eur": _num(
+                calculation.get(
+                    "break_even_revenue_eur", calculation["minimum_price_eur"]
+                )
+            ),
+            "profitable_floor_eur": _num(
+                calculation.get(
+                    "profitable_floor_eur", calculation["minimum_price_eur"]
+                )
+            ),
         },
         "output": {
             "suggested_price_eur": _num(output["suggested_price_eur"]),

@@ -1,6 +1,6 @@
 {
   "decision_id": "c3d4e5f6-89ab-4562-b3fc-2c963f66afa6",
-  "schema_version": "2.0",
+  "schema_version": "1.0",
   "apartment_id": "a1b2c3d4-0001",
   "apartment_reference": "BCN-042",
   "target_date": "2026-08-15",
@@ -16,70 +16,32 @@
     "cost_breakdown": [
       {
         "concept": "electricity",
-        "amount_eur": 3.5,
-        "scope": "property",
-        "behavior": "variable",
-        "trigger": "time",
-        "calculation_base": "fixed_amount",
-        "recurrence": "monthly",
-        "allocation_method": "calendar_day"
+        "amount_eur": 3.5
       },
       {
         "concept": "water",
-        "amount_eur": 1.2,
-        "scope": "property",
-        "behavior": "variable",
-        "trigger": "time",
-        "calculation_base": "fixed_amount",
-        "recurrence": "monthly",
-        "allocation_method": "calendar_day"
+        "amount_eur": 1.2
       },
       {
         "concept": "internet",
-        "amount_eur": 1.0,
-        "scope": "property",
-        "behavior": "fixed",
-        "trigger": "time",
-        "calculation_base": "fixed_amount",
-        "recurrence": "monthly",
-        "allocation_method": "calendar_day"
+        "amount_eur": 1.0
       },
       {
         "concept": "pms_subscription",
-        "amount_eur": 2.0,
-        "scope": "property",
-        "behavior": "fixed",
-        "trigger": "time",
-        "calculation_base": "fixed_amount",
-        "recurrence": "monthly",
-        "allocation_method": "calendar_day"
+        "amount_eur": 2.0
       },
       {
         "concept": "ota_fee",
-        "amount_eur": 4.97,
-        "scope": "booking",
-        "behavior": "variable",
-        "trigger": "reservation",
-        "calculation_base": "pct_adjusted_revenue",
-        "recurrence": "per_booking",
-        "allocation_method": "booking"
+        "amount_eur": 4.97
       },
       {
         "concept": "cleaning",
-        "amount_eur": 1.0,
-        "scope": "booking",
-        "behavior": "variable",
-        "trigger": "reservation",
-        "calculation_base": "fixed_amount",
-        "recurrence": "per_booking",
-        "allocation_method": "occupied_night"
+        "amount_eur": 1.0
       }
     ],
     "fixed_cost_eur": 8.0,
     "variable_cost_eur": 5.67,
-    "fixed_and_allocated_costs_eur": 13.67,
-    "per_booking_cost_eur": 0.0,
-    "p": 0.15
+    "one_time_cost_eur": 0.0
   },
   "market_inputs": {
     "market_area": "Barcelona/Eixample",
@@ -115,7 +77,8 @@
             "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
             "impact": 93.44
           }
-        ]
+        ],
+        "floor_type": "structural_full_margin"
       },
       {
         "stay_length": 2,
@@ -130,7 +93,8 @@
             "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
             "impact": 93.44
           }
-        ]
+        ],
+        "floor_type": "structural_full_margin"
       },
       {
         "stay_length": 3,
@@ -145,7 +109,8 @@
             "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
             "impact": 93.44
           }
-        ]
+        ],
+        "floor_type": "structural_full_margin"
       },
       {
         "stay_length": 7,
@@ -160,7 +125,8 @@
             "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
             "impact": 93.44
           }
-        ]
+        ],
+        "floor_type": "structural_full_margin"
       },
       {
         "stay_length": 14,
@@ -175,7 +141,8 @@
             "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
             "impact": 93.44
           }
-        ]
+        ],
+        "floor_type": "structural_full_margin"
       }
     ],
     "decision_components": [
@@ -212,8 +179,7 @@
       "suggested_price_per_reservation_eur": 114.47
     },
     "channel_price_matrix": [],
-    "break_even_revenue_eur": 16.08,
-    "profitable_floor_eur": 21.03
+    "floor_type": "structural_full_margin"
   },
   "output": {
     "suggested_price_eur": 114.47,

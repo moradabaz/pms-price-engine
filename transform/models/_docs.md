@@ -43,28 +43,45 @@ calendar month billing_period covers.
 
 {% docs total_monthly_cost_eur %}
 Sum of every payment_line (electricity, cleaning, OTA fees, and so on)
-allocated to this apartment for the billing period. Equals fixed_cost_eur
-plus variable_cost_eur plus one_time_cost_eur, before per-night
+allocated to this apartment for the billing period, before per-night
 amortisation.
 {% enddocs %}
 
 {% docs fixed_cost_eur %}
-Total for the billing period of costs classified cost_type=fixed
-(community fee, insurance, subscriptions, rent, and so on). Cost that
-recurs regardless of how many nights are booked. Divided by
-available_days to get a per-night amount.
+Informational only (since the Phase 20 cost-model rewrite, ADR-0013) —
+total for the billing period of costs whose CostDefinition classifies them
+as behavior=fixed (community fee, insurance, subscriptions, rent, and so
+on), grouped for display. No longer read directly by the pricing formula;
+see fixed_and_allocated_costs_eur.
 {% enddocs %}
 
 {% docs variable_cost_eur %}
-Total for the billing period of costs classified cost_type=variable. Cost
-that scales with usage or with how many nights or bookings there are
-(cleaning per stay, OTA commission, channel manager fee, and so on).
+Informational only (since the Phase 20 cost-model rewrite, ADR-0013) —
+total for the billing period of costs whose CostDefinition classifies them
+as behavior=variable/semi_variable, grouped for display. No longer read
+directly by the pricing formula; see fixed_and_allocated_costs_eur.
 {% enddocs %}
 
-{% docs one_time_cost_eur %}
-Total for the billing period of costs classified cost_type=one_time. A
-single non-recurring charge (e.g. a repair), amortised or excluded
-depending on config rather than divided evenly like fixed_cost_eur.
+{% docs per_booking_cost_eur %}
+Renamed from one_time_cost_eur (Phase 20 cost-model rewrite, ADR-0013).
+Total for the billing period of costs whose CostAllocationRule allocates
+them per booking (a single non-recurring or per-turnover charge, e.g. a
+repair), amortised across a stay's nights rather than divided evenly like
+fixed_and_allocated_costs_eur.
+{% enddocs %}
+
+{% docs fixed_and_allocated_costs_eur %}
+The external spec's own Break-Even/Profitable Floor term (ADR-0013):
+fixed_cost_eur plus variable_cost_eur — every non-percentage cost, already
+allocated to a per-night figure. Feeds minimum_price_eur/
+break_even_revenue_eur/profitable_floor_eur directly.
+{% enddocs %}
+
+{% docs p %}
+Sum of every applicable percentage cost's rate for this apartment/period
+(ADR-0013) — OTA fees, owner commission, and any other cost defined as a
+percentage of revenue. Used as the "p" term in the Break-Even/Profitable
+Floor formula: BER = fixed_and_allocated_costs_eur / (1 - p).
 {% enddocs %}
 
 {% docs cost_lines_count %}
@@ -74,11 +91,13 @@ decision's cost figures. An audit count, not used in any pricing formula.
 
 {% docs cost_breakdown %}
 Per-night cost broken down by concept (electricity, cleaning, ota_fee,
-and so on). See docs/metrics-dictionary.md for what each concept means.
+and so on), plus (since the Phase 20 cost-model rewrite) each concept's own
+scope/behavior/trigger/calculation_base/recurrence/allocation_method
+dimensions. See docs/metrics-dictionary.md for what each concept means.
 Sparse: a concept absent from the billing period has no row here, never
 a zero row. Already fully counted inside fixed_cost_eur, variable_cost_eur
-and one_time_cost_eur above. This is a breakdown for transparency, not an
-extra cost.
+and per_booking_cost_eur above. This is a breakdown for transparency, not
+an extra cost.
 {% enddocs %}
 
 {% docs avg_nightly_rate_eur %}
@@ -118,23 +137,40 @@ fraction (e.g. 0.20 = 20%). Used to compute minimum_price_eur.
 {% docs minimum_price_eur %}
 The minimum profitable price (cost floor): the lowest nightly price that
 still covers cost and clears target_margin, after accounting for
-commission_pct on top. suggested_price_eur is never allowed below this,
-except through an explicit manual_override.
+commission_pct/p on top. Always equals profitable_floor_eur (Phase 20
+cost-model rewrite, ADR-0013). suggested_price_eur is never allowed below
+this, except through an explicit manual_override.
+{% enddocs %}
+
+{% docs break_even_revenue_eur %}
+BER, the external spec's own Break-Even Revenue (ADR-0013): the price that
+covers fixed_and_allocated_costs_eur with zero margin (p included, m=0).
+Informational/explainability only — never itself substituted as the
+enforced floor; see minimum_price_eur/profitable_floor_eur.
+{% enddocs %}
+
+{% docs profitable_floor_eur %}
+MPR, the external spec's own Minimum Profitable Revenue (ADR-0013): the
+price that covers fixed_and_allocated_costs_eur plus target_margin (p
+included). Always equals minimum_price_eur — the floor actually enforced.
 {% enddocs %}
 
 {% docs floor_type %}
-Which formula produced minimum_price_eur. structural_full_margin: healthy
-occupancy, full target_margin required. structural_reduced_margin: low
-occupancy, margin requirement relaxed to avoid an empty property.
-contribution: accept a lower margin just to cover cost and not lose
-money outright. See docs/profitable-pricing-glossary.md section 5.
+Retired by the Phase 20 cost-model rewrite (ADR-0013) — the antelación-
+tiered floor this column used to name no longer exists; every decision
+since uses the same flat Break-Even/Profitable Floor formula regardless of
+days_to_arrival. Kept only for rows decided before that rewrite; always
+null afterward. See floor_policy/break_even_revenue_eur/
+profitable_floor_eur for the current model.
 {% enddocs %}
 
 {% docs floor_policy %}
 Whether minimum_price_eur is a hard floor (never publish below it) or a
 soft floor (may be crossed only via an authorised manual_override, with
-the expected loss recorded). See docs/profitable-pricing-glossary.md
-section 9.
+the expected loss recorded). Since the Phase 20 cost-model rewrite
+(ADR-0013): hard iff target_margin is 0 (break_even_revenue_eur equals
+profitable_floor_eur), soft otherwise — no longer derived from floor_type.
+See docs/profitable-pricing-glossary.md section 9.
 {% enddocs %}
 
 {% docs commission_pct %}

@@ -4,6 +4,7 @@ import pytest
 from flink_jobs.cost_aggregation import (
     ConceptAmount,
     EnrichedPaymentLine,
+    PercentageCostComponent,
     aggregate_cost,
     retained_billing_period_ends,
 )
@@ -20,6 +21,8 @@ def _line(
     allocation_method="calendar_day",
     scope="property",
     calculation_base="fixed_amount",
+    revenue_base=None,
+    rate=None,
 ):
     return EnrichedPaymentLine(
         event_id=event_id,
@@ -34,10 +37,24 @@ def _line(
         trigger="time",
         calculation_base=calculation_base,
         recurrence=recurrence,
-        revenue_base=None,
+        revenue_base=revenue_base,
         allocation_method=allocation_method,
         weight_config=None,
+        rate=rate,
     )
+
+
+def _concept_amount(concept, amount_eur, **dims):
+    defaults = dict(
+        scope="property",
+        behavior="variable",
+        trigger="time",
+        calculation_base="fixed_amount",
+        recurrence="monthly",
+        allocation_method="calendar_day",
+    )
+    defaults.update(dims)
+    return ConceptAmount(concept=concept, amount_eur=amount_eur, **defaults)
 
 
 def test_empty_returns_none():
@@ -127,13 +144,13 @@ def test_one_off_line_is_averaged_not_summed():
         ),
     ]
     result = aggregate_cost(lines)
-    assert result.one_time_cost_eur == 70.0  # average, not 140.0
+    assert result.per_booking_cost_eur == 70.0  # average, not 140.0
 
 
 def test_no_one_off_lines_yields_zero():
     lines = [_line("e1", 100.0, "2026-06-01", "2026-06-30")]
     result = aggregate_cost(lines)
-    assert result.one_time_cost_eur == 0.0
+    assert result.per_booking_cost_eur == 0.0
 
 
 def test_occupied_night_and_booking_methods_deferred_not_in_fixed_variable():
@@ -225,8 +242,8 @@ def test_cost_breakdown_groups_by_concept_per_day():
     ]
     result = aggregate_cost(lines)
     assert result.cost_breakdown == (
-        ConceptAmount(concept="electricity", amount_eur=12.0),  # (300+60)/30
-        ConceptAmount(concept="water", amount_eur=4.0),  # 120/30
+        _concept_amount("electricity", 12.0),  # (300+60)/30
+        _concept_amount("water", 4.0, behavior="fixed"),  # 120/30
     )
 
 
@@ -246,8 +263,32 @@ def test_cost_breakdown_omits_concepts_with_no_lines():
     lines = [_line("e1", 100.0, "2026-06-01", "2026-06-30")]
     result = aggregate_cost(lines)
     assert result.cost_breakdown == (
-        ConceptAmount(concept="electricity", amount_eur=round(100 / 30, 2)),
+        _concept_amount("electricity", round(100 / 30, 2)),
     )
+
+
+def test_percentage_lines_excluded_from_fixed_variable():
+    # Phase 20 (ADR-0013 §3): a percentage CostDefinition (e.g. ota_fee)
+    # never contributes an EUR amount to fixed/variable — only its rate,
+    # via percentage_costs. It still appears in cost_breakdown (display).
+    lines = [
+        _line(
+            "e1", 300.0, "2026-06-01", "2026-06-30",
+            concept="ota_fee", calculation_base="pct_adjusted_revenue",
+            revenue_base="total_revenue", rate=0.15, recurrence="per_booking",
+            allocation_method="booking",
+        ),
+        _line("e2", 60.0, "2026-06-01", "2026-06-30", behavior="variable"),
+    ]
+    result = aggregate_cost(lines)
+    assert result.variable_cost_eur == 2.0  # only e2: 60/30
+    assert result.fixed_cost_eur == 0.0
+    assert result.percentage_costs == (
+        PercentageCostComponent(
+            concept="ota_fee", rate=0.15, revenue_base="total_revenue"
+        ),
+    )
+    assert {c.concept for c in result.cost_breakdown} == {"electricity", "ota_fee"}
 
 
 def test_retained_billing_period_ends_keeps_top_two():

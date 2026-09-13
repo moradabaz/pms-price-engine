@@ -76,6 +76,44 @@ def test_emits_enriched_payment_line_once_both_broadcasts_arrive():
     assert enriched.billing_period_start == date(2026, 6, 1)
 
 
+def test_percentage_definition_rate_propagates():
+    # Phase 20 (ADR-0013 §3) regression: EnrichedPaymentLine.rate was
+    # missing from this stage's constructor call entirely — every
+    # percentage cost silently contributed 0.0 to `p` downstream, live-
+    # verified against a real running stack before being caught here.
+    fn = CostDefinitionResolutionFunction()
+    ctx = FakeMultiState()
+    cost_definition_id = "00000000-0000-0000-0000-000000000002"
+
+    fn.process_broadcast_element(
+        CostDefinitionRow(
+            cost_definition_id=cost_definition_id,
+            concept="ota_fee",
+            scope="booking",
+            behavior="variable",
+            trigger="reservation",
+            calculation_base="pct_adjusted_revenue",
+            recurrence="per_booking",
+            revenue_base="total_revenue",
+            rate=0.15,
+        ),
+        ctx,
+    )
+    fn.process_broadcast_element(
+        CostAllocationRuleRow(
+            cost_definition_id=cost_definition_id,
+            method="booking",
+            weight_config=None,
+        ),
+        ctx,
+    )
+
+    results = list(fn.process_element(_payment_line(cost_definition_id), ctx))
+
+    assert len(results) == 1
+    assert results[0].rate == 0.15
+
+
 def test_no_emission_when_only_definition_arrives():
     fn = CostDefinitionResolutionFunction()
     ctx = FakeMultiState()

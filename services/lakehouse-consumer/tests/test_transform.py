@@ -283,10 +283,61 @@ def test_row_from_new_image_converts_cost_breakdown_when_populated(sample_new_im
     row = row_from_new_image(image, "INSERT", ingested_at)
 
     breakdown = row["cost_inputs"]["cost_breakdown"]
+    # Phase 20 (ADR-0013): a record predating this phase's 6 new dimensions
+    # gets None for each — honest ("never computed"), not fabricated.
+    _absent_dims = {
+        "scope": None,
+        "behavior": None,
+        "trigger": None,
+        "calculation_base": None,
+        "recurrence": None,
+        "allocation_method": None,
+    }
     assert breakdown == [
-        {"concept": "electricity", "amount_eur": 3.5},
-        {"concept": "cleaning", "amount_eur": 1.0},
+        {"concept": "electricity", "amount_eur": 3.5, **_absent_dims},
+        {"concept": "cleaning", "amount_eur": 1.0, **_absent_dims},
     ]
+
+
+def test_row_from_new_image_passes_through_phase_20_fields_directly(sample_new_image):
+    # ADR-0013: a real Phase-20-shaped record (p/fixed_and_allocated_costs_eur/
+    # per_booking_cost_eur/break_even_revenue_eur/profitable_floor_eur present,
+    # floor_type absent) must pass straight through — no fallback derivation.
+    image = sample_new_image("00000000-2222-3333-4444-555555555555", 150.0)
+    ci = image["cost_inputs"]
+    del ci["one_time_cost_eur"]
+    ci["per_booking_cost_eur"] = 12.0
+    ci["fixed_and_allocated_costs_eur"] = 37.8
+    ci["p"] = 0.2
+    ci["cost_breakdown"] = [
+        {
+            "concept": "ota_fee",
+            "amount_eur": 5.0,
+            "scope": "booking",
+            "behavior": "variable",
+            "trigger": "reservation",
+            "calculation_base": "pct_adjusted_revenue",
+            "recurrence": "per_booking",
+            "allocation_method": "booking",
+        }
+    ]
+    calc = image["calculation"]
+    del calc["floor_type"]
+    del calc["los_floor_matrix"][0]["floor_type"]
+    calc["break_even_revenue_eur"] = 30.0
+    calc["profitable_floor_eur"] = 37.8
+
+    ingested_at = datetime(2026, 8, 4, 10, 0, 5, tzinfo=UTC)
+    row = row_from_new_image(image, "INSERT", ingested_at)
+
+    assert row["cost_inputs"]["per_booking_cost_eur"] == 12.0
+    assert row["cost_inputs"]["fixed_and_allocated_costs_eur"] == 37.8
+    assert row["cost_inputs"]["p"] == 0.2
+    assert row["cost_inputs"]["cost_breakdown"][0]["scope"] == "booking"
+    assert row["calculation"]["floor_type"] is None
+    assert row["calculation"]["break_even_revenue_eur"] == 30.0
+    assert row["calculation"]["profitable_floor_eur"] == 37.8
+    assert row["calculation"]["floor_policy"] == "soft"
 
 
 def test_row_from_new_image_derives_missing_floor_policy_from_floor_type_hard(

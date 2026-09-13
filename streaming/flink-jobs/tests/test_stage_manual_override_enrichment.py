@@ -43,7 +43,9 @@ def _decision(apartment_id="BCN-001", target_date=date(2026, 9, 1)) -> PriceDeci
             available_days=30,
             fixed_cost_eur=70.0,
             variable_cost_eur=38.0,
-            one_time_cost_eur=10.0,
+            fixed_and_allocated_costs_eur=108.0,
+            per_booking_cost_eur=10.0,
+            p=0.15,
         ),
         market_inputs=MarketInputs(
             market_area="Madrid/Centro",
@@ -54,7 +56,8 @@ def _decision(apartment_id="BCN-001", target_date=date(2026, 9, 1)) -> PriceDeci
         calculation=Calculation(
             target_margin=0.05,
             minimum_price_eur=147.5,
-            floor_type="structural_full_margin",
+            break_even_revenue_eur=108.0,
+            profitable_floor_eur=147.5,
             floor_policy="soft",
             commission_pct=0.15,
             commission_base="total_revenue",
@@ -68,7 +71,6 @@ def _decision(apartment_id="BCN-001", target_date=date(2026, 9, 1)) -> PriceDeci
                 LosFloorCandidate(
                     stay_length=1,
                     minimum_price_eur=147.5,
-                    floor_type="structural_full_margin",
                     floor_policy="soft",
                     rule_applied="minimum_floor",
                     suggested_price_eur=147.5,

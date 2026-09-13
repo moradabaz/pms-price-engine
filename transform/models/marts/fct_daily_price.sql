@@ -8,6 +8,6 @@ select
     decision_id,
     suggested_price_eur,
     rule_applied,
-    floor_type,
+    floor_policy,
     effective_margin
 from {{ ref('int_latest_decision_per_night') }}

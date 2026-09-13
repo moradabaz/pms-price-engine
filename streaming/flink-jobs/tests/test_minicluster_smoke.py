@@ -23,7 +23,7 @@ def _cost(apartment_id: str) -> CostAggregate:
         bedrooms=0,
         fixed_cost_eur=0.0,
         variable_cost_eur=100.0,
-        one_time_cost_eur=0.0,
+        per_booking_cost_eur=0.0,
         total_monthly_cost_eur=3000.0,
         available_days=30,
         cost_lines_count=1,

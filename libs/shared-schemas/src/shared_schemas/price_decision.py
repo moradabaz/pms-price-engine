@@ -6,11 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Mirrors specs/events/price_decision.v1.json field-for-field.
 
-# Shared between Calculation and LosFloorCandidate (Phase 9) — defined once
-# rather than repeating the same enum tuple in two Pydantic models.
-FloorType = Literal[
-    "structural_full_margin", "structural_reduced_margin", "contribution"
-]
 # Renamed 2026-09-12 (ex-"cost_protected"): the cost floor exceeded the
 # property's own market reference, so the floor is charged instead of a
 # market-derived price — this protects profitability, it does not mean the
@@ -18,16 +13,20 @@ FloorType = Literal[
 # "Profitable Floor" — the same concept this value names).
 RuleApplied = Literal["market_competitive", "minimum_floor", "minimum_profitable_price"]
 # Phase 11 (ADR-0011 backlog #5): which revenue base commission_pct is
-# charged against.
+# charged against. Phase 20 (ADR-0013 §4): still meaningful — now the
+# resolved revenue_base of the apartment's own owner-commission
+# CostDefinition, rather than a dedicated owner_contracts column.
 CommissionBase = Literal[
     "total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"
 ]
-# Phase 12 (ADR-0011 backlog #10): explicit classification of floor_type
-# into the external spec's Hard/Soft floor vocabulary.
+# Phase 12 (ADR-0011 backlog #10): explicit classification of the floor into
+# the external spec's Hard/Soft floor vocabulary. Phase 20 (ADR-0013 §5):
+# no longer derived from an antelación-tiered floor_type (retired) — "hard"
+# iff target_margin == 0 (BER and MPR coincide), "soft" otherwise.
 FloorPolicy = Literal["hard", "soft"]
 # Phase 17 (ADR-0011 backlog #3): mirrors payment_line.v1's concept enum
-# field-for-field — a cost_breakdown entry's concept is always one of the
-# 13 values a PaymentLine can carry.
+# field-for-field. Phase 20 (ADR-0013 §4): 'owner_commission' added — the
+# owner-contract commission is now a CostDefinition like any other concept.
 CostConcept = Literal[
     "electricity",
     "water",
@@ -42,6 +41,28 @@ CostConcept = Literal[
     "insurance",
     "community_fee",
     "other",
+    "owner_commission",
+]
+# Phase 20 (ADR-0013, spec 20 §2): mirrors cost_definitions.sql's own
+# dimension enums field-for-field — cost_breakdown entries carry these
+# alongside concept/amount_eur now, informational/display only.
+CostScope = Literal["booking", "property", "company"]
+CostBehavior = Literal["fixed", "variable", "semi_variable"]
+CostTrigger = Literal["reservation", "night", "guest", "time", "revenue", "event"]
+CostCalculationBase = Literal[
+    "fixed_amount", "pct_revenue", "pct_adjusted_revenue", "per_night", "per_guest"
+]
+CostRecurrence = Literal[
+    "per_booking", "daily", "monthly", "quarterly", "annual", "one_off"
+]
+CostAllocationMethod = Literal[
+    "direct",
+    "calendar_day",
+    "available_night",
+    "occupied_night",
+    "booking",
+    "revenue",
+    "weighted",
 ]
 
 # Phase 10 (ADR-0011 backlog #4): closed reason-code vocabulary shared by
@@ -54,9 +75,11 @@ ReasonCode = Literal[
     "rule_market_competitive",
     "rule_minimum_floor",
     "rule_minimum_profitable_price",
-    # Phase 11 (ADR-0011 backlog #5): only on Calculation.decision_components,
-    # never on LosFloorCandidate.decision_components (spec 11 §F/AC-06).
-    "commission_base_netting",
+    # Phase 11 (ADR-0011 backlog #5), generalized by Phase 20 (ADR-0013 §3)
+    # from commission-only to any percentage CostDefinition with a
+    # revenue_base: only on Calculation.decision_components, never on
+    # LosFloorCandidate.decision_components (spec 11 §F/AC-06).
+    "revenue_base_netting",
     # Phase 14 (ADR-0011 backlog #9): only on Calculation.decision_components,
     # never on LosFloorCandidate.decision_components — a human action applied
     # after the whole LOS matrix is computed, not a per-stay-length rule
@@ -80,16 +103,25 @@ class BillingPeriod(BaseModel):
 class CostConceptAmount(BaseModel):
     """One payment_line.concept's own per-day cost for the current billing
     period (Phase 17, ADR-0011 backlog #3) — already fully counted inside
-    fixed_cost_eur/variable_cost_eur/one_time_cost_eur above, same
-    "additional breakdown, not a new cost" convention Phase 11's
+    fixed_cost_eur/variable_cost_eur/fixed_and_allocated_costs_eur above,
+    same "additional breakdown, not a new cost" convention Phase 11's
     ota_related_cost_eur/cleaning_cost_eur established. Only concepts with
     at least one matching line in the period appear — a concept absent from
-    the period has no entry, never a fabricated zero one."""
+    the period has no entry, never a fabricated zero one. Phase 20
+    (ADR-0013, spec 20 §2): gains the CostDefinition's own 6 dimensions —
+    display-only, does not feed the formula (that's fixed_and_allocated_
+    costs_eur/per_booking_cost_eur/p on CostInputs below)."""
 
     model_config = ConfigDict(extra="forbid")
 
     concept: CostConcept
     amount_eur: float = Field(ge=0)
+    scope: CostScope
+    behavior: CostBehavior
+    trigger: CostTrigger
+    calculation_base: CostCalculationBase
+    recurrence: CostRecurrence
+    allocation_method: CostAllocationMethod
 
 
 class CostInputs(BaseModel):
@@ -98,9 +130,20 @@ class CostInputs(BaseModel):
     billing_period: BillingPeriod
     total_monthly_cost_eur: float = Field(ge=0)
     available_days: int = Field(ge=1)
+    # Informational only from Phase 20 onward (ADR-0013) — grouped by
+    # CostDefinition.behavior, no longer read by decide_price() directly.
     fixed_cost_eur: float = Field(ge=0)
     variable_cost_eur: float = Field(ge=0)
-    one_time_cost_eur: float = Field(ge=0)
+    # Phase 20 (ADR-0013): the two terms the Break-Even/Profitable Floor
+    # formula (external spec §11) actually consumes.
+    fixed_and_allocated_costs_eur: float = Field(ge=0)
+    # Renamed from one_time_cost_eur — allocation_method='booking' lines,
+    # still a per-turnover average divided by the candidate's own
+    # stay_length inside decide_price() (unchanged mechanically).
+    per_booking_cost_eur: float = Field(ge=0)
+    # Sum of every applicable CostDefinition.rate for this apartment/period,
+    # including the migrated owner-commission CostDefinition (ADR-0013 §4).
+    p: float = Field(ge=0, le=1)
     cost_lines_count: int | None = Field(default=None, ge=0)
     # Phase 17 (ADR-0011 backlog #3): always present but legitimately can be
     # empty ([]) — same "required list, sparse content" convention Phase 16's
@@ -187,7 +230,6 @@ class ChannelPriceCandidate(BaseModel):
     commission_pct: float = Field(ge=0, le=1)
     market_reference_price_eur: float = Field(ge=0)
     minimum_price_eur: float = Field(ge=0)
-    floor_type: FloorType
     floor_policy: FloorPolicy
     rule_applied: RuleApplied
     suggested_price_eur: float = Field(ge=0)
@@ -206,7 +248,6 @@ class LosFloorCandidate(BaseModel):
 
     stay_length: int = Field(ge=1)
     minimum_price_eur: float = Field(ge=0)
-    floor_type: FloorType
     floor_policy: FloorPolicy
     rule_applied: RuleApplied
     suggested_price_eur: float = Field(ge=0)
@@ -222,10 +263,17 @@ class Calculation(BaseModel):
 
     target_margin: float = Field(ge=0)
     minimum_price_eur: float = Field(ge=0)
-    floor_type: FloorType
+    # Phase 20 (ADR-0013 §11): informational, explainability-only (external
+    # spec §14) — never itself substituted as the enforced floor
+    # (minimum_price_eur, always MPR/profitable_floor_eur, plays that role).
+    break_even_revenue_eur: float = Field(ge=0)
+    profitable_floor_eur: float = Field(ge=0)
     floor_policy: FloorPolicy
     commission_pct: float = Field(ge=0, le=1)
     commission_base: CommissionBase
+    # Phase 20 (ADR-0013 §5): no longer read by decide_price()'s floor math
+    # (there are no antelación tiers left to select) — still recorded here
+    # directly by Flink, informational/audit only.
     days_to_arrival: int
     competitiveness_discount: float = Field(ge=0, le=1)
     property_attribute_factor: float = Field(ge=0)
@@ -260,7 +308,11 @@ class PriceDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision_id: UUID
-    schema_version: Literal["1.0"] = "1.0"
+    # Phase 20 (ADR-0013 §8): breaking bump — floor_type removed,
+    # fixed_and_allocated_costs_eur/per_booking_cost_eur/p/
+    # break_even_revenue_eur/profitable_floor_eur added, same class of
+    # change as payment_line.v1's 1.0 -> 2.0 (ADR-0012).
+    schema_version: Literal["2.0"] = "2.0"
     apartment_id: str
     apartment_reference: str
     target_date: date

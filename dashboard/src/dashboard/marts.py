@@ -51,7 +51,7 @@ def price_evolution(settings: DashboardSettings, apartment_id: str) -> pd.DataFr
     return _read_with_retry(
         settings,
         lambda con: con.execute(
-            "select target_date, suggested_price_eur, rule_applied, floor_type,"
+            "select target_date, suggested_price_eur, rule_applied, floor_policy,"
             " effective_margin"
             " from fct_daily_price"
             " where apartment_id = ?"
@@ -67,7 +67,7 @@ def margin_alerts(settings: DashboardSettings) -> pd.DataFrame:
         settings,
         lambda con: con.execute(
             "select apartment_id, target_date, decided_at, suggested_price_eur,"
-            " effective_margin, floor_type"
+            " effective_margin, floor_policy"
             " from fct_margin_alert"
             " order by decided_at desc"
         ).fetchdf(),
@@ -107,9 +107,20 @@ def channel_pricing(
 
 def cost_breakdown(settings: DashboardSettings, apartment_id: str) -> pd.DataFrame:
     """This apartment's most recent decision's cost_breakdown (Phase 17,
-    ADR-0011 backlog #3), one row per concept — empty DataFrame if none
-    (a record predating this phase, or genuinely no matching lines)."""
-    columns = ["concept", "amount_eur"]
+    ADR-0011 backlog #3; extended by Phase 20, ADR-0013, spec 20 §2 with
+    each concept's own scope/behavior/allocation_method), one row per
+    concept — empty DataFrame if none (a record predating Phase 17, or
+    genuinely no matching lines)."""
+    columns = [
+        "concept",
+        "amount_eur",
+        "scope",
+        "behavior",
+        "trigger",
+        "calculation_base",
+        "recurrence",
+        "allocation_method",
+    ]
 
     def _query(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         row = con.execute(

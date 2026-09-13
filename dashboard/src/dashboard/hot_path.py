@@ -109,10 +109,12 @@ def to_display_row(apartment_id: str, item: dict[str, Any]) -> dict[str, Any]:
     display table needs and Arrow (Streamlit's dataframe renderer) doesn't
     handle Decimal natively."""
     cost_inputs = item["cost_inputs"]
+    # Phase 20 (ADR-0013): fixed_and_allocated_costs_eur + per_booking_cost_eur
+    # replaces the old fixed_cost_eur + variable_cost_eur + one_time_cost_eur
+    # sum — same total, new terms.
     total_cost_eur = float(
-        cost_inputs["fixed_cost_eur"]
-        + cost_inputs["variable_cost_eur"]
-        + cost_inputs["one_time_cost_eur"]
+        cost_inputs["fixed_and_allocated_costs_eur"]
+        + cost_inputs["per_booking_cost_eur"]
     )
     avg_market_price_eur = float(item["market_inputs"]["avg_nightly_rate_eur"])
     suggested_price_eur = float(item["output"]["suggested_price_eur"])

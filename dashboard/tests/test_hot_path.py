@@ -69,9 +69,8 @@ def test_to_display_row_flattens_cost_market_and_output():
     item = {
         "target_date": "2026-08-08",
         "cost_inputs": {
-            "fixed_cost_eur": 15.7,
-            "variable_cost_eur": 22.1,
-            "one_time_cost_eur": 2.0,
+                    "fixed_and_allocated_costs_eur": 37.8,
+                    "per_booking_cost_eur": 2.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 145.0},
         "calculation": {
@@ -109,9 +108,8 @@ def test_to_display_row_surfaces_minimum_stay_recommendation_when_present():
     item = {
         "target_date": "2026-08-08",
         "cost_inputs": {
-            "fixed_cost_eur": 0.0,
-            "variable_cost_eur": 0.0,
-            "one_time_cost_eur": 110.0,
+                    "fixed_and_allocated_costs_eur": 0.0,
+                    "per_booking_cost_eur": 110.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 90.0},
         "calculation": {
@@ -143,9 +141,8 @@ def test_to_display_row_defaults_minimum_stay_recommendation_to_none_when_absent
     item = {
         "target_date": "2026-08-08",
         "cost_inputs": {
-            "fixed_cost_eur": 15.7,
-            "variable_cost_eur": 22.1,
-            "one_time_cost_eur": 2.0,
+                    "fixed_and_allocated_costs_eur": 37.8,
+                    "per_booking_cost_eur": 2.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 145.0},
         "calculation": {
@@ -184,9 +181,8 @@ def test_display_rows_with_and_without_a_recommendation_convert_to_arrow():
             {
                 "target_date": "2026-08-08",
                 "cost_inputs": {
-                    "fixed_cost_eur": 0.0,
-                    "variable_cost_eur": 0.0,
-                    "one_time_cost_eur": 110.0,
+                    "fixed_and_allocated_costs_eur": 0.0,
+                    "per_booking_cost_eur": 110.0,
                 },
                 "market_inputs": {"avg_nightly_rate_eur": 90.0},
                 "calculation": {
@@ -206,9 +202,8 @@ def test_display_rows_with_and_without_a_recommendation_convert_to_arrow():
             {
                 "target_date": "2026-08-08",
                 "cost_inputs": {
-                    "fixed_cost_eur": 0.0,
-                    "variable_cost_eur": 0.0,
-                    "one_time_cost_eur": 110.0,
+                    "fixed_and_allocated_costs_eur": 0.0,
+                    "per_booking_cost_eur": 110.0,
                 },
                 "market_inputs": {"avg_nightly_rate_eur": 90.0},
                 "calculation": {
@@ -246,9 +241,8 @@ def test_to_display_row_surfaces_property_reference_price_and_factor():
     item = {
         "target_date": "2026-09-24",
         "cost_inputs": {
-            "fixed_cost_eur": 8.13,
-            "variable_cost_eur": 17.73,
-            "one_time_cost_eur": 0.0,
+                    "fixed_and_allocated_costs_eur": 25.86,
+                    "per_booking_cost_eur": 0.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 305.41},
         "calculation": {

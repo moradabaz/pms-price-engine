@@ -15,7 +15,7 @@ def _cost(pending=(), occupied_nights=0, booking_count=0, available_days=30):
         bedrooms=0,
         fixed_cost_eur=10.0,
         variable_cost_eur=5.0,
-        one_time_cost_eur=0.0,
+        per_booking_cost_eur=0.0,
         total_monthly_cost_eur=450.0,
         available_days=available_days,
         cost_lines_count=1,

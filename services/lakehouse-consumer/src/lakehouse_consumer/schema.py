@@ -19,6 +19,14 @@ from pyiceberg.types import (
 # Field ID note (Phase 17, ADR-0011 backlog #3): the highest ID in use before
 # this phase is 89 (Phase 16's channel_price_matrix.decision_components.impact).
 # This phase's new IDs therefore start at 90.
+# Field ID note (Phase 20, ADR-0013): the highest ID in use before this phase
+# is 93 (Phase 17's cost_breakdown.amount_eur). This phase's new IDs
+# therefore start at 94. floor_type (26/45/80) is RETIRED (ADR-0013 §5) —
+# the column stays forever (Iceberg field IDs are never reused/removed),
+# new rows simply stop writing a value into it. Field 14 is RENAMED (not a
+# new field) from one_time_cost_eur to per_booking_cost_eur — same "audit
+# trail keeps the vocabulary of its time, rename keeps the ID" convention
+# the cost_protected -> minimum_profitable_price rename already established.
 
 # Mirrors specs/events/price_decision.v1.json field-for-field (spec 05 §4),
 # plus dynamodb_event_name/ingested_at appended by this consumer. Field IDs
@@ -44,9 +52,13 @@ ICEBERG_SCHEMA = Schema(
             ),
             NestedField(10, "total_monthly_cost_eur", DoubleType()),
             NestedField(11, "available_days", IntegerType()),
+            # Informational only from Phase 20 onward (ADR-0013) — grouped by
+            # CostDefinition.behavior, no longer read by decide_price().
             NestedField(12, "fixed_cost_eur", DoubleType()),
             NestedField(13, "variable_cost_eur", DoubleType()),
-            NestedField(14, "one_time_cost_eur", DoubleType()),
+            # Phase 20 (ADR-0013): RENAMED from one_time_cost_eur — same ID,
+            # same "average per turnover, divided by stay_length" meaning.
+            NestedField(14, "per_booking_cost_eur", DoubleType()),
             NestedField(15, "cost_lines_count", IntegerType()),
             # Phase 17 (ADR-0011 backlog #3): required at the struct/list
             # level (like los_floor_matrix/channel_price_matrix) — always
@@ -60,10 +72,23 @@ ICEBERG_SCHEMA = Schema(
                     element_type=StructType(
                         NestedField(92, "concept", StringType()),
                         NestedField(93, "amount_eur", DoubleType()),
+                        # Phase 20 (ADR-0013, spec 20 §2): appended, not
+                        # inserted next to concept/amount_eur — new IDs
+                        # always go at the end of the sequence.
+                        NestedField(96, "scope", StringType()),
+                        NestedField(97, "behavior", StringType()),
+                        NestedField(98, "trigger", StringType()),
+                        NestedField(99, "calculation_base", StringType()),
+                        NestedField(100, "recurrence", StringType()),
+                        NestedField(101, "allocation_method", StringType()),
                     ),
                     element_required=True,
                 ),
             ),
+            # Phase 20 (ADR-0013): the two terms the Break-Even/Profitable
+            # Floor formula (external spec §11) actually consumes.
+            NestedField(94, "fixed_and_allocated_costs_eur", DoubleType()),
+            NestedField(95, "p", DoubleType()),
         ),
     ),
     NestedField(
@@ -84,6 +109,9 @@ ICEBERG_SCHEMA = Schema(
         StructType(
             NestedField(24, "target_margin", DoubleType()),
             NestedField(25, "minimum_price_eur", DoubleType()),
+            # Phase 20 (ADR-0013 §5): RETIRED — no antelación tiers left to
+            # name. Column stays forever (never reused/removed); new rows
+            # simply write no value into it.
             NestedField(26, "floor_type", StringType()),
             NestedField(27, "commission_pct", DoubleType()),
             NestedField(28, "days_to_arrival", IntegerType()),
@@ -229,6 +257,11 @@ ICEBERG_SCHEMA = Schema(
                     element_required=True,
                 ),
             ),
+            # Phase 20 (ADR-0013): informational/explainability only (§14) —
+            # BER never substitutes for profitable_floor_eur/minimum_price_eur
+            # as the enforced floor.
+            NestedField(102, "break_even_revenue_eur", DoubleType()),
+            NestedField(103, "profitable_floor_eur", DoubleType()),
         ),
     ),
     NestedField(

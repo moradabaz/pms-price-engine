@@ -30,9 +30,8 @@ def apply_manual_override(
     output.below_market_by (kept as the algorithm's own market comparison,
     not recomputed against the override). Returns the enriched PriceDecision."""
     total_cost_eur = (
-        decision.cost_inputs.fixed_cost_eur
-        + decision.cost_inputs.variable_cost_eur
-        + decision.cost_inputs.one_time_cost_eur
+        decision.cost_inputs.fixed_and_allocated_costs_eur
+        + decision.cost_inputs.per_booking_cost_eur
     )
     new_effective_margin = (
         (assignment.override_price_eur / total_cost_eur) - 1 if total_cost_eur else 0.0

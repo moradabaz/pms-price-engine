@@ -252,6 +252,10 @@ class CostDefinitionSpec:
     calculation_base: str
     recurrence: str
     revenue_base: str | None
+    # Phase 20 (ADR-0013 §3): required exactly when calculation_base is
+    # percentage-based — real configuration, never inferred (see
+    # cost_definitions.sql's own rate/calculation_base pairing constraint).
+    rate: float | None
     allocation_method: str
     weight_config: str | None  # JSON string, only for allocation_method='weighted'
 
@@ -259,55 +263,55 @@ class CostDefinitionSpec:
 COST_DEFINITION_SPECS = [
     CostDefinitionSpec(
         "electricity", "property", "variable", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "water", "property", "variable", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "gas", "property", "variable", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "internet", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "pms_subscription", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "ota_fee", "booking", "variable", "reservation", "pct_adjusted_revenue",
-        "per_booking", "total_revenue", "booking", None,
+        "per_booking", "total_revenue", 0.15, "booking", None,
     ),
     CostDefinitionSpec(
         "channel_manager", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "office_rent", "company", "fixed", "time", "fixed_amount",
-        "monthly", None, "weighted", None,
+        "monthly", None, None, "weighted", None,
     ),
     CostDefinitionSpec(
         "cleaning", "booking", "variable", "reservation", "fixed_amount",
-        "per_booking", None, "occupied_night", None,
+        "per_booking", None, None, "occupied_night", None,
     ),
     CostDefinitionSpec(
         "maintenance", "property", "semi_variable", "event", "fixed_amount",
-        "one_off", None, "direct", None,
+        "one_off", None, None, "direct", None,
     ),
     CostDefinitionSpec(
         "insurance", "property", "fixed", "time", "fixed_amount",
-        "annual", None, "calendar_day", None,
+        "annual", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "community_fee", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
     CostDefinitionSpec(
         "other", "property", "variable", "time", "fixed_amount",
-        "monthly", None, "calendar_day", None,
+        "monthly", None, None, "calendar_day", None,
     ),
 ]
 

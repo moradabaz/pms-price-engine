@@ -6,7 +6,7 @@ from pyflink.datastream.functions import KeyedCoProcessFunction
 from pyflink.datastream.state import MapStateDescriptor, ValueStateDescriptor
 
 from flink_jobs.models import BookingRow, CostAggregate
-from flink_jobs.occupancy import booking_count, occupied_nights
+from flink_jobs.occupancy import avg_guests, booking_count, occupied_nights
 
 BOOKINGS_STATE_DESCRIPTOR = MapStateDescriptor(
     "bookings-by-booking-id", Types.STRING(), Types.PICKLED_BYTE_ARRAY()
@@ -51,7 +51,18 @@ class BookingEnrichmentFunction(KeyedCoProcessFunction):
             cost_aggregate.billing_period_start,
             cost_aggregate.billing_period_end,
         )
-        return replace(cost_aggregate, occupied_nights=nights, booking_count=count)
+        # Phase 20 (ADR-0013 §2): needed by calculation_base='per_guest'.
+        guests = avg_guests(
+            bookings,
+            cost_aggregate.billing_period_start,
+            cost_aggregate.billing_period_end,
+        )
+        return replace(
+            cost_aggregate,
+            occupied_nights=nights,
+            booking_count=count,
+            avg_guests=guests,
+        )
 
     def process_element1(self, value: CostAggregate, ctx):
         """Cost side (Stage A's output): cache it, recompute occupied_nights

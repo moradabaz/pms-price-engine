@@ -21,6 +21,7 @@ from mock_pm_app.migrations import (
     ensure_manual_overrides_schema,
     ensure_owner_contracts_schema,
     ensure_owners_schema,
+    migrate_owner_contracts_to_cost_definitions,
     migrate_payment_lines_to_cost_definitions,
 )
 from mock_pm_app.seed import (
@@ -72,6 +73,13 @@ def main() -> None:
         logger.info("cost_definitions_schema_ensured")
         ensure_cost_allocation_rules_schema(conn)
         logger.info("cost_allocation_rules_schema_ensured")
+
+        # Phase 20 (ADR-0013 §4): breaking change, backfills existing
+        # owner_contracts rows into a CostDefinition each, then drops
+        # commission_base/commission_pct. Must run after both tables above
+        # exist. Harmless no-op once already migrated.
+        migrate_owner_contracts_to_cost_definitions(conn)
+        logger.info("owner_contracts_migrated_to_cost_definitions")
 
         rng = random.Random()
         apartments = build_apartment_pool(settings.seed_apartments, rng)

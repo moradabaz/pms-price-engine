@@ -26,7 +26,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_minimum_profitable_price", "commission_base_netting", "manual_override_applied", "minimum_stay_recommended", "minimum_stay_not_viable"],
+          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_minimum_profitable_price", "revenue_base_netting", "manual_override_applied", "minimum_stay_recommended", "minimum_stay_not_viable"],
           "description": "Stable across specific attribute values — the specific value observed (which tier, which rating) lives in label, not in a proliferating enum."
         },
         "label": { "type": "string", "description": "Human-readable, carries the specific value (e.g. \"Rating 4.8 vs baseline 4.0\")." },
@@ -43,7 +43,7 @@
     },
     "schema_version": {
       "type": "string",
-      "const": "1.0"
+      "const": "2.0"
     },
 
     "apartment_id":        { "type": "string" },
@@ -62,9 +62,9 @@
 
     "cost_inputs": {
       "type": "object",
-      "required": ["billing_period", "total_monthly_cost_eur", "available_days", "fixed_cost_eur", "variable_cost_eur", "one_time_cost_eur", "cost_breakdown"],
+      "required": ["billing_period", "total_monthly_cost_eur", "available_days", "fixed_cost_eur", "variable_cost_eur", "fixed_and_allocated_costs_eur", "per_booking_cost_eur", "p", "cost_breakdown"],
       "additionalProperties": false,
-      "description": "Cost snapshot used in this calculation. Aggregated by Flink from payment_line events for the billing period, split by cost_type (ADR-0009).",
+      "description": "Cost snapshot used in this calculation. Aggregated by Flink from CostDefinition/CostOccurrence/CostAllocationRule (ADR-0012, ADR-0013).",
       "properties": {
         "billing_period": {
           "type": "object",
@@ -78,7 +78,7 @@
         "total_monthly_cost_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "Sum of amount_gross for all payment lines for this apartment in the billing period, regardless of cost_type. Informational rollup, not used directly in the formula."
+          "description": "Sum of amount_gross for all payment lines for this apartment in the billing period, regardless of concept. Informational rollup, not used directly in the formula."
         },
         "available_days": {
           "type": "integer",
@@ -88,17 +88,28 @@
         "fixed_cost_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "Cf: sum of cost_type=fixed lines / available_days. Incurred whether or not the apartment is booked (ADR-0009)."
+          "description": "Informational only (ADR-0013) — sum of CostDefinition.behavior='fixed' lines / available_days, grouped for display, no longer read directly by the Break-Even/Profitable Floor formula (see fixed_and_allocated_costs_eur below)."
         },
         "variable_cost_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "Cv: sum of cost_type=variable lines / available_days. Scales with occupancy (ADR-0009)."
+          "description": "Informational only (ADR-0013) — sum of CostDefinition.behavior IN ('variable', 'semi_variable') lines / available_days, grouped for display, no longer read directly by the formula."
         },
-        "one_time_cost_eur": {
+        "fixed_and_allocated_costs_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "Cr: average (not sum) of cost_type=one_time lines in the period — each is already the cost of one turnover (ADR-0009)."
+          "description": "External spec §11's own term — fixed_cost_eur + variable_cost_eur, every non-percentage CostDefinition already allocated to a per-night figure by its CostAllocationRule. Feeds Break-Even Revenue (BER) and Minimum Profitable Revenue (MPR) directly (ADR-0013)."
+        },
+        "per_booking_cost_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Renamed from one_time_cost_eur (ADR-0013) — average (not sum) of CostAllocationRule.method='booking' lines in the period, each already the cost of one turnover. Divided by the candidate's own stay_length inside decide_price(), unchanged mechanically from before this phase."
+        },
+        "p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Sum of every applicable CostDefinition.rate for this apartment/period (calculation_base IN pct_revenue/pct_adjusted_revenue), including the migrated owner-commission CostDefinition (ADR-0013 §4) — the external spec §11's own 'p'."
         },
         "cost_lines_count": {
           "type": "integer",
@@ -107,21 +118,27 @@
         },
         "cost_breakdown": {
           "type": "array",
-          "description": "Per-concept slice of fixed_cost_eur/variable_cost_eur/one_time_cost_eur above (ADR-0011 backlog #3) — already fully counted in those totals, reporting granularity only. One entry per payment_line.concept value with at least one matching line in this billing period; [] only if the period somehow has no lines (aggregate_cost never emits a decision without at least one).",
+          "description": "Per-concept slice of fixed_cost_eur/variable_cost_eur/fixed_and_allocated_costs_eur above (ADR-0011 backlog #3, extended by ADR-0013) — already fully counted in those totals, reporting granularity only. One entry per payment_line.concept value with at least one matching line in this billing period; [] only if the period somehow has no lines (aggregate_cost never emits a decision without at least one).",
           "items": {
             "type": "object",
-            "required": ["concept", "amount_eur"],
+            "required": ["concept", "amount_eur", "scope", "behavior", "trigger", "calculation_base", "recurrence", "allocation_method"],
             "additionalProperties": false,
             "properties": {
               "concept": {
                 "type": "string",
-                "enum": ["electricity", "water", "gas", "internet", "pms_subscription", "ota_fee", "channel_manager", "office_rent", "cleaning", "maintenance", "insurance", "community_fee", "other"]
+                "enum": ["electricity", "water", "gas", "internet", "pms_subscription", "ota_fee", "channel_manager", "office_rent", "cleaning", "maintenance", "insurance", "community_fee", "other", "owner_commission"]
               },
               "amount_eur": {
                 "type": "number",
                 "minimum": 0,
                 "description": "Sum of amount_gross for this concept's matching lines / available_days — same per-day convention fixed_cost_eur/ota_related_cost_eur already use."
-              }
+              },
+              "scope": { "type": "string", "enum": ["booking", "property", "company"], "description": "This concept's CostDefinition.scope (ADR-0012/ADR-0013) — the dashboard groups cost_breakdown rows by this so a company-wide fan-out cost's contribution is visually distinct." },
+              "behavior": { "type": "string", "enum": ["fixed", "variable", "semi_variable"] },
+              "trigger": { "type": "string", "enum": ["reservation", "night", "guest", "time", "revenue", "event"] },
+              "calculation_base": { "type": "string", "enum": ["fixed_amount", "pct_revenue", "pct_adjusted_revenue", "per_night", "per_guest"] },
+              "recurrence": { "type": "string", "enum": ["per_booking", "daily", "monthly", "quarterly", "annual", "one_off"] },
+              "allocation_method": { "type": "string", "enum": ["direct", "calendar_day", "available_night", "occupied_night", "booking", "revenue", "weighted"] }
             }
           }
         }
@@ -145,44 +162,49 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "floor_type", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components", "minimum_stay_recommendation", "channel_price_matrix"],
+      "required": ["target_margin", "minimum_price_eur", "break_even_revenue_eur", "profitable_floor_eur", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components", "minimum_stay_recommendation", "channel_price_matrix"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
         "target_margin": {
           "type": "number",
           "minimum": 0,
-          "description": "Configured minimum profit margin. Set per apartment or globally. Reduced by reduced_margin_factor (0.75) in the structural_reduced_margin band (ADR-0009)."
+          "description": "Configured minimum profit margin (m). Set per apartment or globally. Feeds Minimum Profitable Revenue (MPR) — see profitable_floor_eur (ADR-0013)."
         },
         "minimum_price_eur": {
           "type": "number",
           "minimum": 0,
-          "description": "The active profitability floor for a 1-night stay (ADR-0009, ADR-0011 backlog #1) — whichever formula floor_type selects. structural_*: (fixed_cost_eur + variable_cost_eur + one_time_cost_eur) / (1 - margin - commission_pct). contribution: (variable_cost_eur + one_time_cost_eur) / (1 - commission_pct), no margin term. The absolute floor for its tier at stay_length=1 — no price below this. See los_floor_matrix for the same floor at other candidate stay lengths (one_time_cost_eur amortizes across the stay; fixed/variable costs do not, since they're already per-night rates)."
+          "description": "The active profitability floor for a 1-night stay — always equals profitable_floor_eur (ADR-0013 §5/§11). See los_floor_matrix for the same floor at other candidate stay lengths (per_booking_cost_eur amortizes across the stay; fixed_and_allocated_costs_eur does not, since it's already a per-night rate)."
         },
-        "floor_type": {
-          "type": "string",
-          "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"],
-          "description": "Which floor formula produced minimum_price_eur, selected by days_to_arrival (ADR-0009): structural_full_margin (>30 days), structural_reduced_margin (15-30 days, margin × 0.75), contribution (<15 days, no margin term — only variable + one-time costs and commission)."
+        "break_even_revenue_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "BER = fixed_and_allocated_costs_eur / (1 - p) (external spec §11). Informational/explainability only (§14) — never itself substituted as the enforced floor; see minimum_price_eur/profitable_floor_eur (ADR-0013)."
+        },
+        "profitable_floor_eur": {
+          "type": "number",
+          "minimum": 0,
+          "description": "MPR = fixed_and_allocated_costs_eur / (1 - p - target_margin) (external spec §11). Always equals minimum_price_eur (ADR-0013 §5) — the floor guardrails actually enforce."
         },
         "floor_policy": {
           "type": "string",
           "enum": ["hard", "soft"],
-          "description": "Classifies floor_type into the external spec's Hard/Soft floor vocabulary (ADR-0011 backlog #10): hard for contribution (the absolute, never-crossed floor), soft for either structural_* tier (a margin target, relaxable by antelación)."
+          "description": "Hard/Soft floor vocabulary (ADR-0011 backlog #10, redefined by ADR-0013 §5): hard iff target_margin == 0 (break_even_revenue_eur == profitable_floor_eur), soft otherwise. No longer derived from an antelación-tiered floor_type (retired)."
         },
         "commission_pct": {
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Cp: blended OTA/payment-processing commission, set per apartment contract (default 0.15). In the floor's denominator — it scales with the final price (ADR-0009)."
+          "description": "Cp: this apartment's own owner-commission CostDefinition.rate (ADR-0013 §4). Included in p — it scales with the final price."
         },
         "commission_base": {
           "type": "string",
           "enum": ["total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"],
-          "description": "Which revenue base commission_pct is charged against (ADR-0011 backlog #5, owner_contracts). total_revenue reproduces this project's pre-Phase-11 behavior exactly; the other two net ota_fee/channel_manager (and cleaning) out of the base, reducing minimum_price_eur — see calculation.decision_components' commission_base_netting entry when this happens."
+          "description": "This apartment's owner-commission CostDefinition.revenue_base (ADR-0011 backlog #5, ADR-0013 §4). total_revenue reproduces this project's pre-Phase-11 behavior exactly; the other two net ota_fee/channel_manager (and cleaning) out of the base, reducing the floor's numerator — see calculation.decision_components' revenue_base_netting entry when this happens."
         },
         "days_to_arrival": {
           "type": "integer",
-          "description": "target_date minus the date this decision was made. Selects floor_type (ADR-0009)."
+          "description": "target_date minus the date this decision was made. Recorded for audit/explainability only (ADR-0013 §5) — no longer read by the floor formula, which no longer varies by antelación."
         },
         "competitiveness_discount": {
           "type": "number",
@@ -213,16 +235,15 @@
         "los_floor_matrix": {
           "type": "array",
           "minItems": 1,
-          "description": "The same decide_price() evaluation at other candidate stay lengths (ADR-0011 backlog #1) — property_attribute_factor/property_reference_price_eur/market_reference_price_eur/below_market_by are identical across every entry (they never depend on stay_length), so they aren't repeated here. The stay_length=1 entry matches this calculation's own minimum_price_eur/floor_type/rule_applied and the top-level output's suggested_price_eur/effective_margin exactly.",
+          "description": "The same decide_price() evaluation at other candidate stay lengths (ADR-0011 backlog #1) — property_attribute_factor/property_reference_price_eur/market_reference_price_eur/below_market_by are identical across every entry (they never depend on stay_length), so they aren't repeated here. The stay_length=1 entry matches this calculation's own minimum_price_eur/rule_applied and the top-level output's suggested_price_eur/effective_margin exactly.",
           "items": {
             "type": "object",
-            "required": ["stay_length", "minimum_price_eur", "floor_type", "floor_policy", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
+            "required": ["stay_length", "minimum_price_eur", "floor_policy", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
             "additionalProperties": false,
             "properties": {
               "stay_length": { "type": "integer", "minimum": 1, "description": "Candidate LOS this entry evaluates, in nights." },
-              "minimum_price_eur": { "type": "number", "minimum": 0, "description": "The floor at this stay_length — one_time_cost_eur amortized across the stay, fixed/variable costs unchanged (they're already per-night)." },
-              "floor_type": { "type": "string", "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"], "description": "Unaffected by stay_length — selected by days_to_arrival, same for every entry in one decision." },
-              "floor_policy": { "type": "string", "enum": ["hard", "soft"], "description": "This candidate's own floor_type classified into Hard/Soft (ADR-0011 backlog #10) — see calculation.floor_policy." },
+              "minimum_price_eur": { "type": "number", "minimum": 0, "description": "The floor at this stay_length — per_booking_cost_eur amortized across the stay, fixed_and_allocated_costs_eur unchanged (it's already per-night)." },
+              "floor_policy": { "type": "string", "enum": ["hard", "soft"], "description": "Unaffected by stay_length — see calculation.floor_policy (ADR-0013 §5)." },
               "rule_applied": { "type": "string", "enum": ["market_competitive", "minimum_floor", "minimum_profitable_price"], "description": "Can genuinely differ per entry — a longer stay's diluted floor can flip minimum_profitable_price into market_competitive." },
               "suggested_price_eur": { "type": "number", "minimum": 0, "description": "What this LOS candidate would be priced at." },
               "effective_margin": { "type": "number", "description": "Varies per entry — the per-night total cost this margin is computed against changes with stay_length." },
@@ -259,7 +280,7 @@
           "description": "One entry per sales channel with an observed market rate for this night (ADR-0011 backlog #2, Phase 16) — 0 to 3 entries, since a candidate only exists once market-ingestor's channel-specific event for that channel/night has arrived. Unlike los_floor_matrix, market_reference_price_eur genuinely varies per entry here (each channel has its own real avg_nightly_rate_eur). The top-level calculation (this object's other fields) always reflects the blended/direct rate, never a channel-specific one.",
           "items": {
             "type": "object",
-            "required": ["platform", "avg_nightly_rate_eur", "commission_pct", "market_reference_price_eur", "minimum_price_eur", "floor_type", "floor_policy", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
+            "required": ["platform", "avg_nightly_rate_eur", "commission_pct", "market_reference_price_eur", "minimum_price_eur", "floor_policy", "rule_applied", "suggested_price_eur", "effective_margin", "decision_components"],
             "additionalProperties": false,
             "properties": {
               "platform": { "type": "string", "enum": ["airbnb", "booking", "vrbo"], "description": "Which channel this candidate prices for. Direct booking is represented by the top-level calculation, not a 'direct' entry here." },
@@ -267,8 +288,7 @@
               "commission_pct": { "type": "number", "minimum": 0, "maximum": 1, "description": "This channel's commission rate (a fixed per-platform constant, ADR-0011 backlog #2) — independent of the top-level calculation.commission_pct, which only applies to the direct/blended case." },
               "market_reference_price_eur": { "type": "number", "minimum": 0, "description": "This channel's own avg_nightly_rate_eur run through the same property_attribute_factor/competitiveness_discount layers as the top-level calculation." },
               "minimum_price_eur": { "type": "number", "minimum": 0, "description": "The cost floor for this channel at stay_length=1, using this channel's own commission_pct." },
-              "floor_type": { "type": "string", "enum": ["structural_full_margin", "structural_reduced_margin", "contribution"], "description": "Unaffected by channel — selected by days_to_arrival, same for every entry in one decision." },
-              "floor_policy": { "type": "string", "enum": ["hard", "soft"], "description": "This candidate's own floor_type classified into Hard/Soft — see calculation.floor_policy." },
+              "floor_policy": { "type": "string", "enum": ["hard", "soft"], "description": "Unaffected by channel — see calculation.floor_policy (ADR-0013 §5)." },
               "rule_applied": { "type": "string", "enum": ["market_competitive", "minimum_floor", "minimum_profitable_price"], "description": "Can genuinely differ per entry — a channel with a higher commission and/or a lower own market rate can tip into minimum_profitable_price while another channel in the same decision stays market_competitive." },
               "suggested_price_eur": { "type": "number", "minimum": 0, "description": "What this channel would be priced at." },
               "effective_margin": { "type": "number", "description": "This channel's own margin at its own suggested price." },
@@ -311,7 +331,7 @@
         "currency": { "type": "string", "const": "EUR" },
         "effective_margin": {
           "type": "number",
-          "description": "(suggested_price_eur / total_cost_eur) - 1, where total_cost_eur = fixed_cost_eur + variable_cost_eur + one_time_cost_eur. The actual margin this price achieves."
+          "description": "(suggested_price_eur / total_cost_eur) - 1, where total_cost_eur = fixed_and_allocated_costs_eur + per_booking_cost_eur / stay_length (ADR-0013). The actual margin this price achieves."
         },
         "below_market_by": {
           "type": "number",

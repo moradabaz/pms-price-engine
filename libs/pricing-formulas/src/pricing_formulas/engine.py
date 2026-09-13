@@ -1,13 +1,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from pricing_formulas.decision_components import DecisionComponent
-from pricing_formulas.layers.booking_window import (
-    FloorPolicy,
-    FloorType,
-    booking_window_floor,
-)
-from pricing_formulas.layers.commercial import CommissionBase, netted_commission_amount
+from pricing_formulas.layers.commercial import RevenueBase, netted_revenue_base_amount
 from pricing_formulas.layers.guardrails import RuleApplied, apply_guardrails
 from pricing_formulas.layers.inventory import inventory_layer
 from pricing_formulas.layers.market import market_reference_price
@@ -18,11 +14,27 @@ from pricing_formulas.layers.structural import property_reference_price
 # §C): candidate stay lengths for the LOS floor matrix.
 LOS_CANDIDATES: tuple[int, ...] = (1, 2, 3, 7, 14)
 
+# Phase 12 (ADR-0011 backlog #10): the external spec's Hard/Soft floor
+# vocabulary. Phase 20 (ADR-0013 §5): retired ADR-0009's antelación-tiered
+# floor_type as the source of this classification — there is only one flat
+# floor formula now (Break-Even / Profitable Floor, external spec §11),
+# evaluated identically regardless of days_to_arrival. "hard" iff
+# target_margin == 0 (break_even_revenue_eur == profitable_floor_eur, the
+# absolute never-crossed floor); "soft" whenever a margin is being targeted
+# (relaxable, at most down to break-even).
+FloorPolicy = Literal["hard", "soft"]
+
+
+def floor_policy_for(target_margin: float) -> FloorPolicy:
+    """Pure classification (ADR-0013 §5). Returns the policy."""
+    return "hard" if target_margin == 0 else "soft"
+
 
 @dataclass(frozen=True)
 class PriceCalculation:
     minimum_price_eur: float
-    floor_type: FloorType
+    break_even_revenue_eur: float
+    profitable_floor_eur: float
     floor_policy: FloorPolicy
     property_attribute_factor: float
     property_reference_price_eur: float
@@ -35,45 +47,58 @@ class PriceCalculation:
 
 
 def decide_price(
-    fixed_cost_eur: float,
-    variable_cost_eur: float,
-    one_time_cost_eur: float,
+    fixed_and_allocated_costs_per_night_eur: float,
+    per_booking_cost_eur: float,
+    p: float,
     target_margin: float,
-    commission_pct: float,
     avg_nightly_rate_eur: float,
     competitiveness_discount: float,
-    days_to_arrival: int,
     property_attribute_factor: float = 1.0,
     stay_length: int = 1,
-    commission_netting_eur: float = 0.0,
+    netting_eur: float = 0.0,
     property_decision_components: Sequence[DecisionComponent] = (),
     commission_decision_components: Sequence[DecisionComponent] = (),
 ) -> PriceCalculation:
     """Orchestrates the layered Revenue Management engine (ADR-0011 backlog
-    #7, spec 13): Structural -> Performance -> Inventory -> Market ->
-    Booking-Window -> Guardrails, with Commercial's netting pre-computed by
-    the caller (Stage B resolves it once per decision before calling this).
-    Structural's own attribute factor is likewise pre-resolved by the
-    caller — it's computed once per apartment per segment-broadcast update
-    in Stage A, not per decision; only its per-decision half
-    (property_reference_price) runs inside this pipeline. Returns a
-    PriceCalculation."""
-    # Phase 9: fixed_cost_eur/variable_cost_eur are already per-night rates
-    # (cost_aggregation.py divides by available_days) — they never scale with
-    # stay_length. one_time_cost_eur (Cr) is a lump sum per booking and is the
-    # only term amortized across the stay. For stay_length=1 this is
-    # algebraically identical to the pre-Phase-9 formula.
-    one_time_cost_per_night_eur = one_time_cost_eur / stay_length
-
-    booking_window = booking_window_floor(
-        days_to_arrival,
-        fixed_cost_eur,
-        variable_cost_eur,
-        one_time_cost_per_night_eur,
-        target_margin,
-        commission_pct,
-        commission_netting_eur,
+    #7, spec 13; rewired onto the external spec's own Break-Even/Profitable
+    Floor formula by ADR-0013, spec 20 §3): Structural -> Performance ->
+    Inventory -> Market -> Break-Even/Profitable Floor -> Guardrails.
+    `p` is the summed rate of every applicable percentage CostDefinition for
+    this apartment/period (owner commission included, ADR-0013 §4) —
+    resolved once per decision by the caller (Stage B), not here.
+    `netting_eur` is the already-netted EUR amount to subtract from the
+    numerator (generalizing Phase 11's commission-base netting to any
+    percentage CostDefinition with a revenue_base, ADR-0013 §3), likewise
+    pre-computed by the caller. Structural's own attribute factor is
+    likewise pre-resolved by the caller — computed once per apartment per
+    segment-broadcast update in Stage A, not per decision; only its
+    per-decision half (property_reference_price) runs inside this pipeline.
+    Returns a PriceCalculation."""
+    # Phase 9: fixed_and_allocated_costs_per_night_eur is already a per-night
+    # rate (Flink's cost aggregation divides by available_days) — it never
+    # scales with stay_length. per_booking_cost_eur (allocation_method=
+    # 'booking') is a lump sum per booking and is the only term amortized
+    # across the stay. For stay_length=1 this is algebraically identical to
+    # the per-booking-unamortized figure.
+    per_booking_cost_per_night_eur = per_booking_cost_eur / stay_length
+    fixed_and_allocated_costs_eur = (
+        fixed_and_allocated_costs_per_night_eur + per_booking_cost_per_night_eur
     )
+
+    # External spec §11: BER = Fixed-and-allocated Costs / (1 - p); MPR =
+    # Fixed-and-allocated Costs / (1 - p - m). netting_eur (ADR-0011 backlog
+    # #5, generalized by ADR-0013 §3) reduces the numerator in both — a
+    # percentage cost charged against a smaller base than the full price
+    # needs less of the raw cost recovered from that percentage's own share.
+    numerator_eur = fixed_and_allocated_costs_eur - netting_eur
+    break_even_revenue_eur = numerator_eur / (1 - p) if p != 1 else 0.0
+    mpr_denominator = 1 - p - target_margin
+    profitable_floor_eur = (
+        numerator_eur / mpr_denominator if mpr_denominator else 0.0
+    )
+    # ADR-0013 §5: MPR is always the enforced floor — BER is informational/
+    # explainability only (external spec §14), never substituted in here.
+    minimum_price_eur = profitable_floor_eur
 
     # ADR-0011 (backlog #6): the segment's raw market average, adjusted for
     # this specific apartment's Bonus/Malus attributes — apartments in the
@@ -91,23 +116,24 @@ def decide_price(
     )
 
     guardrails = apply_guardrails(
-        booking_window.minimum_price_eur,
+        minimum_price_eur,
         market_reference_price_eur,
         property_reference_price_eur,
     )
 
-    total_cost_eur = fixed_cost_eur + variable_cost_eur + one_time_cost_per_night_eur
     effective_margin = (
-        (guardrails.suggested_price_eur / total_cost_eur) - 1 if total_cost_eur else 0.0
+        (guardrails.suggested_price_eur / fixed_and_allocated_costs_eur) - 1
+        if fixed_and_allocated_costs_eur
+        else 0.0
     )
 
     # Phase 10/11 (ADR-0011 backlog #4/#5): property_decision_components and
     # commission_decision_components are both empty for LOS-matrix candidates
     # (decide_price_los_matrix() never forwards either), so their
     # decision_components naturally ends up as just [rule_component] — no
-    # second code path (spec 10 §E, spec 11 §F/AC-06). commission_netting_eur
-    # itself (the numeric floor adjustment) IS still forwarded to every
-    # candidate — only the component that explains it is top-level-only.
+    # second code path (spec 10 §E, spec 11 §F/AC-06). netting_eur itself
+    # (the numeric floor adjustment) IS still forwarded to every candidate —
+    # only the component that explains it is top-level-only.
     decision_components = [
         *property_decision_components,
         *commission_decision_components,
@@ -115,9 +141,10 @@ def decide_price(
     ]
 
     return PriceCalculation(
-        minimum_price_eur=round(booking_window.minimum_price_eur, 2),
-        floor_type=booking_window.floor_type,
-        floor_policy=booking_window.floor_policy,
+        minimum_price_eur=round(minimum_price_eur, 2),
+        break_even_revenue_eur=round(break_even_revenue_eur, 2),
+        profitable_floor_eur=round(profitable_floor_eur, 2),
+        floor_policy=floor_policy_for(target_margin),
         property_attribute_factor=property_attribute_factor,
         property_reference_price_eur=round(property_reference_price_eur, 2),
         market_reference_price_eur=round(market_reference_price_eur, 2),
@@ -133,7 +160,6 @@ def decide_price(
 class LosFloorCandidate:
     stay_length: int
     minimum_price_eur: float
-    floor_type: FloorType
     floor_policy: FloorPolicy
     rule_applied: RuleApplied
     suggested_price_eur: float
@@ -152,42 +178,41 @@ class MinimumStayRecommendation:
 
 def _reservation_cost_eur(
     stay_length: int,
-    fixed_cost_eur: float,
-    variable_cost_eur: float,
-    one_time_cost_eur: float,
+    fixed_and_allocated_costs_per_night_eur: float,
+    per_booking_cost_eur: float,
 ) -> float:
     """Total cost for a whole reservation of stay_length nights — the
-    inverse of decide_price()'s per-night amortization (spec 15 §4-follow-up):
-    fixed/variable costs recur every night, one_time_cost_eur is paid once
-    per booking, not per night. Returns the rounded total."""
+    inverse of decide_price()'s per-night amortization (spec 15
+    §4-follow-up, ADR-0013): fixed_and_allocated_costs_per_night_eur recurs
+    every night, per_booking_cost_eur is paid once per booking, not per
+    night. Returns the rounded total."""
     return round(
-        stay_length * (fixed_cost_eur + variable_cost_eur) + one_time_cost_eur, 2
+        stay_length * fixed_and_allocated_costs_per_night_eur + per_booking_cost_eur, 2
     )
 
 
 def recommend_minimum_stay(
     candidates: list[LosFloorCandidate],
     property_reference_price_eur: float,
-    fixed_cost_eur: float,
-    variable_cost_eur: float,
-    one_time_cost_eur: float,
+    fixed_and_allocated_costs_per_night_eur: float,
+    per_booking_cost_eur: float,
 ) -> MinimumStayRecommendation:
     """Minimum Stay as a profitability lever (ADR-0011 backlog #12, spec 15
     §4). Pure post-processing over an already-computed los_floor_matrix, plus
     the same raw cost inputs decide_price_los_matrix() itself received — no
     new formula duplicated. Relies on minimum_price_eur being monotonically
-    non-increasing in stay_length (only one_time_cost_eur / n varies with n;
-    floor_type/market_reference_price_eur/property_reference_price_eur are
-    constant across candidates in one decision), so rule_applied can only
-    move minimum_profitable_price -> minimum_floor -> market_competitive as n grows,
-    never backwards — the shortest non-minimum_profitable_price candidate is
-    therefore the unique correct threshold, not a heuristic. Alongside that
-    stay length, also surfaces what the whole reservation would cost and
-    what it should be priced at in total — a price already guaranteed to
-    clear the cost floor and be at/below the market reference, since it's
-    exactly the LOS candidate's own suggested_price_eur (never itself
-    minimum_profitable_price) multiplied by the nights it covers. Returns the
-    recommendation."""
+    non-increasing in stay_length (only per_booking_cost_eur / n varies with
+    n; market_reference_price_eur/property_reference_price_eur are constant
+    across candidates in one decision), so rule_applied can only move
+    minimum_profitable_price -> minimum_floor -> market_competitive as n
+    grows, never backwards — the shortest non-minimum_profitable_price
+    candidate is therefore the unique correct threshold, not a heuristic.
+    Alongside that stay length, also surfaces what the whole reservation
+    would cost and what it should be priced at in total — a price already
+    guaranteed to clear the cost floor and be at/below the market reference,
+    since it's exactly the LOS candidate's own suggested_price_eur (never
+    itself minimum_profitable_price) multiplied by the nights it covers.
+    Returns the recommendation."""
     ordered = sorted(candidates, key=lambda c: c.stay_length)
     at_one_night = ordered[0]
 
@@ -197,9 +222,8 @@ def recommend_minimum_stay(
             floor_relief_eur=0.0,
             cost_per_reservation_eur=_reservation_cost_eur(
                 at_one_night.stay_length,
-                fixed_cost_eur,
-                variable_cost_eur,
-                one_time_cost_eur,
+                fixed_and_allocated_costs_per_night_eur,
+                per_booking_cost_eur,
             ),
             suggested_price_per_reservation_eur=round(
                 at_one_night.suggested_price_eur * at_one_night.stay_length, 2
@@ -220,9 +244,8 @@ def recommend_minimum_stay(
                 floor_relief_eur=floor_relief_eur,
                 cost_per_reservation_eur=_reservation_cost_eur(
                     candidate.stay_length,
-                    fixed_cost_eur,
-                    variable_cost_eur,
-                    one_time_cost_eur,
+                    fixed_and_allocated_costs_per_night_eur,
+                    per_booking_cost_eur,
                 ),
                 suggested_price_per_reservation_eur=suggested_price_per_reservation_eur,
                 decision_component=DecisionComponent(
@@ -268,16 +291,14 @@ def recommend_minimum_stay(
 
 
 def decide_price_los_matrix(
-    fixed_cost_eur: float,
-    variable_cost_eur: float,
-    one_time_cost_eur: float,
+    fixed_and_allocated_costs_per_night_eur: float,
+    per_booking_cost_eur: float,
+    p: float,
     target_margin: float,
-    commission_pct: float,
     avg_nightly_rate_eur: float,
     competitiveness_discount: float,
-    days_to_arrival: int,
     property_attribute_factor: float = 1.0,
-    commission_netting_eur: float = 0.0,
+    netting_eur: float = 0.0,
     stay_lengths: tuple[int, ...] = LOS_CANDIDATES,
 ) -> list[LosFloorCandidate]:
     """Evaluates decide_price() once per candidate stay length (ADR-0011
@@ -289,23 +310,20 @@ def decide_price_los_matrix(
     candidates = []
     for stay_length in stay_lengths:
         calc = decide_price(
-            fixed_cost_eur=fixed_cost_eur,
-            variable_cost_eur=variable_cost_eur,
-            one_time_cost_eur=one_time_cost_eur,
+            fixed_and_allocated_costs_per_night_eur=fixed_and_allocated_costs_per_night_eur,
+            per_booking_cost_eur=per_booking_cost_eur,
+            p=p,
             target_margin=target_margin,
-            commission_pct=commission_pct,
             avg_nightly_rate_eur=avg_nightly_rate_eur,
             competitiveness_discount=competitiveness_discount,
-            days_to_arrival=days_to_arrival,
             property_attribute_factor=property_attribute_factor,
             stay_length=stay_length,
-            commission_netting_eur=commission_netting_eur,
+            netting_eur=netting_eur,
         )
         candidates.append(
             LosFloorCandidate(
                 stay_length=stay_length,
                 minimum_price_eur=calc.minimum_price_eur,
-                floor_type=calc.floor_type,
                 floor_policy=calc.floor_policy,
                 rule_applied=calc.rule_applied,
                 suggested_price_eur=calc.suggested_price_eur,
@@ -335,7 +353,6 @@ class ChannelPriceCandidate:
     commission_pct: float
     market_reference_price_eur: float
     minimum_price_eur: float
-    floor_type: FloorType
     floor_policy: FloorPolicy
     rule_applied: RuleApplied
     suggested_price_eur: float
@@ -345,14 +362,13 @@ class ChannelPriceCandidate:
 
 def decide_price_by_channel(
     channel_rates_eur: dict[str, float],
-    fixed_cost_eur: float,
-    variable_cost_eur: float,
-    one_time_cost_eur: float,
+    fixed_and_allocated_costs_per_night_eur: float,
+    per_booking_cost_eur: float,
     target_margin: float,
     competitiveness_discount: float,
-    days_to_arrival: int,
     property_attribute_factor: float = 1.0,
-    commission_base: CommissionBase = "total_revenue",
+    p_other: float = 0.0,
+    revenue_base: RevenueBase = "total_revenue",
     ota_related_cost_eur: float = 0.0,
     cleaning_cost_eur: float = 0.0,
     channel_commission_pct: dict[str, float] = CHANNEL_COMMISSION_PCT,
@@ -364,29 +380,31 @@ def decide_price_by_channel(
     price()/market_reference_price() before it reaches the floor comparison
     (spec 16 §4) — so market_reference_price_eur genuinely varies per
     candidate here, unlike its identical-across-candidates LOS counterpart.
-    Still no formula duplicated — a thin per-channel composition over
-    decide_price(), same discipline decide_price_los_matrix() follows.
-    Produces exactly one candidate per key present in channel_rates_eur —
-    never invents a channel with no observed market rate. Returns one
-    ChannelPriceCandidate per known channel."""
-    net = netted_commission_amount(
-        commission_base, ota_related_cost_eur, cleaning_cost_eur
+    `p_other` is the rate of every applicable percentage CostDefinition
+    EXCLUDING this channel's own commission (e.g. ota_fee) — combined with
+    each channel's own fixed commission constant to form that candidate's
+    `p` (ADR-0013 leaves the channel gross-up mechanism itself unchanged,
+    spec 20 §2). Still no formula duplicated — a thin per-channel
+    composition over decide_price(), same discipline decide_price_los_matrix()
+    follows. Produces exactly one candidate per key present in
+    channel_rates_eur — never invents a channel with no observed market
+    rate. Returns one ChannelPriceCandidate per known channel."""
+    net = netted_revenue_base_amount(
+        revenue_base, ota_related_cost_eur, cleaning_cost_eur
     )
     candidates = []
     for platform, avg_nightly_rate_eur in channel_rates_eur.items():
         commission_pct = channel_commission_pct[platform]
-        commission_netting_eur = round(commission_pct * net, 2)
+        netting_eur = round(commission_pct * net, 2)
         calc = decide_price(
-            fixed_cost_eur=fixed_cost_eur,
-            variable_cost_eur=variable_cost_eur,
-            one_time_cost_eur=one_time_cost_eur,
+            fixed_and_allocated_costs_per_night_eur=fixed_and_allocated_costs_per_night_eur,
+            per_booking_cost_eur=per_booking_cost_eur,
+            p=p_other + commission_pct,
             target_margin=target_margin,
-            commission_pct=commission_pct,
             avg_nightly_rate_eur=avg_nightly_rate_eur,
             competitiveness_discount=competitiveness_discount,
-            days_to_arrival=days_to_arrival,
             property_attribute_factor=property_attribute_factor,
-            commission_netting_eur=commission_netting_eur,
+            netting_eur=netting_eur,
         )
         candidates.append(
             ChannelPriceCandidate(
@@ -395,7 +413,6 @@ def decide_price_by_channel(
                 commission_pct=commission_pct,
                 market_reference_price_eur=calc.market_reference_price_eur,
                 minimum_price_eur=calc.minimum_price_eur,
-                floor_type=calc.floor_type,
                 floor_policy=calc.floor_policy,
                 rule_applied=calc.rule_applied,
                 suggested_price_eur=calc.suggested_price_eur,

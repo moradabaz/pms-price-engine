@@ -40,3 +40,22 @@ def booking_count(
         and booking.check_in <= period_end
         and booking.check_out > period_start
     )
+
+
+def avg_guests(
+    bookings: Iterable[BookingRow], period_start: date, period_end: date
+) -> float:
+    """Average guests per confirmed booking overlapping [period_start,
+    period_end] (Phase 20, ADR-0013 §2) — needed by
+    calculation_base='per_guest'. Same overlap rule as booking_count().
+    Returns 0.0 for no matching bookings (never a division by zero)."""
+    overlapping = [
+        booking
+        for booking in bookings
+        if booking.status == "confirmed"
+        and booking.check_in <= period_end
+        and booking.check_out > period_start
+    ]
+    if not overlapping:
+        return 0.0
+    return round(sum(b.guests for b in overlapping) / len(overlapping), 2)

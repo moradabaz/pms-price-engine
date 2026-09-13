@@ -11,9 +11,11 @@ PropertyReasonCode = Literal[
 RuleReasonCode = Literal[
     "rule_market_competitive", "rule_minimum_floor", "rule_minimum_profitable_price"
 ]
-# Phase 11 (ADR-0011 backlog #5, spec 11 §4): emitted only when a
-# non-total_revenue commission_base nets a non-zero amount.
-CommissionReasonCode = Literal["commission_base_netting"]
+# Phase 11 (ADR-0011 backlog #5, spec 11 §4), generalized by Phase 20
+# (ADR-0013 §3) from commission-only to any percentage CostDefinition with a
+# revenue_base: emitted only when a non-total_revenue revenue_base nets a
+# non-zero amount.
+CommissionReasonCode = Literal["revenue_base_netting"]
 # Phase 15 (ADR-0011 backlog #12, spec 15 §4): emitted by
 # recommend_minimum_stay() — "recommended" when some LOS candidate clears
 # minimum_profitable_price, "not_viable" when none of them do.

@@ -21,6 +21,7 @@ _BASE_SEGMENT_ROW = {
 _BASE_OWNER_CONTRACT_ROW = {
     "apartment_id": "BCN-001",
     "owner_id": "OWN-001",
+    "cost_definition_id": "00000000-0000-0000-0000-000000000003",
 }
 
 
@@ -32,27 +33,13 @@ def test_parses_apartment_segment_row():
     assert row.target_margin == 0.05
 
 
-def test_parses_commission_base_and_pct_when_present():
-    row = _parse_owner_contract_row(
-        json.dumps(
-            {
-                **_BASE_OWNER_CONTRACT_ROW,
-                "commission_base": "revenue_minus_ota",
-                "commission_pct": 0.2,
-            }
-        )
-    )
-    assert row.commission_base == "revenue_minus_ota"
-    assert row.commission_pct == 0.2
-
-
-def test_defaults_commission_base_and_pct_for_historical_messages():
-    # Same defensive-default pattern ADR-0009 established for
-    # apartment_market_segments' own commission_pct, now applied to
-    # owner_contracts (Phase 11).
+def test_parses_owner_contract_row():
+    # Phase 20 (ADR-0013 §4): owner_contracts no longer carries
+    # commission_base/commission_pct at all — cost_definition_id replaces
+    # both, resolved into rate/revenue_base by Stage A2.
     row = _parse_owner_contract_row(json.dumps(_BASE_OWNER_CONTRACT_ROW))
-    assert row.commission_base == "total_revenue"
-    assert row.commission_pct == 0.15
+    assert row.apartment_id == "BCN-001"
+    assert row.cost_definition_id == "00000000-0000-0000-0000-000000000003"
 
 
 def test_parses_cost_definition_row():
@@ -72,6 +59,27 @@ def test_parses_cost_definition_row():
     )
     assert row.concept == "office_rent"
     assert row.scope == "company"
+    assert row.rate is None
+
+
+def test_parses_cost_definition_row_rate():
+    # Phase 20 (ADR-0013 §3): required for percentage CostDefinitions.
+    row = _parse_cost_definition_row(
+        json.dumps(
+            {
+                "cost_definition_id": "00000000-0000-0000-0000-000000000001",
+                "concept": "ota_fee",
+                "scope": "booking",
+                "behavior": "variable",
+                "trigger": "reservation",
+                "calculation_base": "pct_adjusted_revenue",
+                "recurrence": "per_booking",
+                "revenue_base": "total_revenue",
+                "rate": 0.15,
+            }
+        )
+    )
+    assert row.rate == 0.15
 
 
 def test_parses_cost_allocation_rule_row():

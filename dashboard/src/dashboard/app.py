@@ -280,9 +280,8 @@ def render_apartment_detail() -> None:
     calculation = decision["calculation"]
     output = decision["output"]
     total_cost_eur = (
-        cost_inputs["fixed_cost_eur"]
-        + cost_inputs["variable_cost_eur"]
-        + cost_inputs["one_time_cost_eur"]
+        cost_inputs["fixed_and_allocated_costs_eur"]
+        + cost_inputs["per_booking_cost_eur"]
     )
     rule_applied = hot_path.descrub(calculation["rule_applied"])
 
@@ -327,9 +326,9 @@ def render_apartment_detail() -> None:
             [
                 {
                     "Total cost (1-night)": total_cost_eur,
-                    "Fixed": cost_inputs["fixed_cost_eur"],
-                    "Variable": cost_inputs["variable_cost_eur"],
-                    "One-time": cost_inputs["one_time_cost_eur"],
+                    "Fixed (info)": cost_inputs["fixed_cost_eur"],
+                    "Variable (info)": cost_inputs["variable_cost_eur"],
+                    "Per-booking": cost_inputs["per_booking_cost_eur"],
                     "Lines": cost_inputs.get("cost_lines_count"),
                 }
             ]
@@ -339,26 +338,30 @@ def render_apartment_detail() -> None:
             "Total cost (1-night)": st.column_config.NumberColumn(
                 format="euro",
                 help=(
-                    "Fixed + Variable + One-time below — your all-in cost for this "
-                    "night."
+                    "Fixed-and-allocated + Per-booking below — your all-in cost for "
+                    "this night."
                 ),
             ),
-            "Fixed": st.column_config.NumberColumn(
+            "Fixed (info)": st.column_config.NumberColumn(
                 format="euro",
                 help=(
-                    "Costs you pay regardless of bookings (e.g. rent, insurance), "
-                    "spread across the days in this billing period."
+                    "Informational only — costs you pay regardless of bookings "
+                    "(e.g. rent, insurance), spread across the days in this billing "
+                    "period. Already counted inside Total cost above."
                 ),
             ),
-            "Variable": st.column_config.NumberColumn(
+            "Variable (info)": st.column_config.NumberColumn(
                 format="euro",
-                help="Costs that scale with bookings/usage (e.g. utilities, OTA fees).",
+                help=(
+                    "Informational only — costs that scale with bookings/usage "
+                    "(e.g. utilities). Already counted inside Total cost above."
+                ),
             ),
-            "One-time": st.column_config.NumberColumn(
+            "Per-booking": st.column_config.NumberColumn(
                 format="euro",
                 help=(
                     "Costs tied to a single stay (e.g. cleaning), averaged per "
-                    "turnover."
+                    "turnover and split across the nights of the stay."
                 ),
             ),
             "Lines": st.column_config.NumberColumn(
@@ -366,16 +369,59 @@ def render_apartment_detail() -> None:
             ),
         },
     )
+    st.markdown(
+        "**Break-Even → Profitable Floor → Suggested** — how the price floor was "
+        "built up."
+    )
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Break-even (BER)": calculation["break_even_revenue_eur"],
+                    "Profitable floor (MPR)": calculation["profitable_floor_eur"],
+                    "Suggested price": output["suggested_price_eur"],
+                    "p (% costs)": cost_inputs["p"],
+                }
+            ]
+        ),
+        hide_index=True,
+        column_config={
+            "Break-even (BER)": st.column_config.NumberColumn(
+                format="euro",
+                help=(
+                    "The price that covers cost with zero margin. Informational "
+                    "only — never itself the enforced floor."
+                ),
+            ),
+            "Profitable floor (MPR)": st.column_config.NumberColumn(
+                format="euro",
+                help=(
+                    "The price that covers cost plus your target margin — this IS "
+                    "the enforced floor (minimum_price_eur)."
+                ),
+            ),
+            "Suggested price": st.column_config.NumberColumn(format="euro"),
+            "p (% costs)": st.column_config.NumberColumn(
+                format="percent",
+                help=(
+                    "Combined rate of every percentage-based cost (OTA fee, owner "
+                    "commission, etc.) charged against this price."
+                ),
+            ),
+        },
+    )
     cost_breakdown = pd.DataFrame(cost_inputs.get("cost_breakdown", []))
     if not cost_breakdown.empty:
         st.caption(
             "Same total cost above, split by category (EUR/day) so you can "
-            "see what's actually driving it."
+            "see what's actually driving it. Grouped by scope — a company-wide "
+            "cost (e.g. shared office rent) is labeled 'company', not 'property'."
         )
         st.bar_chart(
             cost_breakdown,
             x="concept",
             y="amount_eur",
+            color="scope" if "scope" in cost_breakdown.columns else None,
             height=480,
             use_container_width=True,
         )
@@ -440,7 +486,6 @@ def render_apartment_detail() -> None:
                     "Market ref. price": calculation["market_reference_price_eur"],
                     "Competitiveness discount": calculation["competitiveness_discount"],
                     "Cost floor": calculation["minimum_price_eur"],
-                    "Floor type": calculation["floor_type"],
                     "Floor policy": calculation["floor_policy"],
                     "Commission %": calculation["commission_pct"],
                     "Commission base": calculation["commission_base"],
@@ -486,17 +531,10 @@ def render_apartment_detail() -> None:
                     "target margin for this night — never suggested below this."
                 ),
             ),
-            "Floor type": st.column_config.TextColumn(
-                help=(
-                    "Which cost-floor formula applied, based on how far out this "
-                    "night is: full margin required when far out, relaxed the "
-                    "closer the date gets."
-                ),
-            ),
             "Floor policy": st.column_config.TextColumn(
                 help=(
-                    "Hard: an absolute floor, never crossed. Soft: a target margin "
-                    "that can flex as the date approaches."
+                    "Hard: a zero-margin floor (Break-even and Profitable floor "
+                    "coincide). Soft: a target-margin floor above break-even."
                 ),
             ),
             "Commission %": st.column_config.NumberColumn(
@@ -557,7 +595,7 @@ def render_apartment_detail() -> None:
                 [
                     "stay_length",
                     "minimum_price_eur",
-                    "floor_type",
+                    "floor_policy",
                     "rule_applied",
                     "suggested_price_eur",
                     "effective_margin",
@@ -571,8 +609,8 @@ def render_apartment_detail() -> None:
                 "minimum_price_eur": st.column_config.NumberColumn(
                     "Cost floor", format="euro", help="Cost floor at this stay length."
                 ),
-                "floor_type": st.column_config.TextColumn(
-                    "Floor type", help="Which cost-floor formula applied."
+                "floor_policy": st.column_config.TextColumn(
+                    "Floor policy", help="Hard (zero-margin) or soft (target-margin)."
                 ),
                 "rule_applied": st.column_config.TextColumn(
                     "Rule", help=_RULE_APPLIED_HELP
@@ -744,7 +782,7 @@ def render_apartment_detail() -> None:
                 "rule_applied": st.column_config.TextColumn(
                     "Rule", help=_RULE_APPLIED_HELP
                 ),
-                "floor_type": st.column_config.TextColumn("Floor type"),
+                "floor_policy": st.column_config.TextColumn("Floor policy"),
                 "effective_margin": st.column_config.NumberColumn(
                     "Margin", format="percent"
                 ),

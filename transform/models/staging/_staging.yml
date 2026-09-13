@@ -34,8 +34,12 @@ models:
         description: "{{ doc('fixed_cost_eur') }}"
       - name: variable_cost_eur
         description: "{{ doc('variable_cost_eur') }}"
-      - name: one_time_cost_eur
-        description: "{{ doc('one_time_cost_eur') }}"
+      - name: per_booking_cost_eur
+        description: "{{ doc('per_booking_cost_eur') }}"
+      - name: fixed_and_allocated_costs_eur
+        description: "{{ doc('fixed_and_allocated_costs_eur') }}"
+      - name: p
+        description: "{{ doc('p') }}"
       - name: cost_lines_count
         description: "{{ doc('cost_lines_count') }}"
       - name: cost_breakdown
@@ -60,8 +64,10 @@ models:
         description: "{{ doc('target_margin') }}"
       - name: minimum_price_eur
         description: "{{ doc('minimum_price_eur') }}"
-      - name: floor_type
-        description: "{{ doc('floor_type') }}"
+      - name: break_even_revenue_eur
+        description: "{{ doc('break_even_revenue_eur') }}"
+      - name: profitable_floor_eur
+        description: "{{ doc('profitable_floor_eur') }}"
       - name: floor_policy
         description: "{{ doc('floor_policy') }}"
       - name: commission_pct

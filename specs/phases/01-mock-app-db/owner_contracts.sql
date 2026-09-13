@@ -19,26 +19,21 @@
 -- than reading this file at runtime — keep them in sync by hand.
 
 CREATE TABLE IF NOT EXISTS public.owner_contracts (
-    apartment_id     TEXT PRIMARY KEY
-                          REFERENCES public.apartment_market_segments(apartment_id),
-    owner_id         TEXT NOT NULL REFERENCES public.owners(owner_id),
+    apartment_id       TEXT PRIMARY KEY
+                            REFERENCES public.apartment_market_segments(apartment_id),
+    owner_id           TEXT NOT NULL REFERENCES public.owners(owner_id),
 
-    -- ADR-0011 backlog #5: which revenue base commission_pct is charged
-    -- against. 'total_revenue' reproduces this project's pre-Phase-11
-    -- behavior exactly (decide_price()'s default, spec 11 §4).
-    commission_base  TEXT NOT NULL DEFAULT 'total_revenue'
-                          CHECK (commission_base IN
-                              ('total_revenue', 'revenue_minus_ota',
-                               'revenue_minus_ota_minus_cleaning')),
+    -- Phase 20 (ADR-0013 §4): commission_pct/commission_base are REMOVED
+    -- (real substitution, same ADR-0012 precedent as payment_lines) —
+    -- commission is now a CostDefinition(concept='owner_commission',
+    -- calculation_base='pct_adjusted_revenue') like any other percentage
+    -- cost. No FK here: cost_definitions isn't in the initdb sequence
+    -- either (only mock_pm_app/migrations.py creates it at startup), same
+    -- reasoning payment_lines.cost_definition_id already documents.
+    cost_definition_id UUID NOT NULL,
 
-    -- Same field ADR-0009 (D2) introduced on apartment_market_segments,
-    -- relocated here as this phase's single source of truth (spec 11 §3) —
-    -- not duplicated in both tables.
-    commission_pct   NUMERIC(5,4) NOT NULL DEFAULT 0.15
-                          CHECK (commission_pct >= 0 AND commission_pct <= 1),
-
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ
 );
 
 -- Same freshness-trigger pattern as apartment_market_segments.sql.

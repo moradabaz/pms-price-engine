@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from typing import cast
 from uuid import uuid4
 
 from pricing_formulas.engine import (
@@ -8,8 +9,9 @@ from pricing_formulas.engine import (
     recommend_minimum_stay,
 )
 from pricing_formulas.layers.commercial import (
-    commission_base_netting_component,
-    netted_commission_amount,
+    RevenueBase,
+    netted_revenue_base_amount,
+    revenue_base_netting_component,
 )
 from pyflink.common.typeinfo import Types
 from pyflink.datastream import OutputTag
@@ -30,6 +32,7 @@ from shared_schemas.price_decision import (
     PriceDecision,
 )
 
+from flink_jobs.cost_aggregation import PercentageCostComponent
 from flink_jobs.eviction import (
     expired_night_keys,
     is_over_capacity,
@@ -182,47 +185,66 @@ def _build_price_decision(
     assert night.blended is not None
     market = night.blended
     decided_at = datetime.now(UTC)
+    # Phase 20 (ADR-0013 §5): no longer read by decide_price()'s floor math
+    # (there are no antelación tiers left to select) — still recorded on the
+    # event directly, informational/audit only.
     days_to_arrival = (target_date - decided_at.date()).days
 
-    # Phase 11 (ADR-0011 backlog #5): the netting amount and its EUR floor
-    # adjustment don't vary with stay_length (same as property attributes,
-    # spec 09 §A) — computed once here, forwarded to every decide_price()
-    # call for the correct floor, but the explaining decision_component is
-    # only attached to the top-level calculation (spec 11 §F/AC-06).
-    net = netted_commission_amount(
-        cost.commission_base, cost.ota_related_cost_eur, cost.cleaning_cost_eur
+    fixed_and_allocated_costs_per_night_eur = round(
+        cost.fixed_cost_eur + cost.variable_cost_eur, 2
     )
-    commission_netting_eur = round(cost.commission_pct * net, 2)
-    commission_component = commission_base_netting_component(
-        cost.commission_base, cost.commission_pct, net
-    )
-    commission_components = [commission_component] if commission_component else []
+
+    # Phase 20 (ADR-0013 §3/§4): every applicable percentage CostDefinition
+    # for this apartment/period — payment-line-derived ones (Stage A) plus
+    # the owner-commission one (Stage A2, kept in its own dedicated fields
+    # for backward-compatible event shape). Each contributes its own rate to
+    # `p` and its own netting_eur if its revenue_base excludes concepts from
+    # the base — generalizing Phase 11's commission-only netting mechanism.
+    all_percentage_costs = [
+        *cost.percentage_costs,
+        PercentageCostComponent(
+            concept="owner_commission",
+            rate=cost.commission_pct,
+            revenue_base=cost.commission_base,
+        ),
+    ]
+    p = round(sum(pc.rate for pc in all_percentage_costs), 4)
+    netting_eur = 0.0
+    netting_components = []
+    for pc in all_percentage_costs:
+        pc_revenue_base = cast(RevenueBase, pc.revenue_base or "total_revenue")
+        net = netted_revenue_base_amount(
+            pc_revenue_base,
+            cost.ota_related_cost_eur,
+            cost.cleaning_cost_eur,
+        )
+        netting_eur += round(pc.rate * net, 2)
+        component = revenue_base_netting_component(pc_revenue_base, pc.rate, net)
+        if component is not None:
+            netting_components.append(component)
+    netting_eur = round(netting_eur, 2)
 
     calc = decide_price(
-        fixed_cost_eur=cost.fixed_cost_eur,
-        variable_cost_eur=cost.variable_cost_eur,
-        one_time_cost_eur=cost.one_time_cost_eur,
+        fixed_and_allocated_costs_per_night_eur=fixed_and_allocated_costs_per_night_eur,
+        per_booking_cost_eur=cost.per_booking_cost_eur,
+        p=p,
         target_margin=cost.target_margin,
-        commission_pct=cost.commission_pct,
         avg_nightly_rate_eur=market.avg_nightly_rate_eur,
         competitiveness_discount=cost.competitiveness_discount,
-        days_to_arrival=days_to_arrival,
         property_attribute_factor=cost.property_attribute_factor,
-        commission_netting_eur=commission_netting_eur,
+        netting_eur=netting_eur,
         property_decision_components=cost.property_decision_components,
-        commission_decision_components=commission_components,
+        commission_decision_components=netting_components,
     )
     los_matrix = decide_price_los_matrix(
-        fixed_cost_eur=cost.fixed_cost_eur,
-        variable_cost_eur=cost.variable_cost_eur,
-        one_time_cost_eur=cost.one_time_cost_eur,
+        fixed_and_allocated_costs_per_night_eur=fixed_and_allocated_costs_per_night_eur,
+        per_booking_cost_eur=cost.per_booking_cost_eur,
+        p=p,
         target_margin=cost.target_margin,
-        commission_pct=cost.commission_pct,
         avg_nightly_rate_eur=market.avg_nightly_rate_eur,
         competitiveness_discount=cost.competitiveness_discount,
-        days_to_arrival=days_to_arrival,
         property_attribute_factor=cost.property_attribute_factor,
-        commission_netting_eur=commission_netting_eur,
+        netting_eur=netting_eur,
     )
     # Phase 15 (ADR-0011 backlog #12): pure post-processing over the matrix
     # just computed above, plus the same raw cost inputs decide_price() used
@@ -232,24 +254,26 @@ def _build_price_decision(
     minimum_stay = recommend_minimum_stay(
         los_matrix,
         calc.property_reference_price_eur,
-        fixed_cost_eur=cost.fixed_cost_eur,
-        variable_cost_eur=cost.variable_cost_eur,
-        one_time_cost_eur=cost.one_time_cost_eur,
+        fixed_and_allocated_costs_per_night_eur=fixed_and_allocated_costs_per_night_eur,
+        per_booking_cost_eur=cost.per_booking_cost_eur,
     )
     # Phase 16 (ADR-0011 backlog #2): one candidate per channel with an
     # observed rate for this night — [] until market-ingestor's channel
     # events for it have arrived. Never affects the top-level calculation
-    # above, which always reads night.blended only.
+    # above, which always reads night.blended only. p_other excludes
+    # commission (each channel uses its own fixed commission constant
+    # instead, ADR-0013 leaves the channel gross-up mechanism itself
+    # unchanged — spec 20 §2).
+    p_other = round(sum(pc.rate for pc in cost.percentage_costs), 4)
     channel_candidates = decide_price_by_channel(
         night.channel_rates_eur(),
-        fixed_cost_eur=cost.fixed_cost_eur,
-        variable_cost_eur=cost.variable_cost_eur,
-        one_time_cost_eur=cost.one_time_cost_eur,
+        fixed_and_allocated_costs_per_night_eur=fixed_and_allocated_costs_per_night_eur,
+        per_booking_cost_eur=cost.per_booking_cost_eur,
         target_margin=cost.target_margin,
         competitiveness_discount=cost.competitiveness_discount,
-        days_to_arrival=days_to_arrival,
         property_attribute_factor=cost.property_attribute_factor,
-        commission_base=cost.commission_base,
+        p_other=p_other,
+        revenue_base=cost.commission_base,
         ota_related_cost_eur=cost.ota_related_cost_eur,
         cleaning_cost_eur=cost.cleaning_cost_eur,
     )
@@ -279,11 +303,23 @@ def _build_price_decision(
             available_days=cost.available_days,
             fixed_cost_eur=cost.fixed_cost_eur,
             variable_cost_eur=cost.variable_cost_eur,
-            one_time_cost_eur=cost.one_time_cost_eur,
+            fixed_and_allocated_costs_eur=fixed_and_allocated_costs_per_night_eur,
+            per_booking_cost_eur=cost.per_booking_cost_eur,
+            p=p,
             cost_lines_count=cost.cost_lines_count,
-            # Phase 17 (ADR-0011 backlog #3).
+            # Phase 17 (ADR-0011 backlog #3), extended by Phase 20 (ADR-0013,
+            # spec 20 §2) with each concept's own CostDefinition dimensions.
             cost_breakdown=[
-                CostConceptAmount(concept=c.concept, amount_eur=c.amount_eur)
+                CostConceptAmount(
+                    concept=c.concept,
+                    amount_eur=c.amount_eur,
+                    scope=c.scope,
+                    behavior=c.behavior,
+                    trigger=c.trigger,
+                    calculation_base=c.calculation_base,
+                    recurrence=c.recurrence,
+                    allocation_method=c.allocation_method,
+                )
                 for c in cost.cost_breakdown
             ],
         ),
@@ -302,7 +338,8 @@ def _build_price_decision(
         calculation=Calculation(
             target_margin=cost.target_margin,
             minimum_price_eur=calc.minimum_price_eur,
-            floor_type=calc.floor_type,
+            break_even_revenue_eur=calc.break_even_revenue_eur,
+            profitable_floor_eur=calc.profitable_floor_eur,
             floor_policy=calc.floor_policy,
             commission_pct=cost.commission_pct,
             # Phase 11 (ADR-0011 backlog #5): set directly from cost, same as
@@ -319,7 +356,6 @@ def _build_price_decision(
                 LosFloorCandidate(
                     stay_length=candidate.stay_length,
                     minimum_price_eur=candidate.minimum_price_eur,
-                    floor_type=candidate.floor_type,
                     floor_policy=candidate.floor_policy,
                     rule_applied=candidate.rule_applied,
                     suggested_price_eur=candidate.suggested_price_eur,
@@ -347,7 +383,6 @@ def _build_price_decision(
                     commission_pct=c.commission_pct,
                     market_reference_price_eur=c.market_reference_price_eur,
                     minimum_price_eur=c.minimum_price_eur,
-                    floor_type=c.floor_type,
                     floor_policy=c.floor_policy,
                     rule_applied=c.rule_applied,
                     suggested_price_eur=c.suggested_price_eur,

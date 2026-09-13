@@ -11,10 +11,15 @@
 CREATE TABLE IF NOT EXISTS public.cost_definitions (
     cost_definition_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
+    -- Phase 20 (ADR-0013): 'owner_commission' added — the owner-contract
+    -- commission migrated here from owner_contracts.commission_pct/
+    -- commission_base (spec 20 §2/§4), unified under CostDefinition like
+    -- every other cost concept.
     concept            TEXT NOT NULL CHECK (concept IN (
                            'electricity', 'water', 'gas', 'internet', 'pms_subscription',
                            'ota_fee', 'channel_manager', 'office_rent', 'cleaning',
-                           'maintenance', 'insurance', 'community_fee', 'other'
+                           'maintenance', 'insurance', 'community_fee', 'other',
+                           'owner_commission'
                        )),
 
     -- Which level this cost belongs to. company-scoped costs never appear
@@ -41,6 +46,16 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
     -- owner_contracts' own commission_base enum rather than a parallel one.
     revenue_base       TEXT CHECK (revenue_base IN
                            ('total_revenue', 'revenue_minus_ota', 'revenue_minus_ota_minus_cleaning')),
+
+    -- Phase 20 (ADR-0013 §3): the actual configured rate for a percentage
+    -- cost (e.g. 0.15 for a 15% OTA fee/commission) — required exactly when
+    -- calculation_base is percentage-based, since a CostOccurrence's
+    -- amount_gross is always a real invoiced EUR figure, never a rate the
+    -- Break-Even formula could reuse prospectively (spec 20 §2/§4).
+    rate               NUMERIC(6,4) CHECK (rate IS NULL OR (rate >= 0 AND rate <= 1)),
+    CONSTRAINT cost_definitions_rate_matches_calculation_base CHECK (
+        (calculation_base IN ('pct_revenue', 'pct_adjusted_revenue')) = (rate IS NOT NULL)
+    ),
 
     validity_start     DATE NOT NULL DEFAULT CURRENT_DATE,
     validity_end       DATE CHECK (validity_end IS NULL OR validity_end >= validity_start),

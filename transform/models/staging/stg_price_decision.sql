@@ -15,7 +15,9 @@ select
     cost_inputs.available_days,
     cost_inputs.fixed_cost_eur,
     cost_inputs.variable_cost_eur,
-    cost_inputs.one_time_cost_eur,
+    cost_inputs.per_booking_cost_eur,
+    cost_inputs.fixed_and_allocated_costs_eur,
+    cost_inputs.p,
     cost_inputs.cost_lines_count,
     cost_inputs.cost_breakdown,
 
@@ -28,7 +30,8 @@ select
 
     calculation.target_margin,
     calculation.minimum_price_eur,
-    calculation.floor_type,
+    calculation.break_even_revenue_eur,
+    calculation.profitable_floor_eur,
     calculation.floor_policy,
     calculation.commission_pct,
     calculation.commission_base,

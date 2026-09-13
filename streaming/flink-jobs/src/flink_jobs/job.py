@@ -52,6 +52,7 @@ from flink_jobs.stage_manual_override_enrichment import (
     ManualOverrideEnrichmentFunction,
 )
 from flink_jobs.stage_owner_contract_enrichment import (
+    OWNER_COMMISSION_COST_DEFINITION_BROADCAST_DESCRIPTOR,
     OWNER_CONTRACT_BROADCAST_DESCRIPTOR,
     OwnerContractEnrichmentFunction,
 )
@@ -81,13 +82,6 @@ _DEFAULT_RATING = 4.0
 _DEFAULT_HAS_VIEW = False
 _DEFAULT_HAS_PARKING = False
 
-# Phase 11 (ADR-0011 backlog #5): same defaults owner_contracts' own columns
-# use — a CDC message predating this phase's column additions can't occur
-# for a topic this phase itself introduces, but kept for symmetry with every
-# other parser here and as a safety net against a partially-seeded row.
-_DEFAULT_COMMISSION_BASE = "total_revenue"
-_DEFAULT_COMMISSION_PCT = 0.15
-
 
 def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
     """Parses one apartment_market_segments CDC message. Returns a row."""
@@ -109,13 +103,13 @@ def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
 
 def _parse_owner_contract_row(raw: str) -> OwnerContractRow:
     """Parses one owner_contracts CDC message (Phase 11, ADR-0011 backlog
-    #5). Returns a row."""
+    #5; rewired by Phase 20, ADR-0013 §4 — commission_base/commission_pct
+    are gone, cost_definition_id replaces them). Returns a row."""
     data = json.loads(raw)
     return OwnerContractRow(
         apartment_id=data["apartment_id"],
         owner_id=data["owner_id"],
-        commission_base=data.get("commission_base", _DEFAULT_COMMISSION_BASE),
-        commission_pct=float(data.get("commission_pct", _DEFAULT_COMMISSION_PCT)),
+        cost_definition_id=data["cost_definition_id"],
     )
 
 
@@ -165,6 +159,7 @@ def _parse_cost_definition_row(raw: str) -> CostDefinitionRow:
         calculation_base=data["calculation_base"],
         recurrence=data["recurrence"],
         revenue_base=data.get("revenue_base"),
+        rate=float(data["rate"]) if data.get("rate") is not None else None,
     )
 
 
@@ -363,8 +358,19 @@ def build_job(env, settings: FlinkJobSettings) -> None:
     owner_contract_stream = env.from_source(
         owner_contract_source, WatermarkStrategy.no_watermarks(), "owner-contracts"
     ).map(_parse_owner_contract_row)
-    broadcast_owner_contract_stream = owner_contract_stream.broadcast(
-        OWNER_CONTRACT_BROADCAST_DESCRIPTOR
+    # Phase 20 (ADR-0013 §4): reuses cost_definition_stream (already parsed
+    # for Stage A0/A4 above) so this stage can resolve owner_contracts.
+    # cost_definition_id into its rate/revenue_base — same "one source
+    # stream, several independently-connected broadcasts, each under its own
+    # descriptor" pattern already used for cost_definitions/cost_allocation_
+    # rules. Not cost_allocation_rule_stream too — the commission
+    # CostDefinition's own allocation rule (always 'direct') is never read
+    # here.
+    broadcast_owner_contract_stream = owner_contract_stream.union(
+        cost_definition_stream
+    ).broadcast(
+        OWNER_CONTRACT_BROADCAST_DESCRIPTOR,
+        OWNER_COMMISSION_COST_DEFINITION_BROADCAST_DESCRIPTOR,
     )
     cost_aggregates_with_commission = (
         cost_aggregates_with_company_costs.key_by(lambda ca: ca.apartment_id)

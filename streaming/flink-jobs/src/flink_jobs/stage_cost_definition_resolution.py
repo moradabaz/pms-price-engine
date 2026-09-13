@@ -54,6 +54,7 @@ class CostDefinitionResolutionFunction(KeyedBroadcastProcessFunction):
             revenue_base=definition.revenue_base,
             allocation_method=allocation.method,
             weight_config=allocation.weight_config,
+            rate=definition.rate,
         )
 
     def process_broadcast_element(self, value, ctx):

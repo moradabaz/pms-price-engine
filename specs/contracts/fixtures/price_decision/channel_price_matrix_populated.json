@@ -1,6 +1,6 @@
 {
   "decision_id": "a7b8c9d0-89ab-4562-b3fc-2c963f66afe1",
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "apartment_id": "a1b2c3d4-0005",
   "apartment_reference": "BCN-100",
   "target_date": "2026-07-08",
@@ -12,16 +12,24 @@
     },
     "total_monthly_cost_eur": 110.0,
     "available_days": 30,
-    "fixed_cost_eur": 0.0,
-    "variable_cost_eur": 0.0,
-    "one_time_cost_eur": 110.0,
     "cost_lines_count": 1,
     "cost_breakdown": [
       {
         "concept": "cleaning",
-        "amount_eur": 110.0
+        "amount_eur": 110.0,
+        "scope": "booking",
+        "behavior": "variable",
+        "trigger": "reservation",
+        "calculation_base": "fixed_amount",
+        "recurrence": "per_booking",
+        "allocation_method": "occupied_night"
       }
-    ]
+    ],
+    "fixed_cost_eur": 0.0,
+    "variable_cost_eur": 0.0,
+    "fixed_and_allocated_costs_eur": 0.0,
+    "per_booking_cost_eur": 110.0,
+    "p": 0.15
   },
   "market_inputs": {
     "market_area": "Barcelona/Eixample",
@@ -34,7 +42,6 @@
   "calculation": {
     "target_margin": 0.05,
     "minimum_price_eur": 129.41,
-    "floor_type": "contribution",
     "floor_policy": "hard",
     "commission_pct": 0.15,
     "commission_base": "total_revenue",
@@ -48,7 +55,6 @@
       {
         "stay_length": 1,
         "minimum_price_eur": 129.41,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "minimum_profitable_price",
         "suggested_price_eur": 129.41,
@@ -64,7 +70,6 @@
       {
         "stay_length": 2,
         "minimum_price_eur": 64.71,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "market_competitive",
         "suggested_price_eur": 85.5,
@@ -80,7 +85,6 @@
       {
         "stay_length": 3,
         "minimum_price_eur": 43.14,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "market_competitive",
         "suggested_price_eur": 85.5,
@@ -96,7 +100,6 @@
       {
         "stay_length": 7,
         "minimum_price_eur": 18.49,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "market_competitive",
         "suggested_price_eur": 85.5,
@@ -112,7 +115,6 @@
       {
         "stay_length": 14,
         "minimum_price_eur": 9.24,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "market_competitive",
         "suggested_price_eur": 85.5,
@@ -171,7 +173,6 @@
         "commission_pct": 0.12,
         "market_reference_price_eur": 92.34,
         "minimum_price_eur": 125.0,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "minimum_profitable_price",
         "suggested_price_eur": 125.0,
@@ -190,7 +191,6 @@
         "commission_pct": 0.15,
         "market_reference_price_eur": 85.5,
         "minimum_price_eur": 129.41,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "minimum_profitable_price",
         "suggested_price_eur": 129.41,
@@ -209,7 +209,6 @@
         "commission_pct": 0.08,
         "market_reference_price_eur": 78.66,
         "minimum_price_eur": 119.57,
-        "floor_type": "contribution",
         "floor_policy": "hard",
         "rule_applied": "minimum_profitable_price",
         "suggested_price_eur": 119.57,
@@ -222,7 +221,9 @@
           }
         ]
       }
-    ]
+    ],
+    "break_even_revenue_eur": 0.0,
+    "profitable_floor_eur": 129.41
   },
   "output": {
     "suggested_price_eur": 129.41,
