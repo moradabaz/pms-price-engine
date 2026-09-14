@@ -1,6 +1,6 @@
 # Phase 25 — PricingStrategy versioning (simple, future-only)
 
-**Status:** Draft
+**Status:** Implemented (2026-09-14) — see §6 for corrections made during implementation
 **Depends on:** Phase 21 (`PricingStrategy` as a distinct entity — this phase cannot version
 something that isn't yet its own thing)
 **Blocks:** nothing further planned
@@ -161,3 +161,43 @@ produced it). Same class of change as ADR-0012/ADR-0013's own required-field add
   the external spec's own `Owner Contract`/`Cost Definition` `validity_start`/`validity_end` fields
   (already implemented, Phase 19) support scheduling a change ahead of time; `pricing_strategies`
   does not gain that same capability in this phase, a documented scope cut, not an oversight.
+
+---
+
+## 6. Corrections made during implementation (2026-09-14)
+
+- **`apartment_id` is `TEXT`, not `UUID`, in `pricing_strategies`.** §2's own DDL sketch used
+  `apartment_id UUID NOT NULL`, but every other table in this schema (`owner_contracts`,
+  `manual_overrides`, `bookings`, `apartment_market_segments` itself) uses `apartment_id TEXT`
+  (e.g. `"BCN-001"`) — a real string identifier, never a surrogate UUID. Implemented as `TEXT
+  REFERENCES apartment_market_segments(apartment_id)`, consistent with every other FK in this
+  database.
+- **No separate `specs/events/pricing_strategy.v1.json` contract / `libs/shared-schemas` model was
+  created**, despite §3 listing one. `apartment_market_segments`, `owner_contracts`, and
+  `manual_overrides` — the closest structural precedents, all per-apartment broadcast *configuration*
+  CDC streams, not domain *events* — have none either; they are parsed directly by hand
+  (`_parse_owner_contract_row()` etc.) in `job.py` into a plain `flink_jobs.models` dataclass, with
+  no formal JSON Schema contract at all. `pricing_strategies` is architecturally the same kind of
+  thing, so `_parse_pricing_strategy_row()` + `PricingStrategyRow` (this phase's `job.py`/`models.py`
+  additions) follow that existing convention instead. Only `price_decision.v1` (a real, audited
+  domain event with external consumers) gets the formal contract-fixture treatment already described
+  above.
+- **`PricingStrategy` (Phase 21) can no longer be resolved from a single broadcast connection.**
+  §2 describes "a new broadcast stage (or an extension of the existing
+  `stage_cost_enrichment.py` broadcast join)" without resolving which — the actual constraint (found
+  while wiring `job.py`) is that PyFlink's `KeyedStream.connect()` accepts exactly one broadcast
+  stream per `process()` call, the same limit `stage_owner_contract_enrichment.py` already worked
+  around for `owner_contracts`/`cost_definitions`. Implemented the same way: `pricing_strategy_stream`
+  is `.union()`-ed with `segment_stream` before `.broadcast()`, under two independent
+  `MapStateDescriptor`s (`SEGMENT_BROADCAST_DESCRIPTOR` now holds only `PropertyPricingProfile`;
+  the new `PRICING_STRATEGY_BROADCAST_DESCRIPTOR` holds `PricingStrategy`), with
+  `CostEnrichmentFunction.process_broadcast_element()` dispatching by `isinstance`. This stays a
+  single stage (Stage A), not a new chained one — the union pattern was sufficient.
+- Live-verified against a clean LocalStack stack on 2026-09-14: a real seeded apartment
+  (`BCN-006`) edited via `new_strategy_version(conn, "BCN-006", target_margin=0.20)` produced
+  `pricing_strategies` version 2 (confirmed by direct Postgres query — version 1's row unchanged);
+  the next live decisions for that apartment (5 nights) all show `target_margin=0.2` and
+  `pricing_strategy_version=2`. Zero Flink exceptions. `lakehouse-consumer` merged decisions
+  carrying the new field into Iceberg without error. Full `pytest`/`mypy`/`ruff` clean across
+  `pricing-formulas`, `flink-jobs`, `shared-schemas`, `mock-pm-app`, `lakehouse-consumer`,
+  `dashboard`, and `specs/contracts`.

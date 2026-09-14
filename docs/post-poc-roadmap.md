@@ -75,7 +75,28 @@ previously existed for `cost_definitions.revenue_base`'s CHECK constraint, so th
 is the first one, not a widening of an existing one. Live-verified and hand-checked against real
 seeded data: `revenue_minus_all_booking_costs` nets exactly an apartment's own booking-scope cost
 lines; a pre-existing `revenue_minus_ota` apartment correctly excludes its own cleaning/laundry lines
-(regression confirmed). Zero Flink exceptions. Phase 25 remains Draft.
+(regression confirmed). Zero Flink exceptions.
+
+**2026-09-14 update (same day) — Phase 25 implemented and live-verified. All 5 prioritized phases
+now done.** `PricingStrategy` extracted into its own insert-only `pricing_strategies` table/CDC
+stream — every decision now records `pricing_strategy_version`. Corrections found during
+implementation (full account in
+[Phase 25's own §6](../specs/phases/25-pricing-strategy-versioning/spec.md#6-corrections-made-during-implementation-2026-09-14)):
+`apartment_id` is `TEXT` not `UUID` (matching every other table in this schema); no separate
+`pricing_strategy.v1` event contract was created — `pricing_strategies` is a broadcast
+*configuration* CDC stream like `owner_contracts`/`apartment_market_segments`, which have none
+either (only real domain events like `price_decision.v1` get the formal contract treatment);
+PyFlink's `KeyedStream.connect()` accepting exactly one broadcast stream per stage meant
+`PricingStrategy` resolution required unioning the new stream with `segment_stream` under two
+descriptors (the same pattern `stage_owner_contract_enrichment.py` already established), not a new
+chained stage. Live-verified: editing apartment `BCN-006`'s strategy via `new_strategy_version()`
+produced version 2 without touching version 1's row, and the next live decisions for that apartment
+correctly carried the new `target_margin` and `pricing_strategy_version=2`. Zero Flink exceptions.
+
+price_decision.v1 is now at schema_version 4.0 (2.0 → 3.0 Phase 23 → 4.0 Phase 25). All 5 phases
+from the 2026-09-14 prioritized push (21-25) are implemented and live-verified; see
+`docs/client-spec-gap-analysis.md` for the resulting coverage re-assessment against the external
+spec (not yet re-run since Phase 25 landed).
 
 ## 1. Real stay-length pricing (`n` beyond the fixed `1`)
 
