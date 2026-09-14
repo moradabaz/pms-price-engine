@@ -1,6 +1,6 @@
 {
   "decision_id": "e5f6a7b8-89ab-4562-b3fc-2c963f66afc8",
-  "schema_version": "2.0",
+  "schema_version": "4.0",
   "apartment_id": "a1b2c3d4-0002",
   "apartment_reference": "MAD-007",
   "target_date": "2026-08-15",
@@ -245,7 +245,10 @@
       "expected_loss_eur": 17.5
     },
     "break_even_revenue_eur": 127.06,
-    "profitable_floor_eur": 147.5
+    "profitable_floor_eur": 147.5,
+    "viability_status": "override_active",
+    "floor_breach_days": 0,
+    "pricing_strategy_version": 1
   },
   "output": {
     "suggested_price_eur": 130.0,

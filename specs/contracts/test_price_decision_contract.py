@@ -75,3 +75,21 @@ def test_legacy_v1_shape_rejected(schema):
     # payment_line.v1's own breaking bump.
     with pytest.raises(jsonschema.ValidationError):
         validate(schema, load_fixture("price_decision", "invalid_legacy_v1_shape.json"))
+
+
+def test_legacy_v2_shape_rejected(schema):
+    # ADR-0016 §2 (Phase 23): a pre-Phase-23 (schema_version="2.0") message —
+    # viability_status/floor_breach_days absent from calculation — must be
+    # rejected outright, same regression precedent ADR-0012/ADR-0013 already
+    # established for their own breaking bumps.
+    with pytest.raises(jsonschema.ValidationError):
+        validate(schema, load_fixture("price_decision", "invalid_legacy_v2_shape.json"))
+
+
+def test_legacy_v3_shape_rejected(schema):
+    # ADR-0018 §2 (Phase 25): a pre-Phase-25 (schema_version="3.0") message —
+    # pricing_strategy_version absent from calculation — must be rejected
+    # outright, same regression precedent every prior breaking bump already
+    # established.
+    with pytest.raises(jsonschema.ValidationError):
+        validate(schema, load_fixture("price_decision", "invalid_legacy_v3_shape.json"))

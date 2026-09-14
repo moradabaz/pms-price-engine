@@ -135,12 +135,20 @@ def test_one_off_line_is_averaged_not_summed():
     # (ADR-0009 D3). recurrence=one_off replaces the old cost_type='one_time'.
     lines = [
         _line(
-            "e1", 60.0, "2026-06-01", "2026-06-30",
-            recurrence="one_off", allocation_method="direct",
+            "e1",
+            60.0,
+            "2026-06-01",
+            "2026-06-30",
+            recurrence="one_off",
+            allocation_method="direct",
         ),
         _line(
-            "e2", 80.0, "2026-06-01", "2026-06-30",
-            recurrence="one_off", allocation_method="direct",
+            "e2",
+            80.0,
+            "2026-06-01",
+            "2026-06-30",
+            recurrence="one_off",
+            allocation_method="direct",
         ),
     ]
     result = aggregate_cost(lines)
@@ -160,12 +168,22 @@ def test_occupied_night_and_booking_methods_deferred_not_in_fixed_variable():
     # must surface as a pending correction instead.
     lines = [
         _line(
-            "e1", 300.0, "2026-06-01", "2026-06-30",
-            behavior="variable", concept="cleaning", allocation_method="occupied_night",
+            "e1",
+            300.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="cleaning",
+            allocation_method="occupied_night",
         ),
         _line(
-            "e2", 150.0, "2026-06-01", "2026-06-30",
-            behavior="fixed", concept="other", allocation_method="booking",
+            "e2",
+            150.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="fixed",
+            concept="other",
+            allocation_method="booking",
         ),
         _line("e3", 60.0, "2026-06-01", "2026-06-30", behavior="variable"),
     ]
@@ -192,20 +210,36 @@ def test_ota_related_and_cleaning_sub_totals_are_split_from_concept():
     # cleaning -> cleaning, both still fully counted in fixed/variable above.
     lines = [
         _line(
-            "e1", 300.0, "2026-06-01", "2026-06-30",
-            behavior="variable", concept="ota_fee",
+            "e1",
+            300.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="ota_fee",
         ),
         _line(
-            "e2", 150.0, "2026-06-01", "2026-06-30",
-            behavior="fixed", concept="channel_manager",
+            "e2",
+            150.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="fixed",
+            concept="channel_manager",
         ),
         _line(
-            "e3", 120.0, "2026-06-01", "2026-06-30",
-            behavior="variable", concept="cleaning",
+            "e3",
+            120.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="cleaning",
         ),
         _line(
-            "e4", 60.0, "2026-06-01", "2026-06-30",
-            behavior="variable", concept="electricity",
+            "e4",
+            60.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="electricity",
         ),
     ]
     result = aggregate_cost(lines)
@@ -221,6 +255,56 @@ def test_no_ota_or_cleaning_lines_yields_zero_sub_totals():
     result = aggregate_cost(lines)
     assert result.ota_related_cost_eur == 0.0
     assert result.cleaning_cost_eur == 0.0
+    assert result.laundry_cost_eur == 0.0
+    assert result.booking_scope_cost_eur == 0.0
+
+
+def test_laundry_and_booking_scope_sub_totals():
+    # Phase 24 (ADR-0017 §3, spec 24 §5 AC-01/AC-02): laundry_cost_eur
+    # mirrors cleaning_cost_eur; booking_scope_cost_eur sums every
+    # scope='booking' line regardless of concept (here: ota_fee, cleaning,
+    # laundry — electricity is scope='property', excluded).
+    lines = [
+        _line(
+            "e1",
+            300.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="ota_fee",
+            scope="booking",
+        ),
+        _line(
+            "e2",
+            120.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="cleaning",
+            scope="booking",
+        ),
+        _line(
+            "e3",
+            30.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="laundry",
+            scope="booking",
+        ),
+        _line(
+            "e4",
+            60.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="electricity",
+            scope="property",
+        ),
+    ]
+    result = aggregate_cost(lines)
+    assert result.laundry_cost_eur == 1.0  # 30 / 30 days
+    assert result.booking_scope_cost_eur == 15.0  # (300 + 120 + 30) / 30 days
 
 
 def test_cost_breakdown_groups_by_concept_per_day():
@@ -228,16 +312,28 @@ def test_cost_breakdown_groups_by_concept_per_day():
     # (ota_fee/channel_manager, cleaning) Phase 11 already split out.
     lines = [
         _line(
-            "e1", 300.0, "2026-06-01", "2026-06-30",
-            behavior="variable", concept="electricity",
+            "e1",
+            300.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="electricity",
         ),
         _line(
-            "e2", 60.0, "2026-06-01", "2026-06-30",
-            behavior="variable", concept="electricity",
+            "e2",
+            60.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="variable",
+            concept="electricity",
         ),
         _line(
-            "e3", 120.0, "2026-06-01", "2026-06-30",
-            behavior="fixed", concept="water",
+            "e3",
+            120.0,
+            "2026-06-01",
+            "2026-06-30",
+            behavior="fixed",
+            concept="water",
         ),
     ]
     result = aggregate_cost(lines)
@@ -273,9 +369,15 @@ def test_percentage_lines_excluded_from_fixed_variable():
     # via percentage_costs. It still appears in cost_breakdown (display).
     lines = [
         _line(
-            "e1", 300.0, "2026-06-01", "2026-06-30",
-            concept="ota_fee", calculation_base="pct_adjusted_revenue",
-            revenue_base="total_revenue", rate=0.15, recurrence="per_booking",
+            "e1",
+            300.0,
+            "2026-06-01",
+            "2026-06-30",
+            concept="ota_fee",
+            calculation_base="pct_adjusted_revenue",
+            revenue_base="total_revenue",
+            rate=0.15,
+            recurrence="per_booking",
             allocation_method="booking",
         ),
         _line("e2", 60.0, "2026-06-01", "2026-06-30", behavior="variable"),

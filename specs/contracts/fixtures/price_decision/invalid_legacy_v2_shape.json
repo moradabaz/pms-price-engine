@@ -1,8 +1,8 @@
 {
-  "decision_id": "d4e5f6a7-89ab-4562-b3fc-2c963f66afb7",
-  "schema_version": "4.0",
-  "apartment_id": "a1b2c3d4-0002",
-  "apartment_reference": "MAD-007",
+  "decision_id": "c3d4e5f6-89ab-4562-b3fc-2c963f66afa6",
+  "schema_version": "2.0",
+  "apartment_id": "a1b2c3d4-0001",
+  "apartment_reference": "BCN-042",
   "target_date": "2026-08-15",
   "decided_at": "2026-07-01T06:05:00Z",
   "cost_inputs": {
@@ -10,23 +10,13 @@
       "start": "2026-06-01",
       "end": "2026-06-30"
     },
-    "total_monthly_cost_eur": 4200.0,
+    "total_monthly_cost_eur": 410.0,
     "available_days": 30,
-    "cost_lines_count": 8,
+    "cost_lines_count": 6,
     "cost_breakdown": [
       {
-        "concept": "office_rent",
-        "amount_eur": 50.0,
-        "scope": "company",
-        "behavior": "fixed",
-        "trigger": "time",
-        "calculation_base": "fixed_amount",
-        "recurrence": "monthly",
-        "allocation_method": "weighted"
-      },
-      {
         "concept": "electricity",
-        "amount_eur": 12.0,
+        "amount_eur": 3.5,
         "scope": "property",
         "behavior": "variable",
         "trigger": "time",
@@ -36,7 +26,7 @@
       },
       {
         "concept": "water",
-        "amount_eur": 4.0,
+        "amount_eur": 1.2,
         "scope": "property",
         "behavior": "variable",
         "trigger": "time",
@@ -46,7 +36,17 @@
       },
       {
         "concept": "internet",
-        "amount_eur": 4.0,
+        "amount_eur": 1.0,
+        "scope": "property",
+        "behavior": "fixed",
+        "trigger": "time",
+        "calculation_base": "fixed_amount",
+        "recurrence": "monthly",
+        "allocation_method": "calendar_day"
+      },
+      {
+        "concept": "pms_subscription",
+        "amount_eur": 2.0,
         "scope": "property",
         "behavior": "fixed",
         "trigger": "time",
@@ -56,7 +56,7 @@
       },
       {
         "concept": "ota_fee",
-        "amount_eur": 28.0,
+        "amount_eur": 4.97,
         "scope": "booking",
         "behavior": "variable",
         "trigger": "reservation",
@@ -66,134 +66,114 @@
       },
       {
         "concept": "cleaning",
-        "amount_eur": 10.0,
+        "amount_eur": 1.0,
         "scope": "booking",
         "behavior": "variable",
         "trigger": "reservation",
         "calculation_base": "fixed_amount",
         "recurrence": "per_booking",
         "allocation_method": "occupied_night"
-      },
-      {
-        "concept": "insurance",
-        "amount_eur": 10.0,
-        "scope": "property",
-        "behavior": "fixed",
-        "trigger": "time",
-        "calculation_base": "fixed_amount",
-        "recurrence": "annual",
-        "allocation_method": "calendar_day"
-      },
-      {
-        "concept": "other",
-        "amount_eur": 10.0,
-        "scope": "property",
-        "behavior": "variable",
-        "trigger": "time",
-        "calculation_base": "fixed_amount",
-        "recurrence": "monthly",
-        "allocation_method": "calendar_day"
       }
     ],
-    "fixed_cost_eur": 70.0,
-    "variable_cost_eur": 38.0,
-    "fixed_and_allocated_costs_eur": 108.0,
-    "per_booking_cost_eur": 10.0,
+    "fixed_cost_eur": 8.0,
+    "variable_cost_eur": 5.67,
+    "fixed_and_allocated_costs_eur": 13.67,
+    "per_booking_cost_eur": 0.0,
     "p": 0.15
   },
   "market_inputs": {
-    "market_area": "Madrid/Centro",
-    "avg_nightly_rate_eur": 150.0,
-    "occupancy_rate": 0.68,
-    "sample_size": 22,
+    "market_area": "Barcelona/Eixample",
+    "avg_nightly_rate_eur": 120.5,
+    "occupancy_rate": 0.72,
+    "sample_size": 34,
     "collected_at": "2026-07-01T06:00:00Z",
     "data_age_seconds": 300
   },
   "calculation": {
-    "target_margin": 0.05,
-    "minimum_price_eur": 147.5,
+    "target_margin": 0.2,
+    "minimum_price_eur": 21.03,
     "floor_policy": "soft",
     "commission_pct": 0.15,
     "commission_base": "total_revenue",
     "days_to_arrival": 45,
     "competitiveness_discount": 0.05,
     "property_attribute_factor": 1.0,
-    "property_reference_price_eur": 150.0,
-    "market_reference_price_eur": 142.5,
-    "rule_applied": "minimum_floor",
+    "property_reference_price_eur": 120.5,
+    "market_reference_price_eur": 114.47,
+    "rule_applied": "market_competitive",
     "los_floor_matrix": [
       {
         "stay_length": 1,
-        "minimum_price_eur": 147.5,
+        "minimum_price_eur": 21.03,
         "floor_policy": "soft",
-        "rule_applied": "minimum_floor",
-        "suggested_price_eur": 147.5,
-        "effective_margin": 0.25,
+        "rule_applied": "market_competitive",
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
         "decision_components": [
           {
-            "code": "rule_minimum_floor",
-            "label": "Cost floor (147.5) exceeds market reference (142.5) by 5.0 EUR but stays within property reference (150.0)",
-            "impact": 5.0
+            "code": "rule_market_competitive",
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
           }
         ]
       },
       {
         "stay_length": 2,
-        "minimum_price_eur": 141.25,
+        "minimum_price_eur": 21.03,
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.2611,
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (141.25) by 1.25 EUR",
-            "impact": 1.25
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
           }
         ]
       },
       {
         "stay_length": 3,
-        "minimum_price_eur": 139.17,
+        "minimum_price_eur": 21.03,
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.2799,
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (139.17) by 3.33 EUR",
-            "impact": 3.33
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
           }
         ]
       },
       {
         "stay_length": 7,
-        "minimum_price_eur": 136.79,
+        "minimum_price_eur": 21.03,
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.3022,
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (136.79) by 5.71 EUR",
-            "impact": 5.71
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
           }
         ]
       },
       {
         "stay_length": 14,
-        "minimum_price_eur": 135.89,
+        "minimum_price_eur": 21.03,
         "floor_policy": "soft",
         "rule_applied": "market_competitive",
-        "suggested_price_eur": 142.5,
-        "effective_margin": 0.3108,
+        "suggested_price_eur": 114.47,
+        "effective_margin": 7.3742,
         "decision_components": [
           {
             "code": "rule_market_competitive",
-            "label": "Market reference price (142.5) clears the cost floor (135.89) by 6.61 EUR",
-            "impact": 6.61
+            "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+            "impact": 93.44
           }
         ]
       }
@@ -220,28 +200,25 @@
         "impact": 0.0
       },
       {
-        "code": "rule_minimum_floor",
-        "label": "Cost floor (147.5) exceeds market reference (142.5) by 5.0 EUR but stays within property reference (150.0)",
-        "impact": 5.0
+        "code": "rule_market_competitive",
+        "label": "Market reference price (114.47) clears the cost floor (21.03) by 93.44 EUR",
+        "impact": 93.44
       }
     ],
     "minimum_stay_recommendation": {
       "recommended_min_stay": 1,
       "floor_relief_eur": 0.0,
-      "cost_per_reservation_eur": 118.0,
-      "suggested_price_per_reservation_eur": 147.5
+      "cost_per_reservation_eur": 13.67,
+      "suggested_price_per_reservation_eur": 114.47
     },
     "channel_price_matrix": [],
-    "break_even_revenue_eur": 127.06,
-    "profitable_floor_eur": 147.5,
-    "viability_status": "floor_binding",
-    "floor_breach_days": 0,
-    "pricing_strategy_version": 1
+    "break_even_revenue_eur": 16.08,
+    "profitable_floor_eur": 21.03
   },
   "output": {
-    "suggested_price_eur": 147.5,
+    "suggested_price_eur": 114.47,
     "currency": "EUR",
-    "effective_margin": 0.25,
-    "below_market_by": 2.5
+    "effective_margin": 7.3742,
+    "below_market_by": 6.03
   }
 }

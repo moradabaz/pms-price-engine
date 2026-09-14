@@ -15,11 +15,13 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
     -- commission migrated here from owner_contracts.commission_pct/
     -- commission_base (spec 20 §2/§4), unified under CostDefinition like
     -- every other cost concept.
+    -- Phase 24 (ADR-0017 §3): 'laundry' added — the external spec's 4th/5th
+    -- owner-contract revenue bases (§11.1) need a laundry sub-total to net.
     concept            TEXT NOT NULL CHECK (concept IN (
                            'electricity', 'water', 'gas', 'internet', 'pms_subscription',
                            'ota_fee', 'channel_manager', 'office_rent', 'cleaning',
-                           'maintenance', 'insurance', 'community_fee', 'other',
-                           'owner_commission'
+                           'laundry', 'maintenance', 'insurance', 'community_fee',
+                           'other', 'owner_commission'
                        )),
 
     -- Which level this cost belongs to. company-scoped costs never appear
@@ -44,8 +46,13 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
 
     -- Only meaningful when calculation_base = 'pct_adjusted_revenue'. Reuses
     -- owner_contracts' own commission_base enum rather than a parallel one.
+    -- Phase 24 (ADR-0017 §1): the remaining 2 of the external spec's 5
+    -- owner-contract revenue bases (§11.1) added.
     revenue_base       TEXT CHECK (revenue_base IN
-                           ('total_revenue', 'revenue_minus_ota', 'revenue_minus_ota_minus_cleaning')),
+                           ('total_revenue', 'revenue_minus_ota',
+                            'revenue_minus_ota_minus_cleaning',
+                            'revenue_minus_ota_minus_cleaning_minus_laundry',
+                            'revenue_minus_all_booking_costs')),
 
     -- Phase 20 (ADR-0013 §3): the actual configured rate for a percentage
     -- cost (e.g. 0.15 for a 15% OTA fee/commission) — required exactly when

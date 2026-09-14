@@ -9,7 +9,16 @@ PropertyReasonCode = Literal[
     "property_quality_tier", "property_rating", "property_view", "property_parking"
 ]
 RuleReasonCode = Literal[
-    "rule_market_competitive", "rule_minimum_floor", "rule_minimum_profitable_price"
+    "rule_market_competitive",
+    "rule_minimum_floor",
+    "rule_minimum_profitable_price",
+    # Phase 22 (ADR-0015, spec 22 §3): booking_window_component() — never
+    # "rule_standard_window", which is never emitted (a zero-adjustment tier
+    # explains nothing), so it is deliberately excluded from this closed
+    # vocabulary.
+    "rule_early_bird",
+    "rule_last_minute",
+    "rule_same_day",
 ]
 # Phase 11 (ADR-0011 backlog #5, spec 11 §4), generalized by Phase 20
 # (ADR-0013 §3) from commission-only to any percentage CostDefinition with a

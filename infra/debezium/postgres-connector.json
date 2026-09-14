@@ -10,7 +10,7 @@
     "database.dbname": "pms_db",
 
     "topic.prefix": "pms",
-    "table.include.list": "public.payment_lines,public.apartment_market_segments,public.owner_contracts,public.manual_overrides,public.bookings,public.cost_definitions,public.cost_allocation_rules,public.company_cost_occurrences",
+    "table.include.list": "public.payment_lines,public.apartment_market_segments,public.owner_contracts,public.manual_overrides,public.bookings,public.cost_definitions,public.cost_allocation_rules,public.company_cost_occurrences,public.pricing_strategies",
 
     "slot.name": "debezium_payment_lines",
     "plugin.name": "pgoutput",
@@ -27,7 +27,7 @@
     "dates.type": "com.pms.debezium.DateStringConverter",
     "dates.format.date": "yyyy-MM-dd",
 
-    "transforms": "unwrap,routePayments,routeSegments,routeOwnerContracts,routeManualOverrides,routeBookings,routeCostDefinitions,routeCostAllocationRules,routeCompanyCostOccurrences",
+    "transforms": "unwrap,routePayments,routeSegments,routeOwnerContracts,routeManualOverrides,routeBookings,routeCostDefinitions,routeCostAllocationRules,routeCompanyCostOccurrences,routePricingStrategies",
     "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
     "transforms.unwrap.drop.tombstones": "true",
     "transforms.unwrap.delete.handling.mode": "drop",
@@ -55,6 +55,9 @@
     "transforms.routeCompanyCostOccurrences.type": "org.apache.kafka.connect.transforms.RegexRouter",
     "transforms.routeCompanyCostOccurrences.regex": "pms\\.public\\.company_cost_occurrences",
     "transforms.routeCompanyCostOccurrences.replacement": "company-cost-occurrences.v1",
+    "transforms.routePricingStrategies.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routePricingStrategies.regex": "pms\\.public\\.pricing_strategies",
+    "transforms.routePricingStrategies.replacement": "pricing-strategies.v1",
 
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",
     "key.converter.schemas.enable": "false",

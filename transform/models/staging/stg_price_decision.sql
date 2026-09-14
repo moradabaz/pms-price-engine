@@ -46,6 +46,9 @@ select
     calculation.manual_override,
     calculation.minimum_stay_recommendation,
     calculation.channel_price_matrix,
+    calculation.viability_status,
+    calculation.floor_breach_days,
+    calculation.pricing_strategy_version,
 
     output.suggested_price_eur,
     output.currency,

@@ -90,14 +90,52 @@ def build_apartment_pool(
     return apartments
 
 
+# Phase 25 (ADR-0018 §2): apartment_market_segments' own former DEFAULT
+# 0.05 for both columns (Decision C.2, now retired) — preserved here as
+# explicit seed values, since pricing_strategies (an insert-only, versioned
+# table) intentionally carries no table-level default of its own.
+DEFAULT_TARGET_MARGIN = 0.05
+DEFAULT_COMPETITIVENESS_DISCOUNT = 0.05
+
+
+@dataclass(frozen=True)
+class PricingStrategy:
+    apartment_id: str
+    version: int
+    target_margin: float
+    competitiveness_discount: float
+    floor_policy_default: str = "soft"
+
+
+def build_pricing_strategies(apartments: list[Apartment]) -> list[PricingStrategy]:
+    """One version=1 PricingStrategy per apartment, at this project's former
+    apartment_market_segments defaults — the seed-time equivalent of the
+    backfill migration's own version=1 row for a pre-existing deployment.
+    Returns one strategy per apartment."""
+    return [
+        PricingStrategy(
+            apartment_id=apartment.apartment_id,
+            version=1,
+            target_margin=DEFAULT_TARGET_MARGIN,
+            competitiveness_discount=DEFAULT_COMPETITIVENESS_DISCOUNT,
+        )
+        for apartment in apartments
+    ]
+
+
 # Phase 11 (docs/adr/ADR-0011, backlog #5): a small pool, so several
 # apartments genuinely share the same owner — the actual point of a real
 # owner entity instead of a flat per-apartment column (spec 11 pre-spec §A).
 _OWNER_COUNT = 6
+# Phase 24 (ADR-0017 §1): the remaining 2 of the external spec's 5 bases
+# (§11.1) added — so the seeded data actually exercises them, same reasoning
+# build_owner_contracts()'s own docstring already gives for randomizing.
 _COMMISSION_BASES = [
     "total_revenue",
     "revenue_minus_ota",
     "revenue_minus_ota_minus_cleaning",
+    "revenue_minus_ota_minus_cleaning_minus_laundry",
+    "revenue_minus_all_booking_costs",
 ]
 
 
@@ -218,6 +256,10 @@ CONCEPT_PROFILES = [
     ConceptProfile("ota_fee", 0.21, (50.0, 400.0)),
     ConceptProfile("channel_manager", 0.21, (15.0, 40.0)),
     ConceptProfile("cleaning", 0.10, (40.0, 120.0)),
+    # Phase 24 (ADR-0017 §3): mirrors cleaning's own range/VAT — the external
+    # spec's 4th/5th owner-contract revenue bases (§11.1) need real laundry
+    # cost lines to net against.
+    ConceptProfile("laundry", 0.10, (15.0, 45.0)),
     # Deliberately narrower than a real repair invoice's full range (which
     # can genuinely spike into the hundreds) — this is the one concept whose
     # entire amount lands on a single stay_length=1 decision (recurrence=
@@ -270,56 +312,174 @@ class CostDefinitionSpec:
 
 COST_DEFINITION_SPECS = [
     CostDefinitionSpec(
-        "electricity", "property", "variable", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "electricity",
+        "property",
+        "variable",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "water", "property", "variable", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "water",
+        "property",
+        "variable",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "gas", "property", "variable", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "gas",
+        "property",
+        "variable",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "internet", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "internet",
+        "property",
+        "fixed",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "pms_subscription", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "pms_subscription",
+        "property",
+        "fixed",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "ota_fee", "booking", "variable", "reservation", "pct_adjusted_revenue",
-        "per_booking", "total_revenue", 0.15, "booking", None,
+        "ota_fee",
+        "booking",
+        "variable",
+        "reservation",
+        "pct_adjusted_revenue",
+        "per_booking",
+        "total_revenue",
+        0.15,
+        "booking",
+        None,
     ),
     CostDefinitionSpec(
-        "channel_manager", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "channel_manager",
+        "property",
+        "fixed",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "office_rent", "company", "fixed", "time", "fixed_amount",
-        "monthly", None, None, "weighted", None,
+        "office_rent",
+        "company",
+        "fixed",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "weighted",
+        None,
     ),
     CostDefinitionSpec(
-        "cleaning", "booking", "variable", "reservation", "fixed_amount",
-        "per_booking", None, None, "occupied_night", None,
+        "cleaning",
+        "booking",
+        "variable",
+        "reservation",
+        "fixed_amount",
+        "per_booking",
+        None,
+        None,
+        "occupied_night",
+        None,
+    ),
+    # Phase 24 (ADR-0017 §3): mirrors cleaning exactly — a per-stay turnover
+    # cost, same dimensions.
+    CostDefinitionSpec(
+        "laundry",
+        "booking",
+        "variable",
+        "reservation",
+        "fixed_amount",
+        "per_booking",
+        None,
+        None,
+        "occupied_night",
+        None,
     ),
     CostDefinitionSpec(
-        "maintenance", "property", "semi_variable", "event", "fixed_amount",
-        "one_off", None, None, "direct", None,
+        "maintenance",
+        "property",
+        "semi_variable",
+        "event",
+        "fixed_amount",
+        "one_off",
+        None,
+        None,
+        "direct",
+        None,
     ),
     CostDefinitionSpec(
-        "insurance", "property", "fixed", "time", "fixed_amount",
-        "annual", None, None, "calendar_day", None,
+        "insurance",
+        "property",
+        "fixed",
+        "time",
+        "fixed_amount",
+        "annual",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "community_fee", "property", "fixed", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "community_fee",
+        "property",
+        "fixed",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
     CostDefinitionSpec(
-        "other", "property", "variable", "time", "fixed_amount",
-        "monthly", None, None, "calendar_day", None,
+        "other",
+        "property",
+        "variable",
+        "time",
+        "fixed_amount",
+        "monthly",
+        None,
+        None,
+        "calendar_day",
+        None,
     ),
 ]
 

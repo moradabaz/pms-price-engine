@@ -511,6 +511,62 @@ def test_performance_and_inventory_layers_multiply_into_property_reference_price
     )
 
 
+def test_booking_window_lowers_suggested_price_close_to_arrival():
+    # spec 22 §5 AC-02: same cost/market inputs, only days_to_arrival differs.
+    common = dict(
+        fixed_and_allocated_costs_per_night_eur=10.0,
+        per_booking_cost_eur=0.0,
+        p=0.1,
+        target_margin=0.1,
+        avg_nightly_rate_eur=200.0,
+        competitiveness_discount=0.0,
+    )
+    far_out = decide_price(**common, days_to_arrival=60)
+    close_in = decide_price(**common, days_to_arrival=1)
+
+    assert far_out.rule_applied == "market_competitive"
+    assert close_in.rule_applied == "market_competitive"
+    assert close_in.suggested_price_eur < far_out.suggested_price_eur
+
+
+def test_booking_window_never_changes_the_floor_terms():
+    # spec 22 §5 AC-04: ADR-0013's floor formula stays untouched by this
+    # phase — only the RM-layer property_reference_price is affected.
+    common = dict(
+        fixed_and_allocated_costs_per_night_eur=100.0,
+        per_booking_cost_eur=0.0,
+        p=0.15,
+        target_margin=0.05,
+        avg_nightly_rate_eur=90.0,
+        competitiveness_discount=0.05,
+    )
+    same_day = decide_price(**common, days_to_arrival=0)
+    far_out = decide_price(**common, days_to_arrival=90)
+
+    assert same_day.break_even_revenue_eur == far_out.break_even_revenue_eur
+    assert same_day.profitable_floor_eur == far_out.profitable_floor_eur
+
+
+def test_booking_window_decision_component_present_only_for_nonzero_tiers():
+    # spec 22 §5 AC-03.
+    common = dict(
+        fixed_and_allocated_costs_per_night_eur=10.0,
+        per_booking_cost_eur=0.0,
+        p=0.1,
+        target_margin=0.1,
+        avg_nightly_rate_eur=200.0,
+        competitiveness_discount=0.0,
+    )
+    last_minute = decide_price(**common, days_to_arrival=1)
+    standard = decide_price(**common, days_to_arrival=10)
+
+    assert any(c.code == "rule_last_minute" for c in last_minute.decision_components)
+    assert not any(
+        c.code in ("rule_early_bird", "rule_last_minute", "rule_same_day")
+        for c in standard.decision_components
+    )
+
+
 def test_recommend_minimum_stay_already_fine_at_one_night():
     # AC-01: stay_length=1 not minimum_profitable_price -> recommend 1, no relief,
     # no decision component (nothing to explain).

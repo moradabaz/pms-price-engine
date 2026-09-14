@@ -15,9 +15,7 @@ from shared_schemas.price_decision import (
 )
 
 _RULE_COMPONENT = [
-    DecisionComponent(
-        code="rule_market_competitive", label="test", impact=45.0
-    )
+    DecisionComponent(code="rule_market_competitive", label="test", impact=45.0)
 ]
 _PROPERTY_COMPONENTS = [
     DecisionComponent(code="property_quality_tier", label="test", impact=0.0),
@@ -80,6 +78,9 @@ def _decision() -> PriceDecision:
             minimum_stay_recommendation=MinimumStayRecommendation(
                 recommended_min_stay=1, floor_relief_eur=0.0
             ),
+            viability_status="ok",
+            floor_breach_days=0,
+            pricing_strategy_version=1,
         ),
         output=Output(
             suggested_price_eur=95.0, effective_margin=0.9, below_market_by=5.0

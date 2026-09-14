@@ -10,6 +10,7 @@ from mock_pm_app.data import (
     build_company_cost_occurrences,
     build_owner_contracts,
     build_owner_pool,
+    build_pricing_strategies,
 )
 from mock_pm_app.generator import run_forever
 from mock_pm_app.migrations import (
@@ -21,6 +22,8 @@ from mock_pm_app.migrations import (
     ensure_manual_overrides_schema,
     ensure_owner_contracts_schema,
     ensure_owners_schema,
+    ensure_pricing_strategies_schema,
+    migrate_apartment_market_segments_to_pricing_strategies,
     migrate_owner_contracts_to_cost_definitions,
     migrate_payment_lines_to_cost_definitions,
 )
@@ -30,6 +33,7 @@ from mock_pm_app.seed import (
     already_seeded_company_cost_occurrences,
     already_seeded_owner_contracts,
     already_seeded_owners,
+    already_seeded_pricing_strategies,
     already_seeded_segments,
     ensure_weighted_allocation_config,
     resolve_cost_definition_ids,
@@ -39,6 +43,7 @@ from mock_pm_app.seed import (
     seed_company_cost_occurrences,
     seed_owner_contracts,
     seed_owners,
+    seed_pricing_strategies,
 )
 from mock_pm_app.settings import MockAppSettings
 
@@ -54,6 +59,18 @@ def main() -> None:
         # header for why this can't rely on docker-entrypoint-initdb.d alone.
         ensure_apartment_market_segments_schema(conn)
         logger.info("apartment_market_segments_schema_ensured")
+        # Phase 25 (ADR-0018 §2): must run after apartment_market_segments
+        # exists (pricing_strategies.apartment_id FKs to it).
+        ensure_pricing_strategies_schema(conn)
+        logger.info("pricing_strategies_schema_ensured")
+        # Phase 25 (ADR-0018 §1): breaking change, backfills any existing
+        # apartment_market_segments target_margin/competitiveness_discount
+        # into a version=1 pricing_strategies row each, then drops both
+        # columns. Must run after both tables above exist. Harmless no-op
+        # once already migrated (checked via information_schema, not a
+        # flag) or on a fresh install (the columns never existed).
+        migrate_apartment_market_segments_to_pricing_strategies(conn)
+        logger.info("apartment_market_segments_migrated_to_pricing_strategies")
         ensure_owners_schema(conn)
         logger.info("owners_schema_ensured")
         ensure_owner_contracts_schema(conn)
@@ -115,7 +132,11 @@ def main() -> None:
             logger.info("seed_skipped", reason="payment_lines already has rows")
         else:
             rows_inserted = seed(
-                conn, settings, apartments, rng, date.today(),
+                conn,
+                settings,
+                apartments,
+                rng,
+                date.today(),
                 concept_to_cost_definition_id,
             )
             logger.info("seed_complete", rows_inserted=rows_inserted)
@@ -128,6 +149,18 @@ def main() -> None:
         else:
             segments_inserted = seed_apartment_market_segments(conn, apartments)
             logger.info("segment_seed_complete", rows_inserted=segments_inserted)
+
+        if already_seeded_pricing_strategies(conn):
+            logger.info(
+                "pricing_strategy_seed_skipped",
+                reason="pricing_strategies already has rows",
+            )
+        else:
+            strategies = build_pricing_strategies(apartments)
+            strategies_inserted = seed_pricing_strategies(conn, strategies)
+            logger.info(
+                "pricing_strategy_seed_complete", rows_inserted=strategies_inserted
+            )
 
         if already_seeded_owners(conn):
             logger.info("owner_seed_skipped", reason="owners already has rows")

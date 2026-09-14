@@ -6,6 +6,7 @@ from flink_jobs.job import (
     _parse_cost_allocation_rule_row,
     _parse_cost_definition_row,
     _parse_owner_contract_row,
+    _parse_pricing_strategy_row,
 )
 
 _BASE_SEGMENT_ROW = {
@@ -14,6 +15,11 @@ _BASE_SEGMENT_ROW = {
     "neighborhood": "Eixample",
     "property_type": "studio",
     "bedrooms": 0,
+}
+
+_BASE_PRICING_STRATEGY_ROW = {
+    "apartment_id": "BCN-001",
+    "version": 1,
     "target_margin": 0.05,
     "competitiveness_discount": 0.05,
 }
@@ -26,11 +32,21 @@ _BASE_OWNER_CONTRACT_ROW = {
 
 
 def test_parses_apartment_segment_row():
-    # Phase 11 (ADR-0011 backlog #5): apartment_market_segments no longer
-    # carries commission_pct at all — nothing left to default here.
+    # Phase 25 (ADR-0018 §1): apartment_market_segments no longer carries
+    # target_margin/competitiveness_discount at all — nothing left to
+    # default here (moved to pricing_strategies, see the test below).
     row = _parse_apartment_segment_row(json.dumps(_BASE_SEGMENT_ROW))
     assert row.apartment_id == "BCN-001"
+    assert row.city == "Barcelona"
+
+
+def test_parses_pricing_strategy_row():
+    row = _parse_pricing_strategy_row(json.dumps(_BASE_PRICING_STRATEGY_ROW))
+    assert row.apartment_id == "BCN-001"
+    assert row.version == 1
     assert row.target_margin == 0.05
+    assert row.competitiveness_discount == 0.05
+    assert row.floor_policy_default == "soft"
 
 
 def test_parses_owner_contract_row():

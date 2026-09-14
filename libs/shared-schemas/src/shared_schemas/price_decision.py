@@ -12,12 +12,33 @@ from pydantic import BaseModel, ConfigDict, Field
 # price fell BELOW cost (see docs/profitable-pricing-glossary.md §5's
 # "Profitable Floor" — the same concept this value names).
 RuleApplied = Literal["market_competitive", "minimum_floor", "minimum_profitable_price"]
+# Phase 23 (ADR-0016 §3): external spec §13's situation/action table as an
+# explicit classification. Mirrors pricing_formulas.viability.ViabilityStatus
+# field-for-field (shared_schemas has no dependency on pricing_formulas, so
+# this is a duplicated Literal, not an import — same convention every other
+# closed vocabulary in this file already follows).
+ViabilityStatus = Literal[
+    "ok",
+    "demand_upside",
+    "min_stay_lever_available",
+    "channel_lever_available",
+    "persistent_floor_breach",
+    "override_active",
+    "floor_binding",
+]
 # Phase 11 (ADR-0011 backlog #5): which revenue base commission_pct is
 # charged against. Phase 20 (ADR-0013 §4): still meaningful — now the
 # resolved revenue_base of the apartment's own owner-commission
 # CostDefinition, rather than a dedicated owner_contracts column.
+# Phase 24 (ADR-0017 §1/§4): the remaining 2 of the external spec's 5 bases
+# (§11.1) — additive enum widening, no schema_version bump (same reasoning
+# Phase 22's ReasonCode extension already documents).
 CommissionBase = Literal[
-    "total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"
+    "total_revenue",
+    "revenue_minus_ota",
+    "revenue_minus_ota_minus_cleaning",
+    "revenue_minus_ota_minus_cleaning_minus_laundry",
+    "revenue_minus_all_booking_costs",
 ]
 # Phase 12 (ADR-0011 backlog #10): explicit classification of the floor into
 # the external spec's Hard/Soft floor vocabulary. Phase 20 (ADR-0013 §5):
@@ -42,6 +63,9 @@ CostConcept = Literal[
     "community_fee",
     "other",
     "owner_commission",
+    # Phase 24 (ADR-0017 §3): the 4th/5th revenue bases (§11.1) need a
+    # laundry-only sub-total to net against.
+    "laundry",
 ]
 # Phase 20 (ADR-0013, spec 20 §2): mirrors cost_definitions.sql's own
 # dimension enums field-for-field — cost_breakdown entries carry these
@@ -75,6 +99,13 @@ ReasonCode = Literal[
     "rule_market_competitive",
     "rule_minimum_floor",
     "rule_minimum_profitable_price",
+    # Phase 22 (ADR-0015, spec 22 §3): booking_window_component() — never
+    # "rule_standard_window", which is never emitted (a zero-adjustment tier
+    # explains nothing), so it is deliberately excluded from this closed
+    # vocabulary.
+    "rule_early_bird",
+    "rule_last_minute",
+    "rule_same_day",
     # Phase 11 (ADR-0011 backlog #5), generalized by Phase 20 (ADR-0013 §3)
     # from commission-only to any percentage CostDefinition with a
     # revenue_base: only on Calculation.decision_components, never on
@@ -293,6 +324,23 @@ class Calculation(BaseModel):
     # once market-ingestor's channel-specific event for that night has
     # arrived, so no minimum length is enforced.
     channel_price_matrix: list[ChannelPriceCandidate] = Field(default_factory=list)
+    # Phase 23 (ADR-0016 §2): external spec §13's situation/action
+    # classification — required, breaking price_decision.v1 bump to 3.0
+    # (same class of change ADR-0012/ADR-0013 already established for their
+    # own required-field additions under this project's strict
+    # extra="forbid" schema convention).
+    viability_status: ViabilityStatus
+    # Days this (apartment, target_date) has held rule_applied !=
+    # "market_competitive" in an unbroken streak, 0 when currently
+    # market_competitive (ADR-0016 §4). Informational/audit — only
+    # viability_status is the decision surface.
+    floor_breach_days: int = Field(ge=0)
+    # Phase 25 (ADR-0018 §2): which insert-only pricing_strategies row
+    # (target_margin/competitiveness_discount) produced this decision — the
+    # field "reproducibility" (external spec §28) hinges on, since this
+    # project does no historical replay (future-only, same precedent
+    # ADR-0011/ADR-0013 already established).
+    pricing_strategy_version: int = Field(ge=1)
 
 
 class Output(BaseModel):
@@ -312,7 +360,11 @@ class PriceDecision(BaseModel):
     # fixed_and_allocated_costs_eur/per_booking_cost_eur/p/
     # break_even_revenue_eur/profitable_floor_eur added, same class of
     # change as payment_line.v1's 1.0 -> 2.0 (ADR-0012).
-    schema_version: Literal["2.0"] = "2.0"
+    # Phase 23 (ADR-0016 §2): breaking bump — viability_status/
+    # floor_breach_days added as required fields on Calculation.
+    # Phase 25 (ADR-0018 §2): breaking bump — pricing_strategy_version added
+    # as a required field on Calculation.
+    schema_version: Literal["4.0"] = "4.0"
     apartment_id: str
     apartment_reference: str
     target_date: date

@@ -3,6 +3,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pricing_formulas.decision_components import DecisionComponent
+from pricing_formulas.layers.booking_window import (
+    booking_window_component,
+    booking_window_factor,
+)
 from pricing_formulas.layers.commercial import RevenueBase, netted_revenue_base_amount
 from pricing_formulas.layers.guardrails import RuleApplied, apply_guardrails
 from pricing_formulas.layers.inventory import inventory_layer
@@ -13,6 +17,17 @@ from pricing_formulas.layers.structural import property_reference_price
 # Phase 9 (ADR-0011 backlog #1, docs/phase-9-los-floor-matrix-design-decisions.md
 # §C): candidate stay lengths for the LOS floor matrix.
 LOS_CANDIDATES: tuple[int, ...] = (1, 2, 3, 7, 14)
+
+# Phase 22 (ADR-0015): the default for days_to_arrival on every decide_price*
+# function. Deliberately NOT 0 — 0 days is the steepest same_day markdown
+# tier (layers/booking_window.py), so a literal 0 default would silently
+# discount every caller that doesn't pass a real value (every pre-Phase-22
+# test, and any future caller with no booking-window signal to give).
+# 999 always lands in the neutral standard_window tier (>= 45 days),
+# preserving the exact pre-Phase-22 behavior (factor 1.0, no component) for
+# anyone who omits the argument. The one real production caller
+# (stage_price_decision.py) always passes its own computed value explicitly.
+NO_BOOKING_WINDOW_SIGNAL = 999
 
 # Phase 12 (ADR-0011 backlog #10): the external spec's Hard/Soft floor
 # vocabulary. Phase 20 (ADR-0013 §5): retired ADR-0009's antelación-tiered
@@ -58,11 +73,13 @@ def decide_price(
     netting_eur: float = 0.0,
     property_decision_components: Sequence[DecisionComponent] = (),
     commission_decision_components: Sequence[DecisionComponent] = (),
+    days_to_arrival: int = NO_BOOKING_WINDOW_SIGNAL,
 ) -> PriceCalculation:
     """Orchestrates the layered Revenue Management engine (ADR-0011 backlog
     #7, spec 13; rewired onto the external spec's own Break-Even/Profitable
     Floor formula by ADR-0013, spec 20 §3): Structural -> Performance ->
-    Inventory -> Market -> Break-Even/Profitable Floor -> Guardrails.
+    Inventory -> Booking Window -> Market -> Break-Even/Profitable Floor ->
+    Guardrails.
     `p` is the summed rate of every applicable percentage CostDefinition for
     this apartment/period (owner commission included, ADR-0013 §4) —
     resolved once per decision by the caller (Stage B), not here.
@@ -73,7 +90,9 @@ def decide_price(
     likewise pre-resolved by the caller — computed once per apartment per
     segment-broadcast update in Stage A, not per decision; only its
     per-decision half (property_reference_price) runs inside this pipeline.
-    Returns a PriceCalculation."""
+    `days_to_arrival` (Phase 22, ADR-0015) feeds only the Booking Window
+    layer — the floor math above never reads it, preserving ADR-0013 §5
+    unchanged. Returns a PriceCalculation."""
     # Phase 9: fixed_and_allocated_costs_per_night_eur is already a per-night
     # rate (Flink's cost aggregation divides by available_days) — it never
     # scales with stay_length. per_booking_cost_eur (allocation_method=
@@ -93,9 +112,7 @@ def decide_price(
     numerator_eur = fixed_and_allocated_costs_eur - netting_eur
     break_even_revenue_eur = numerator_eur / (1 - p) if p != 1 else 0.0
     mpr_denominator = 1 - p - target_margin
-    profitable_floor_eur = (
-        numerator_eur / mpr_denominator if mpr_denominator else 0.0
-    )
+    profitable_floor_eur = numerator_eur / mpr_denominator if mpr_denominator else 0.0
     # ADR-0013 §5: MPR is always the enforced floor — BER is informational/
     # explainability only (external spec §14), never substituted in here.
     minimum_price_eur = profitable_floor_eur
@@ -109,7 +126,11 @@ def decide_price(
     # Phase 13 (ADR-0011 backlog #7): Performance/Inventory stubs, always
     # neutral until backlog #11 — multiplying by 1.0 is a no-op today,
     # becomes real signal once that phase lands real market/comp-set data.
-    property_reference_price_eur *= performance_layer() * inventory_layer()
+    # Phase 22 (ADR-0015): Booking Window (external spec's layer D) is real,
+    # inserted here — before Market — per spec 22 §3's placement rationale.
+    property_reference_price_eur *= (
+        performance_layer() * inventory_layer() * booking_window_factor(days_to_arrival)
+    )
 
     market_reference_price_eur = market_reference_price(
         property_reference_price_eur, competitiveness_discount
@@ -134,9 +155,11 @@ def decide_price(
     # second code path (spec 10 §E, spec 11 §F/AC-06). netting_eur itself
     # (the numeric floor adjustment) IS still forwarded to every candidate —
     # only the component that explains it is top-level-only.
+    booking_window_component_ = booking_window_component(days_to_arrival)
     decision_components = [
         *property_decision_components,
         *commission_decision_components,
+        *([booking_window_component_] if booking_window_component_ is not None else []),
         guardrails.rule_component,
     ]
 
@@ -300,13 +323,16 @@ def decide_price_los_matrix(
     property_attribute_factor: float = 1.0,
     netting_eur: float = 0.0,
     stay_lengths: tuple[int, ...] = LOS_CANDIDATES,
+    days_to_arrival: int = NO_BOOKING_WINDOW_SIGNAL,
 ) -> list[LosFloorCandidate]:
     """Evaluates decide_price() once per candidate stay length (ADR-0011
     backlog #1). No formula duplicated — a thin composition over
     decide_price(), since only minimum_price_eur/rule_applied/
     suggested_price_eur/effective_margin vary with stay_length; the market
     side does not (docs/phase-9-los-floor-matrix-design-decisions.md §A).
-    Returns one LosFloorCandidate per stay length."""
+    `days_to_arrival` (Phase 22, ADR-0015) is constant across every
+    candidate in one decision — threaded through unchanged. Returns one
+    LosFloorCandidate per stay length."""
     candidates = []
     for stay_length in stay_lengths:
         calc = decide_price(
@@ -319,6 +345,7 @@ def decide_price_los_matrix(
             property_attribute_factor=property_attribute_factor,
             stay_length=stay_length,
             netting_eur=netting_eur,
+            days_to_arrival=days_to_arrival,
         )
         candidates.append(
             LosFloorCandidate(
@@ -371,7 +398,10 @@ def decide_price_by_channel(
     revenue_base: RevenueBase = "total_revenue",
     ota_related_cost_eur: float = 0.0,
     cleaning_cost_eur: float = 0.0,
+    laundry_cost_eur: float = 0.0,
+    booking_scope_cost_eur: float = 0.0,
     channel_commission_pct: dict[str, float] = CHANNEL_COMMISSION_PCT,
+    days_to_arrival: int = NO_BOOKING_WINDOW_SIGNAL,
 ) -> list[ChannelPriceCandidate]:
     """Evaluates decide_price() once per known channel (ADR-0011 backlog #2),
     at stay_length=1. Unlike decide_price_los_matrix(), this is NOT a pure
@@ -380,6 +410,8 @@ def decide_price_by_channel(
     price()/market_reference_price() before it reaches the floor comparison
     (spec 16 §4) — so market_reference_price_eur genuinely varies per
     candidate here, unlike its identical-across-candidates LOS counterpart.
+    `days_to_arrival` (Phase 22, ADR-0015) is constant across every channel
+    candidate in one decision — threaded through unchanged.
     `p_other` is the rate of every applicable percentage CostDefinition
     EXCLUDING this channel's own commission (e.g. ota_fee) — combined with
     each channel's own fixed commission constant to form that candidate's
@@ -390,7 +422,11 @@ def decide_price_by_channel(
     channel_rates_eur — never invents a channel with no observed market
     rate. Returns one ChannelPriceCandidate per known channel."""
     net = netted_revenue_base_amount(
-        revenue_base, ota_related_cost_eur, cleaning_cost_eur
+        revenue_base,
+        ota_related_cost_eur,
+        cleaning_cost_eur,
+        laundry_cost_eur,
+        booking_scope_cost_eur,
     )
     candidates = []
     for platform, avg_nightly_rate_eur in channel_rates_eur.items():
@@ -405,6 +441,7 @@ def decide_price_by_channel(
             competitiveness_discount=competitiveness_discount,
             property_attribute_factor=property_attribute_factor,
             netting_eur=netting_eur,
+            days_to_arrival=days_to_arrival,
         )
         candidates.append(
             ChannelPriceCandidate(

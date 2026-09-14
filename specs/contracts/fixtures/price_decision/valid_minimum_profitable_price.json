@@ -1,6 +1,6 @@
 {
   "decision_id": "e5f6a7b8-89ab-4562-b3fc-2c963f66afc8",
-  "schema_version": "2.0",
+  "schema_version": "4.0",
   "apartment_id": "a1b2c3d4-0003",
   "apartment_reference": "VLC-015",
   "target_date": "2026-08-15",
@@ -228,7 +228,10 @@
     },
     "channel_price_matrix": [],
     "break_even_revenue_eur": 105.88,
-    "profitable_floor_eur": 125.0
+    "profitable_floor_eur": 125.0,
+    "viability_status": "floor_binding",
+    "floor_breach_days": 0,
+    "pricing_strategy_version": 1
   },
   "output": {
     "suggested_price_eur": 125.0,

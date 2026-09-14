@@ -87,9 +87,7 @@ def _channel_price_matrix(calculation: dict[str, Any]) -> list[dict[str, Any]]:
             "platform": candidate["platform"],
             "avg_nightly_rate_eur": _num(candidate["avg_nightly_rate_eur"]),
             "commission_pct": _num(candidate["commission_pct"]),
-            "market_reference_price_eur": _num(
-                candidate["market_reference_price_eur"]
-            ),
+            "market_reference_price_eur": _num(candidate["market_reference_price_eur"]),
             "minimum_price_eur": _num(candidate["minimum_price_eur"]),
             "floor_type": candidate.get("floor_type"),
             "floor_policy": candidate["floor_policy"],
@@ -285,6 +283,22 @@ def row_from_new_image(
                 calculation.get(
                     "profitable_floor_eur", calculation["minimum_price_eur"]
                 )
+            ),
+            # Phase 23 (ADR-0016 §2): a record predating this phase has
+            # neither — None is the honest answer, never fabricated (same
+            # "predating" convention manual_override above already follows).
+            "viability_status": calculation.get("viability_status"),
+            "floor_breach_days": (
+                _int(calculation["floor_breach_days"])
+                if calculation.get("floor_breach_days") is not None
+                else None
+            ),
+            # Phase 25 (ADR-0018 §2): a record predating this phase has
+            # neither — None is the honest answer, never fabricated.
+            "pricing_strategy_version": (
+                _int(calculation["pricing_strategy_version"])
+                if calculation.get("pricing_strategy_version") is not None
+                else None
             ),
         },
         "output": {

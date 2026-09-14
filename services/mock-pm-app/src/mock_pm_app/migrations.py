@@ -24,11 +24,6 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     neighborhood         TEXT NOT NULL,
     property_type        TEXT NOT NULL CHECK (property_type IN ('studio', 'apartment')),
     bedrooms             SMALLINT NOT NULL CHECK (bedrooms >= 0),
-    target_margin            NUMERIC(5,4) NOT NULL DEFAULT 0.05
-                                  CHECK (target_margin >= 0),
-    competitiveness_discount NUMERIC(5,4) NOT NULL DEFAULT 0.05
-                                  CHECK (competitiveness_discount >= 0
-                                         AND competitiveness_discount <= 1),
     quality_tier         TEXT NOT NULL DEFAULT 'standard'
                                   CHECK (quality_tier IN
                                       ('basic', 'standard', 'premium', 'luxury')),
@@ -105,6 +100,102 @@ END $$;
 def ensure_apartment_market_segments_schema(conn: Any) -> None:
     with conn.cursor() as cur:
         cur.execute(_ENSURE_APARTMENT_MARKET_SEGMENTS_SQL)
+    conn.commit()
+
+
+# Phase 25 (ADR-0018 §2): byte-identical (schema-wise) to
+# specs/phases/01-mock-app-db/pricing_strategies.sql. apartment_id is TEXT
+# (not UUID, unlike the phase spec's own sketch) — every other table in this
+# schema references apartment_market_segments.apartment_id, which is TEXT
+# (e.g. "BCN-001"), not a surrogate UUID; this table follows the same
+# convention. Insert-only: application code (data.py's new_strategy_version())
+# never issues an UPDATE against an existing (apartment_id, version) row —
+# Debezium can therefore only ever emit an INSERT CDC event for a strategy
+# change (spec 25 §2).
+_ENSURE_PRICING_STRATEGIES_SQL = """
+CREATE TABLE IF NOT EXISTS public.pricing_strategies (
+    pricing_strategy_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    apartment_id             TEXT NOT NULL
+                                  REFERENCES public.apartment_market_segments
+                                      (apartment_id),
+    version                  INT NOT NULL CHECK (version >= 1),
+    target_margin            NUMERIC(5,4) NOT NULL
+                                  CHECK (target_margin >= 0 AND target_margin < 1),
+    competitiveness_discount NUMERIC(5,4) NOT NULL
+                                  CHECK (competitiveness_discount >= 0
+                                         AND competitiveness_discount < 1),
+    floor_policy_default     TEXT NOT NULL DEFAULT 'soft'
+                                  CHECK (floor_policy_default IN ('hard', 'soft')),
+    effective_from           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (apartment_id, version)
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'dbz_publication'
+          AND schemaname = 'public'
+          AND tablename = 'pricing_strategies'
+    ) THEN
+        ALTER PUBLICATION dbz_publication ADD TABLE public.pricing_strategies;
+    END IF;
+END $$;
+"""
+
+
+def ensure_pricing_strategies_schema(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ENSURE_PRICING_STRATEGIES_SQL)
+    conn.commit()
+
+
+# Phase 25 (ADR-0018 §1): the breaking apartment_market_segments migration —
+# extracts target_margin/competitiveness_discount into their own insert-only
+# table, the same real-substitution pattern ADR-0012/ADR-0013 already
+# established for payment_lines/owner_contracts. Must run after
+# ensure_pricing_strategies_schema (this migration inserts into it). Guarded
+# by information_schema, not a flag column, same convention as those prior
+# migrations — harmless no-op once the columns are already gone.
+_MIGRATE_APARTMENT_MARKET_SEGMENTS_TO_PRICING_STRATEGIES_SQL = """
+DO $$
+DECLARE
+    legacy_columns_exist boolean;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'apartment_market_segments'
+          AND column_name = 'target_margin'
+    ) INTO legacy_columns_exist;
+
+    IF legacy_columns_exist THEN
+        INSERT INTO public.pricing_strategies
+            (apartment_id, version, target_margin, competitiveness_discount)
+        SELECT ams.apartment_id, 1, ams.target_margin, ams.competitiveness_discount
+        FROM public.apartment_market_segments ams
+        WHERE NOT EXISTS (
+            SELECT 1 FROM public.pricing_strategies ps
+            WHERE ps.apartment_id = ams.apartment_id AND ps.version = 1
+        );
+
+        ALTER TABLE public.apartment_market_segments
+            DROP CONSTRAINT IF EXISTS apartment_market_segments_target_margin_check;
+        ALTER TABLE public.apartment_market_segments
+            DROP COLUMN IF EXISTS target_margin;
+        ALTER TABLE public.apartment_market_segments
+            DROP CONSTRAINT IF EXISTS
+                apartment_market_segments_competitiveness_discount_check;
+        ALTER TABLE public.apartment_market_segments
+            DROP COLUMN IF EXISTS competitiveness_discount;
+    END IF;
+END $$;
+"""
+
+
+def migrate_apartment_market_segments_to_pricing_strategies(conn: Any) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_MIGRATE_APARTMENT_MARKET_SEGMENTS_TO_PRICING_STRATEGIES_SQL)
     conn.commit()
 
 
@@ -316,8 +407,8 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
     concept            TEXT NOT NULL CHECK (concept IN (
                            'electricity', 'water', 'gas', 'internet',
                            'pms_subscription', 'ota_fee', 'channel_manager',
-                           'office_rent', 'cleaning', 'maintenance', 'insurance',
-                           'community_fee', 'other', 'owner_commission'
+                           'office_rent', 'cleaning', 'laundry', 'maintenance',
+                           'insurance', 'community_fee', 'other', 'owner_commission'
                        )),
     scope              TEXT NOT NULL
                            CHECK (scope IN ('booking', 'property', 'company')),
@@ -334,7 +425,9 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
                             'annual', 'one_off')),
     revenue_base       TEXT CHECK (revenue_base IN
                            ('total_revenue', 'revenue_minus_ota',
-                            'revenue_minus_ota_minus_cleaning')),
+                            'revenue_minus_ota_minus_cleaning',
+                            'revenue_minus_ota_minus_cleaning_minus_laundry',
+                            'revenue_minus_all_booking_costs')),
     validity_start     DATE NOT NULL DEFAULT CURRENT_DATE,
     validity_end       DATE
                            CHECK (validity_end IS NULL
@@ -346,13 +439,28 @@ CREATE TABLE IF NOT EXISTS public.cost_definitions (
 -- Self-healing for a cost_definitions table created before Phase 20 (same
 -- pattern apartment_market_segments.sql's own column additions use):
 -- widen the concept enum to include owner_commission, and add rate.
+-- Phase 24 (ADR-0017 §3): widened again to add 'laundry'.
 ALTER TABLE public.cost_definitions
     DROP CONSTRAINT IF EXISTS cost_definitions_concept_check;
 ALTER TABLE public.cost_definitions
     ADD CONSTRAINT cost_definitions_concept_check CHECK (concept IN (
         'electricity', 'water', 'gas', 'internet', 'pms_subscription',
-        'ota_fee', 'channel_manager', 'office_rent', 'cleaning',
+        'ota_fee', 'channel_manager', 'office_rent', 'cleaning', 'laundry',
         'maintenance', 'insurance', 'community_fee', 'other', 'owner_commission'
+    ));
+
+-- Phase 24 (ADR-0017 §1): self-healing for a cost_definitions table created
+-- before this phase — widen revenue_base to the remaining 2 of 5 external
+-- spec bases (§11.1). No prior self-healing ALTER existed for this
+-- constraint (the CREATE TABLE ... IF NOT EXISTS above never re-runs on an
+-- existing table), so this is the first one.
+ALTER TABLE public.cost_definitions
+    DROP CONSTRAINT IF EXISTS cost_definitions_revenue_base_check;
+ALTER TABLE public.cost_definitions
+    ADD CONSTRAINT cost_definitions_revenue_base_check CHECK (revenue_base IN (
+        'total_revenue', 'revenue_minus_ota', 'revenue_minus_ota_minus_cleaning',
+        'revenue_minus_ota_minus_cleaning_minus_laundry',
+        'revenue_minus_all_booking_costs'
     ));
 
 ALTER TABLE public.cost_definitions

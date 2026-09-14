@@ -8,6 +8,11 @@ from datetime import date
 # "cleaning" amounts out of the commission base in pricing.py.
 OTA_RELATED_CONCEPTS = frozenset({"ota_fee", "channel_manager"})
 CLEANING_CONCEPTS = frozenset({"cleaning"})
+# Phase 24 (ADR-0017 §3): the external spec's 4th revenue base
+# (revenue_minus_ota_minus_cleaning_minus_laundry, §11.1) needs a
+# laundry-only sub-total, same pattern CLEANING_CONCEPTS already
+# establishes.
+LAUNDRY_CONCEPTS = frozenset({"laundry"})
 
 # Phase 17 (ADR-0011 backlog #3): the remaining 10 of 13 concept values,
 # which fall through undifferentiated into fixed_cost_eur/variable_cost_eur
@@ -23,6 +28,7 @@ CONCEPT_ORDER = (
     "channel_manager",
     "office_rent",
     "cleaning",
+    "laundry",
     "maintenance",
     "insurance",
     "community_fee",
@@ -154,6 +160,13 @@ class CostAggregationResult:
     per_booking_cost_eur: float
     ota_related_cost_eur: float
     cleaning_cost_eur: float
+    # Phase 24 (ADR-0017 §3): laundry_cost_eur mirrors cleaning_cost_eur;
+    # booking_scope_cost_eur is the first aggregate in this project keyed by
+    # CostDefinition.scope rather than .behavior — every scope='booking'
+    # line's contribution for the period, the widest of the 5 revenue-base
+    # netting amounts by construction (ADR-0017 §2).
+    laundry_cost_eur: float
+    booking_scope_cost_eur: float
     cost_breakdown: tuple[ConceptAmount, ...]
     pending_allocation_corrections: tuple[PendingAllocationCorrection, ...]
     # Phase 20 (ADR-0013 §3): one entry per distinct percentage CostDefinition
@@ -189,11 +202,13 @@ def aggregate_cost(
     # historical, not the prospective rate the Break-Even/Profitable Floor
     # formula needs. Excluded from every bucket below; handled separately.
     percentage_lines = [
-        line for line in matching
+        line
+        for line in matching
         if line.calculation_base in _PERCENTAGE_CALCULATION_BASES
     ]
     non_percentage_lines = [
-        line for line in matching
+        line
+        for line in matching
         if line.calculation_base not in _PERCENTAGE_CALCULATION_BASES
     ]
 
@@ -205,11 +220,13 @@ def aggregate_cost(
     ]
 
     immediate_recurring = [
-        line for line in recurring_lines
+        line
+        for line in recurring_lines
         if line.allocation_method in _IMMEDIATE_ALLOCATION_METHODS
     ]
     deferred_recurring = [
-        line for line in recurring_lines
+        line
+        for line in recurring_lines
         if line.allocation_method not in _IMMEDIATE_ALLOCATION_METHODS
     ]
 
@@ -253,9 +270,7 @@ def aggregate_cost(
     percentage_costs = tuple(
         PercentageCostComponent(
             concept=concept,
-            rate=next(
-                line.rate for line in percentage_lines if line.concept == concept
-            )
+            rate=next(line.rate for line in percentage_lines if line.concept == concept)
             or 0.0,
             revenue_base=next(
                 line.revenue_base
@@ -308,11 +323,26 @@ def aggregate_cost(
     cleaning_total = sum(
         line.amount_gross for line in matching if line.concept in CLEANING_CONCEPTS
     )
+    # Phase 24 (ADR-0017 §3): laundry mirrors ota_related/cleaning exactly.
+    laundry_total = sum(
+        line.amount_gross for line in matching if line.concept in LAUNDRY_CONCEPTS
+    )
+    # Phase 24 (ADR-0017 §2): every matching line whose CostDefinition is
+    # booking-scoped, regardless of concept — the widest netting base.
+    booking_scope_total = sum(
+        line.amount_gross for line in matching if line.scope == "booking"
+    )
     ota_related_cost_eur = (
         round(ota_related_total / available_days, 2) if available_days > 0 else 0.0
     )
     cleaning_cost_eur = (
         round(cleaning_total / available_days, 2) if available_days > 0 else 0.0
+    )
+    laundry_cost_eur = (
+        round(laundry_total / available_days, 2) if available_days > 0 else 0.0
+    )
+    booking_scope_cost_eur = (
+        round(booking_scope_total / available_days, 2) if available_days > 0 else 0.0
     )
 
     # Phase 17 (ADR-0011 backlog #3): every concept observed in the period,
@@ -338,9 +368,7 @@ def aggregate_cost(
             behavior=next(
                 line.behavior for line in matching if line.concept == concept
             ),
-            trigger=next(
-                line.trigger for line in matching if line.concept == concept
-            ),
+            trigger=next(line.trigger for line in matching if line.concept == concept),
             calculation_base=next(
                 line.calculation_base for line in matching if line.concept == concept
             ),
@@ -367,6 +395,8 @@ def aggregate_cost(
         percentage_costs=percentage_costs,
         ota_related_cost_eur=ota_related_cost_eur,
         cleaning_cost_eur=cleaning_cost_eur,
+        laundry_cost_eur=laundry_cost_eur,
+        booking_scope_cost_eur=booking_scope_cost_eur,
         cost_breakdown=cost_breakdown,
         pending_allocation_corrections=pending_allocation_corrections,
     )

@@ -82,6 +82,9 @@ def _decision(apartment_id="BCN-001", target_date=date(2026, 9, 1)) -> PriceDeci
             minimum_stay_recommendation=MinimumStayRecommendation(
                 recommended_min_stay=1, floor_relief_eur=0.0
             ),
+            viability_status="floor_binding",
+            floor_breach_days=0,
+            pricing_strategy_version=1,
         ),
         output=Output(
             suggested_price_eur=147.5, effective_margin=0.25, below_market_by=2.5
@@ -139,6 +142,19 @@ def test_apply_manual_override_appends_component_with_signed_impact():
     override_component = components[-1]
     assert override_component.code == "manual_override_applied"
     assert override_component.impact == -17.5
+
+
+def test_apply_manual_override_sets_viability_status_to_override_active():
+    # Phase 23 (ADR-0016 §2, spec 23 §7): Stage B always classifies with
+    # manual_override_active=False (it has no override information at all —
+    # this stage runs strictly afterward); this is where "override_active"
+    # actually gets set, unconditionally overwriting whatever Stage B
+    # classified (here "floor_binding").
+    decision = _decision()
+    assert decision.calculation.viability_status == "floor_binding"
+    result = apply_manual_override(decision, _assignment(override_price_eur=130.0))
+
+    assert result.calculation.viability_status == "override_active"
 
 
 def test_apply_manual_override_leaves_other_fields_unchanged():

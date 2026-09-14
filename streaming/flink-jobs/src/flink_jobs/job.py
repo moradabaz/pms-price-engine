@@ -22,6 +22,7 @@ from flink_jobs.models import (
     CostDefinitionRow,
     ManualOverrideRow,
     OwnerContractRow,
+    PricingStrategyRow,
 )
 from flink_jobs.settings import FlinkJobSettings
 from flink_jobs.stage_allocation_correction import AllocationCorrectionFunction
@@ -44,6 +45,7 @@ from flink_jobs.stage_cost_definition_resolution import (
 )
 from flink_jobs.stage_cost_definition_resolution import CostDefinitionResolutionFunction
 from flink_jobs.stage_cost_enrichment import (
+    PRICING_STRATEGY_BROADCAST_DESCRIPTOR,
     SEGMENT_BROADCAST_DESCRIPTOR,
     CostEnrichmentFunction,
 )
@@ -84,7 +86,10 @@ _DEFAULT_HAS_PARKING = False
 
 
 def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
-    """Parses one apartment_market_segments CDC message. Returns a row."""
+    """Parses one apartment_market_segments CDC message. Returns a row.
+    Phase 25 (ADR-0018 §1): target_margin/competitiveness_discount removed —
+    a real substitution (see _parse_pricing_strategy_row below), not a
+    redundant copy."""
     data = json.loads(raw)
     return ApartmentSegmentRow(
         apartment_id=data["apartment_id"],
@@ -92,12 +97,24 @@ def _parse_apartment_segment_row(raw: str) -> ApartmentSegmentRow:
         neighborhood=data["neighborhood"],
         property_type=data["property_type"],
         bedrooms=data["bedrooms"],
-        target_margin=float(data["target_margin"]),
-        competitiveness_discount=float(data["competitiveness_discount"]),
         quality_tier=data.get("quality_tier", _DEFAULT_QUALITY_TIER),
         rating=float(data.get("rating", _DEFAULT_RATING)),
         has_view=bool(data.get("has_view", _DEFAULT_HAS_VIEW)),
         has_parking=bool(data.get("has_parking", _DEFAULT_HAS_PARKING)),
+    )
+
+
+def _parse_pricing_strategy_row(raw: str) -> PricingStrategyRow:
+    """Parses one pricing_strategies CDC message (Phase 25, ADR-0018 §2) —
+    insert-only, so unlike apartment_market_segments this topic has no
+    pre-this-phase history to default against. Returns a row."""
+    data = json.loads(raw)
+    return PricingStrategyRow(
+        apartment_id=data["apartment_id"],
+        version=int(data["version"]),
+        target_margin=float(data["target_margin"]),
+        competitiveness_discount=float(data["competitiveness_discount"]),
+        floor_policy_default=data.get("floor_policy_default", "soft"),
     )
 
 
@@ -215,6 +232,16 @@ def build_job(env, settings: FlinkJobSettings) -> None:
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
+    # Phase 25 (ADR-0018 §2).
+    pricing_strategy_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(settings.kafka_bootstrap_servers)
+        .set_topics(settings.pricing_strategies_topic)
+        .set_group_id(settings.kafka_consumer_group_id)
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema())
+        .build()
+    )
 
     payment_stream = (
         env.from_source(
@@ -226,7 +253,21 @@ def build_job(env, settings: FlinkJobSettings) -> None:
     segment_stream = env.from_source(
         segment_source, WatermarkStrategy.no_watermarks(), "apartment-segments"
     ).map(_parse_apartment_segment_row)
-    broadcast_segment_stream = segment_stream.broadcast(SEGMENT_BROADCAST_DESCRIPTOR)
+    # Phase 25 (ADR-0018 §2): a genuinely independent CDC source from
+    # segment_stream — unioned before broadcasting under two descriptors,
+    # the same "one connected broadcast stream, several independently-keyed
+    # descriptors" pattern stage_owner_contract_enrichment.py's own
+    # owner_contract_stream/cost_definition_stream union already
+    # established, since PyFlink's KeyedStream.connect() accepts exactly
+    # one broadcast stream per process() call.
+    pricing_strategy_stream = env.from_source(
+        pricing_strategy_source,
+        WatermarkStrategy.no_watermarks(),
+        "pricing-strategies",
+    ).map(_parse_pricing_strategy_row)
+    broadcast_segment_stream = segment_stream.union(pricing_strategy_stream).broadcast(
+        SEGMENT_BROADCAST_DESCRIPTOR, PRICING_STRATEGY_BROADCAST_DESCRIPTOR
+    )
 
     # Phase 19 (ADR-0011 backlog #13, ADR-0012, spec 19 §4): Stage A0,
     # chained before Stage A. cost_definition_stream/cost_allocation_rule_

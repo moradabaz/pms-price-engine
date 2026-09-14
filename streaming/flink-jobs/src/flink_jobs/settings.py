@@ -17,6 +17,8 @@ class FlinkJobSettings(BaseSettings):
     cost_definitions_topic: str = "cost-definitions.v1"
     cost_allocation_rules_topic: str = "cost-allocation-rules.v1"
     company_cost_occurrences_topic: str = "company-cost-occurrences.v1"
+    # Phase 25 (ADR-0018 §2).
+    pricing_strategies_topic: str = "pricing-strategies.v1"
     kafka_consumer_group_id: str = "flink-price-engine"
 
     # Read via Kafka, not Kinesis directly — no Kinesis connector runs on

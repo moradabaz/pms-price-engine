@@ -18,6 +18,65 @@ Done — see items 13/14 below, [Phase 18](../specs/phases/18-bookings-occupancy
 schema-breaking change than #3's own additive `cost_breakdown` — `payment_line.v1` bumped to
 schema_version 2.0.
 
+**2026-09-14 update — prioritized push toward ~80% client-spec coverage:** a gap analysis against
+the full external spec (`docs/client-spec-gap-analysis.md`) put overall MVP coverage at ~65-70%.
+Five phases are now spec'd (Draft) as the highest-value, lowest-risk items to close that gap without
+touching the two most expensive remaining gaps (real market/comp-set data, external §17; a
+configurable data-driven rule engine for `PricingRule`, §14.2) — both stay deferred. In dependency
+order: [Phase 21](../specs/phases/21-explicit-domain-entities/spec.md) (`StayCandidate`/
+`PropertyPricingProfile`/`PricingStrategy` as named entities, ADR-0014) →
+[Phase 22](../specs/phases/22-booking-window-layer/spec.md) (the missing RM layer D, ADR-0015) →
+[Phase 23](../specs/phases/23-market-floor-conflict-resolution/spec.md) (external spec §13's
+situation/action table as a `viability_status` classification, ADR-0016) →
+[Phase 24](../specs/phases/24-owner-contract-revenue-bases/spec.md) (the remaining 2 of 5 owner
+contract revenue bases, ADR-0017) → [Phase 25](../specs/phases/25-pricing-strategy-versioning/spec.md)
+(simple, future-only `PricingStrategy` versioning, ADR-0018, depends on Phase 21).
+
+**2026-09-14 update (same day) — Phase 21 and Phase 22 implemented and live-verified.** Both
+corrected two factual errors discovered only once code/tests actually ran (see each spec's own §7):
+Phase 21's AC-03 assumed a per-LOS/channel `StayCandidate` construction that doesn't exist at that
+layer; Phase 22's own AC-01 tier-value table was arithmetically inconsistent with its own
+`BOOKING_WINDOW_TIERS`, and `days_to_arrival`'s original default (`0`) silently discounted every
+caller that omitted it, breaking 11 existing tests. Both fixed at implementation time, full
+`pytest`/`mypy`/`ruff` clean, live-verified end to end against a clean LocalStack stack (real
+`price_decision` rows show `rule_last_minute` appearing/disappearing exactly at the correct
+`days_to_arrival` tier boundary, with `break_even_revenue_eur`/`profitable_floor_eur` unchanged
+across tiers). Phases 23-25 remain Draft, not yet implemented.
+
+**2026-09-14 update (same day) — Phase 23 implemented and live-verified.** Corrected several
+design-time errors surfaced only once code/tests ran (full account in
+[Phase 23's own §8](../specs/phases/23-market-floor-conflict-resolution/spec.md#8-corrections-made-during-implementation-2026-09-14)):
+`NightSnapshot` cannot hold the per-`(apartment, night)` breach streak the spec assumed (it is one
+shared instance per night, across every apartment) — a genuinely new state, keyed by
+`"{apartment_id}|{target_date}"`, was added instead; `classify_viability()` takes primitives, not
+the `MinimumStayRecommendation`/`ChannelPriceCandidate` dataclasses the spec's pseudocode used
+(avoiding a circular import between `engine.py` and the new `viability.py`); it is called from
+`stage_price_decision.py`, not from inside `decide_price()` (which never sees
+`minimum_stay_recommendation`/`channel_price_matrix` — those come from separate function calls
+Stage B makes afterward); `manual_override_active` is always `False` at classification time (Stage
+C, which applies overrides, runs strictly after Stage B) — Stage C itself now overwrites
+`viability_status` to `"override_active"` directly. Live-verified against a clean LocalStack stack:
+real decisions carry the correct `viability_status`, zero Flink exceptions, Iceberg accepting the
+two new fields without error. Scope reduction: the dashboard change shipped is a badge on the
+existing Apartment Detail view, not the separate Health/Alerts view (spec §26 panel J) originally
+scoped — a real, undone follow-up. Phases 24-25 remain Draft.
+
+**2026-09-14 update (same day) — Phase 24 implemented and live-verified.** Extended
+`RevenueBase`/`netted_revenue_base_amount()` to the remaining 2 of 5 external-spec bases (§11.1),
+added `laundry` as a new `CostDefinition.concept`, and a new `booking_scope_cost_eur` aggregate (the
+first cost aggregate in this project keyed by `scope` rather than `behavior`). Corrections found
+during implementation (full account in
+[Phase 24's own §7](../specs/phases/24-owner-contract-revenue-bases/spec.md#7-corrections-made-during-implementation-2026-09-14)):
+the two new `netted_revenue_base_amount()` parameters needed defaults to avoid breaking every
+existing caller (same class of fix Phase 22 needed for `days_to_arrival`); `decide_price_by_channel()`
+also needed both new parameters threaded through, not just the top-level call site; `payment_line.v1`
+needed no enum change at all (Phase 19 already removed `concept` from it); no self-healing `ALTER`
+previously existed for `cost_definitions.revenue_base`'s CHECK constraint, so this phase's migration
+is the first one, not a widening of an existing one. Live-verified and hand-checked against real
+seeded data: `revenue_minus_all_booking_costs` nets exactly an apartment's own booking-scope cost
+lines; a pre-existing `revenue_minus_ota` apartment correctly excludes its own cleaning/laundry lines
+(regression confirmed). Zero Flink exceptions. Phase 25 remains Draft.
+
 ## 1. Real stay-length pricing (`n` beyond the fixed `1`)
 
 Price a whole candidate stay (several consecutive nights), not one isolated night — so a one-time cost (`Cr`, e.g. cleaning) amortizes correctly across the stay.
@@ -62,8 +121,12 @@ Every concept from the external spec, mapped to what it would extend or replace 
 | 12 | Minimum Stay as a profitability lever (spec §10.2, test scenario T11) | No anchor (`grep min_stay` → 0 results) — Phase 9's `los_floor_matrix` is read passively; nothing recommends or applies a `min_stay` change when a single night is uneconomical | **Done** — [Phase 15](../specs/phases/15-minimum-stay-recommendation/spec.md), unit-tested and live-verified against LocalStack on 2026-09-07 | Additive — pure logic over `los_floor_matrix`, which Phase 9 already computes; no new data source, natural extension of Phase 9/13 |
 | 13 | Multi-dimensional `CostDefinition`/`CostAllocationRule` (scope/behavior/trigger/calculation-base/recurrence/allocation-rule/validity, spec §8) | `PaymentLine.cost_type: fixed\|variable\|one_time` is the only cost dimension modeled today; temporalization of e.g. an annual cost is inferred from `billing_period_start/end`, not from an explicit `recurrence`/`allocation rule` | **Done** — [Phase 19](../specs/phases/19-cost-definition-model/spec.md) (ADR-0012), plus [Phase 18](../specs/phases/18-bookings-occupancy/spec.md) as its bookings/occupancy prerequisite. Live-verified end to end on 2026-09-13. Still additive at the `libs/pricing-formulas` boundary — `decide_price()` itself isn't rewired onto this richer model yet, tracked as a follow-on ("Phase 20" in-session, not yet a numbered repo phase) | Structural (new entities, breaking `payment_line.v1` schema change — see ADR-0012) |
 | 14 | Company Costs imputables (spec §8.3) | No anchor (`grep company_cost` → 0 results); no `scope: company` dimension exists | **Done** — folded into [Phase 19](../specs/phases/19-cost-definition-model/spec.md): `company_cost_occurrences` + `scope=company` + an explicit `weight_config` (never `Total / N` implicitly), broadcast-applied per apartment (Stage A4) | Structural (new entity + explicit allocation-rule config, not `Total / N` by default) |
-| 15 | Versioned `PricingStrategy`/`PricingRule` + reproducible historical decisions (spec §28) | [Phase 13](../specs/phases/13-layered-rm-engine/spec.md)'s 7 RM layers are composable Python functions, not versioned/stored rules; only event `schema_version` exists today, no rule/strategy version | **Later** — surfaced 2026-09-07; needs a configurable rule engine (rules as data) before "versioning the rules" is meaningful, which Phase 13 is not | Structural (new entity: versioned rule/strategy storage) |
+| 15 | Versioned `PricingStrategy`/`PricingRule` + reproducible historical decisions (spec §28) | [Phase 13](../specs/phases/13-layered-rm-engine/spec.md)'s 7 RM layers are composable Python functions, not versioned/stored rules; only event `schema_version` exists today, no rule/strategy version | **Now** — `PricingStrategy` half spec'd as [Phase 25](../specs/phases/25-pricing-strategy-versioning/spec.md) (ADR-0018, simple version field, future-only, depends on [Phase 21](../specs/phases/21-explicit-domain-entities/spec.md)); `PricingRule` versioning stays **Later** — still needs a configurable rule engine (rules as data) before "versioning the rules" is meaningful, which Phase 13 deliberately is not (ADR-0014 §3) | Structural (new `pricing_strategies` table, insert-only) for the `PricingStrategy` half; `PricingRule` half unchanged/deferred |
 | 16 | Currency/channel-aware rounding rules (spec §28) | Mono-currency (`EUR` `Literal`) today; rounding is `round(x, 2)` scattered inline, no configurable policy | **Later** — surfaced 2026-09-07; low priority while the PoC is EUR-only | Additive, whenever a second currency/channel is introduced |
+| 17 | Explicit domain entities: `StayCandidate`, `PropertyPricingProfile`, `PricingStrategy` (spec §9, §6-7, §15, §21) | Logic exists but scattered — an implicit tuple in `stage_price_decision.py`'s loops, and `SegmentAssignment` conflating property attributes with strategy parameters | **Now** — [Phase 21](../specs/phases/21-explicit-domain-entities/spec.md) (ADR-0014) | Structural (new `StayCandidate` type; `SegmentAssignment` split) but explicitly no DB schema change, no `libs/pricing-formulas` signature change |
+| 18 | Booking Window Revenue Management layer (spec §14.1 row D) | No anchor — `grep booking_window` only finds the antelación-floor file ADR-0013 deleted, an unrelated concept | **Now** — [Phase 22](../specs/phases/22-booking-window-layer/spec.md) (ADR-0015), the gap ADR-0013's own Consequences section named directly | Structural (new layer module) — additive to `decide_price()`'s signature (`days_to_arrival` re-added as an RM-only default-0 argument, floor math untouched) |
+| 19 | Market-vs-floor conflict resolution & viability alerting (spec §13, test T08) | No anchor — `rule_applied` exists but nothing classifies the situation or tracks persistence over time | **Now** — [Phase 23](../specs/phases/23-market-floor-conflict-resolution/spec.md) (ADR-0016) | Structural (new `viability_status` field, breaking `price_decision.v1` bump; new in-memory streak on `NightSnapshot`, no batch query added to the hot path) |
+| 20 | Remaining owner-contract revenue bases (spec §11.1, test T04/T05) | `RevenueBase` supports 3 of 5 (`total_revenue`, `revenue_minus_ota`, `revenue_minus_ota_minus_cleaning`) | **Now** — [Phase 24](../specs/phases/24-owner-contract-revenue-bases/spec.md) (ADR-0017); a general symbolic solver (spec §29) stays explicitly deferred | Additive (2 new enum values + 2 new cost aggregates: `laundry_cost_eur`, `booking_scope_cost_eur`) |
 
 ## 4. Learning note: Flink concepts worth studying before Phase 9 (LOS)
 

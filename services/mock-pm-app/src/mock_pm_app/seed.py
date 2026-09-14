@@ -13,6 +13,7 @@ from mock_pm_app.data import (
     CostDefinitionSpec,
     Owner,
     OwnerContract,
+    PricingStrategy,
 )
 from mock_pm_app.rows import build_historical_row, insert_row
 from mock_pm_app.settings import MockAppSettings
@@ -28,6 +29,13 @@ def already_seeded(conn: Any) -> bool:
 def already_seeded_segments(conn: Any) -> bool:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM apartment_market_segments")
+        (count,) = cur.fetchone()
+    return bool(count > 0)
+
+
+def already_seeded_pricing_strategies(conn: Any) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM pricing_strategies")
         (count,) = cur.fetchone()
     return bool(count > 0)
 
@@ -62,12 +70,11 @@ def already_seeded_company_cost_occurrences(conn: Any) -> bool:
 
 def seed_apartment_market_segments(conn: Any, apartments: list[Apartment]) -> int:
     # Decision C.1: seed once, deterministically, from mock-pm-app's own
-    # apartment pool — target_margin/competitiveness_discount are left to the
-    # table's own DEFAULT 0.05 (Decision C.2), not set here, so the schema
-    # stays the single source of truth for that default. Phase 8's four
-    # Bonus/Malus attributes ARE set here — unlike margin/discount, they're
-    # generated per apartment (data.py's build_apartment_pool), not a shared
-    # default.
+    # apartment pool. Phase 8's four Bonus/Malus attributes are set here —
+    # generated per apartment (data.py's build_apartment_pool). Phase 25
+    # (ADR-0018 §1): target_margin/competitiveness_discount moved to their
+    # own pricing_strategies table (see seed_pricing_strategies below) — no
+    # longer this function's concern at all.
     with conn.cursor() as cur:
         for apartment in apartments:
             cur.execute(
@@ -96,6 +103,90 @@ def seed_apartment_market_segments(conn: Any, apartments: list[Apartment]) -> in
             )
     conn.commit()
     return len(apartments)
+
+
+def seed_pricing_strategies(conn: Any, strategies: list[PricingStrategy]) -> int:
+    # Phase 25 (ADR-0018 §2): one version=1 row per apartment, from
+    # data.py's build_pricing_strategies() — the seed-time equivalent of the
+    # backfill migration's own version=1 row for a pre-existing deployment.
+    # ON CONFLICT DO NOTHING on (apartment_id, version): safe to call again
+    # against a volume that already has rows (a no-op, not a duplicate).
+    with conn.cursor() as cur:
+        for strategy in strategies:
+            cur.execute(
+                """
+                INSERT INTO pricing_strategies
+                    (apartment_id, version, target_margin,
+                     competitiveness_discount, floor_policy_default)
+                VALUES (%(apartment_id)s, %(version)s, %(target_margin)s,
+                        %(competitiveness_discount)s, %(floor_policy_default)s)
+                ON CONFLICT (apartment_id, version) DO NOTHING
+                """,
+                {
+                    "apartment_id": strategy.apartment_id,
+                    "version": strategy.version,
+                    "target_margin": strategy.target_margin,
+                    "competitiveness_discount": strategy.competitiveness_discount,
+                    "floor_policy_default": strategy.floor_policy_default,
+                },
+            )
+    conn.commit()
+    return len(strategies)
+
+
+def new_strategy_version(conn: Any, apartment_id: str, **changes: Any) -> int:
+    """Inserts the next PricingStrategy version for one apartment — never an
+    UPDATE (Phase 25, ADR-0018 §2: insert-only is what makes 'future-only,
+    no replay' concrete at the data layer, not just a documented intention).
+    `changes` overrides target_margin/competitiveness_discount/
+    floor_policy_default from the current highest version; any field not
+    passed carries over unchanged. Returns the new version number."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT target_margin, competitiveness_discount, floor_policy_default,
+                   version
+            FROM pricing_strategies
+            WHERE apartment_id = %(apartment_id)s
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            {"apartment_id": apartment_id},
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(
+                f"no existing pricing_strategies row for apartment_id={apartment_id!r}"
+            )
+        (
+            target_margin,
+            competitiveness_discount,
+            floor_policy_default,
+            current_version,
+        ) = row
+        new_version = int(current_version) + 1
+        cur.execute(
+            """
+            INSERT INTO pricing_strategies
+                (apartment_id, version, target_margin,
+                 competitiveness_discount, floor_policy_default)
+            VALUES (%(apartment_id)s, %(version)s, %(target_margin)s,
+                    %(competitiveness_discount)s, %(floor_policy_default)s)
+            """,
+            {
+                "apartment_id": apartment_id,
+                "version": new_version,
+                "target_margin": changes.get("target_margin", target_margin),
+                "competitiveness_discount": changes.get(
+                    "competitiveness_discount", competitiveness_discount
+                ),
+                "floor_policy_default": changes.get(
+                    "floor_policy_default", floor_policy_default
+                ),
+            },
+        )
+    conn.commit()
+    return new_version
 
 
 def seed_owners(conn: Any, owners: list[Owner]) -> int:

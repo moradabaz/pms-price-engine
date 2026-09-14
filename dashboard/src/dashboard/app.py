@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 import boto3
 import pandas as pd
@@ -247,6 +247,29 @@ _RULE_APPLIED_HELP = (
     "only ways to lower it are cutting costs or accepting a smaller margin."
 )
 
+# Phase 23 (ADR-0016 §2): external spec §13's situation/action
+# classification, in plain language plus an st.badge color per severity.
+_VIABILITY_STATUS_LABEL = {
+    "ok": "Market competitive",
+    "demand_upside": "Demand upside",
+    "min_stay_lever_available": "Lever: raise minimum stay",
+    "channel_lever_available": "Lever: favor a cheaper channel",
+    "persistent_floor_breach": "Persistent floor breach (30+ days)",
+    "override_active": "Manual override active",
+    "floor_binding": "Cost floor binding",
+}
+_VIABILITY_STATUS_COLOR: dict[
+    str, Literal["red", "orange", "yellow", "blue", "green", "violet", "gray", "grey"]
+] = {
+    "ok": "green",
+    "demand_upside": "green",
+    "min_stay_lever_available": "orange",
+    "channel_lever_available": "orange",
+    "persistent_floor_breach": "red",
+    "override_active": "blue",
+    "floor_binding": "gray",
+}
+
 
 def render_apartment_detail() -> None:
     """One apartment's full decision trace — every field Flink computed for
@@ -338,6 +361,31 @@ def render_apartment_detail() -> None:
             </style>""",
             unsafe_allow_html=True,
         )
+
+    # Phase 23 (ADR-0016 §2): a record predating this phase has no
+    # viability_status at all (transform.py never fabricates one) — shown
+    # as a caption instead of a badge so it doesn't read as a real status.
+    viability_status = calculation.get("viability_status")
+    if viability_status is not None:
+        st.badge(
+            _VIABILITY_STATUS_LABEL.get(viability_status, viability_status),
+            color=_VIABILITY_STATUS_COLOR.get(viability_status, "gray"),
+        )
+        if viability_status == "persistent_floor_breach":
+            st.caption(
+                f"Floor has bound for {calculation.get('floor_breach_days', 0)} "
+                "consecutive days — consider revisiting costs, owner contract, "
+                "positioning, or overall viability (external spec §13)."
+            )
+    else:
+        st.caption("Viability status: not available for this decision.")
+
+    # Phase 25 (ADR-0018 §2): a record predating this phase has no
+    # pricing_strategy_version at all — shown only when present, never
+    # fabricated.
+    pricing_strategy_version = calculation.get("pricing_strategy_version")
+    if pricing_strategy_version is not None:
+        st.caption(f"Priced under strategy v{pricing_strategy_version}.")
 
     st.markdown("**Cost** — what it costs you to host one night here.")
     st.dataframe(

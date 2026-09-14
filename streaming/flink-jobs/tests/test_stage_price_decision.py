@@ -2,7 +2,11 @@ from datetime import UTC, date, datetime, timedelta
 
 from fakes import FakeReadOnlyContext, FakeRuntimeContext
 from flink_jobs.models import CostAggregate
-from flink_jobs.stage_price_decision import DATA_STALE_TAG, PriceDecisionFunction
+from flink_jobs.stage_price_decision import (
+    DATA_STALE_TAG,
+    PriceDecisionFunction,
+    _floor_breach_key,
+)
 from pricing_formulas.decision_components import DecisionComponent
 from shared_schemas.market_price import (
     MarketArea,
@@ -394,3 +398,78 @@ def test_on_timer_emits_data_stale_for_expired_night():
 
     night_key = str(date.today() + timedelta(days=7))
     assert results == [(DATA_STALE_TAG, ("night", night_key))]
+
+
+# Phase 23 (ADR-0016 §4, spec 23 §6 AC-03): floor_breach_days/viability_status.
+
+
+def test_first_floor_breach_starts_the_streak_at_zero_days():
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=100.0), ctx))
+    # avg_rate=90 + variable_cost=100 -> minimum_profitable_price (same combo
+    # test_market_update_fans_out_across_known_apartments already relies on).
+    results = list(fn.process_element2(_market(days_from_today=7, avg_rate=90.0), ctx))
+
+    calc = results[0].calculation
+    assert calc.rule_applied == "minimum_profitable_price"
+    assert calc.floor_breach_days == 0
+    assert calc.viability_status == "floor_binding"
+
+
+def test_persistent_floor_breach_after_30_simulated_days():
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=100.0), ctx))
+    target_date = date.today() + timedelta(days=7)
+    list(fn.process_element2(_market(target_date=target_date, avg_rate=90.0), ctx))
+
+    # Simulate the streak already having run for 30 calendar days, by
+    # writing directly into the same state _build_price_decision() itself
+    # reads from — the cheapest correct way to simulate elapsed time without
+    # controlling datetime.now(UTC) (spec 23 §6 AC-03).
+    key = _floor_breach_key("apt-A", target_date)
+    fn.floor_breach_since.put(key, date.today() - timedelta(days=30))
+
+    results = list(
+        fn.process_element2(
+            _market(
+                target_date=target_date,
+                avg_rate=90.0,
+                collected_at=datetime.now(UTC) + timedelta(seconds=1),
+            ),
+            ctx,
+        )
+    )
+
+    calc = results[0].calculation
+    assert calc.rule_applied == "minimum_profitable_price"
+    assert calc.floor_breach_days == 30
+    assert calc.viability_status == "persistent_floor_breach"
+
+
+def test_floor_breach_streak_resets_once_market_competitive():
+    fn, ctx = _make_function()
+    list(fn.process_element1(_cost("apt-A", variable_cost=100.0), ctx))
+    target_date = date.today() + timedelta(days=7)
+    list(fn.process_element2(_market(target_date=target_date, avg_rate=90.0), ctx))
+
+    key = _floor_breach_key("apt-A", target_date)
+    fn.floor_breach_since.put(key, date.today() - timedelta(days=30))
+    assert fn.floor_breach_since.get(key) is not None
+
+    # A much higher avg_rate flips rule_applied to market_competitive.
+    results = list(
+        fn.process_element2(
+            _market(
+                target_date=target_date,
+                avg_rate=1000.0,
+                collected_at=datetime.now(UTC) + timedelta(seconds=1),
+            ),
+            ctx,
+        )
+    )
+
+    calc = results[0].calculation
+    assert calc.rule_applied == "market_competitive"
+    assert calc.floor_breach_days == 0
+    assert calc.viability_status in ("ok", "demand_upside")
+    assert fn.floor_breach_since.get(key) is None

@@ -44,17 +44,11 @@ CREATE TABLE IF NOT EXISTS public.apartment_market_segments (
     property_type        TEXT NOT NULL CHECK (property_type IN ('studio', 'apartment')),
     bedrooms             SMALLINT NOT NULL CHECK (bedrooms >= 0),
 
-    -- Decision C.2: cost + this margin is a non-negotiable floor the pricing
-    -- engine itself never overrides (ADR-0007) — lowering it, or delisting the
-    -- apartment, is always the client's decision, never automatic. 0.05 (5%)
-    -- is the confirmed default for this first version; per-apartment override
-    -- is already supported by this being a real column, not a global constant.
-    target_margin            NUMERIC(5,4) NOT NULL DEFAULT 0.05
-                                  CHECK (target_margin >= 0),
-    -- Fraction below avg_nightly_rate_eur to stay competitive (price_decision.v1's
-    -- calculation.competitiveness_discount). Same default rationale as target_margin.
-    competitiveness_discount NUMERIC(5,4) NOT NULL DEFAULT 0.05
-                                  CHECK (competitiveness_discount >= 0 AND competitiveness_discount <= 1),
+    -- Phase 25 (docs/adr/ADR-0018, backlog #15): target_margin/
+    -- competitiveness_discount (Decision C.2) lived here through Phase 24 —
+    -- moved to their own insert-only pricing_strategies table
+    -- (pricing_strategies.sql) so a strategy edit can be versioned without
+    -- mutating this dimension row. See this file's migration block below.
 
     -- Phase 8 (docs/adr/ADR-0011, backlog #6): raw Property Bonus/Malus
     -- attributes. Flink resolves these into a single property_attribute_factor
@@ -106,6 +100,44 @@ ALTER TABLE public.apartment_market_segments
     ADD COLUMN IF NOT EXISTS has_view BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE public.apartment_market_segments
     ADD COLUMN IF NOT EXISTS has_parking BOOLEAN NOT NULL DEFAULT false;
+
+-- Phase 25 (ADR-0018 §1): backfills any existing target_margin/
+-- competitiveness_discount into a version=1 pricing_strategies row each,
+-- then drops both columns — a real substitution, not a redundant copy, same
+-- precedent this file's own commission_pct removal above already
+-- established. Guarded by information_schema, not a flag column; harmless
+-- no-op once already migrated or on a fresh install (the columns never
+-- existed, since they are no longer in the CREATE TABLE above).
+DO $$
+DECLARE
+    legacy_columns_exist boolean;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'apartment_market_segments'
+          AND column_name = 'target_margin'
+    ) INTO legacy_columns_exist;
+
+    IF legacy_columns_exist THEN
+        INSERT INTO public.pricing_strategies
+            (apartment_id, version, target_margin, competitiveness_discount)
+        SELECT ams.apartment_id, 1, ams.target_margin, ams.competitiveness_discount
+        FROM public.apartment_market_segments ams
+        WHERE NOT EXISTS (
+            SELECT 1 FROM public.pricing_strategies ps
+            WHERE ps.apartment_id = ams.apartment_id AND ps.version = 1
+        );
+
+        ALTER TABLE public.apartment_market_segments
+            DROP CONSTRAINT IF EXISTS apartment_market_segments_target_margin_check;
+        ALTER TABLE public.apartment_market_segments
+            DROP COLUMN IF EXISTS target_margin;
+        ALTER TABLE public.apartment_market_segments
+            DROP CONSTRAINT IF EXISTS apartment_market_segments_competitiveness_discount_check;
+        ALTER TABLE public.apartment_market_segments
+            DROP COLUMN IF EXISTS competitiveness_discount;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_apartment_market_segments_segment
     ON public.apartment_market_segments (city, neighborhood, property_type, bedrooms);

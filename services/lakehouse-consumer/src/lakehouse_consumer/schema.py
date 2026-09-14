@@ -262,6 +262,16 @@ ICEBERG_SCHEMA = Schema(
             # as the enforced floor.
             NestedField(102, "break_even_revenue_eur", DoubleType()),
             NestedField(103, "profitable_floor_eur", DoubleType()),
+            # Phase 23 (ADR-0016 §2): new IDs at the end of the sequence, same
+            # convention every prior addition here follows — old rows simply
+            # lack these two fields (nullable, required=False, so historical
+            # rows keep reading fine).
+            NestedField(104, "viability_status", StringType(), required=False),
+            NestedField(105, "floor_breach_days", IntegerType(), required=False),
+            # Phase 25 (ADR-0018 §2): new ID at the end of the sequence, same
+            # convention every prior addition here follows — old rows simply
+            # lack it.
+            NestedField(106, "pricing_strategy_version", IntegerType(), required=False),
         ),
     ),
     NestedField(

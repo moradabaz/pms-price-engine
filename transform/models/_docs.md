@@ -268,6 +268,32 @@ not forced to the same price. See docs/profitable-pricing-glossary.md
 section 8 for why this does not yet do commission "gross-up".
 {% enddocs %}
 
+{% docs viability_status %}
+Phase 23 classification of the relationship between the recommended price
+and the cost floor (external spec §13): "ok"/"demand_upside" when the
+market price clears the floor comfortably, "min_stay_lever_available" or
+"channel_lever_available" when a longer stay or a different channel would
+clear it, "persistent_floor_breach" when the floor has been binding for 30+
+consecutive days, "override_active" when a human has manually set the
+price, "floor_binding" otherwise. A record predating Phase 23 has no value
+here (null), never a fabricated one.
+{% enddocs %}
+
+{% docs floor_breach_days %}
+How many consecutive days this apartment/night's price has been set by the
+cost floor rather than the market (0 when the market price currently
+clears the floor). Feeds viability_status's "persistent_floor_breach"
+classification at 30+ days. Null for a record predating Phase 23.
+{% enddocs %}
+
+{% docs pricing_strategy_version %}
+Which insert-only pricing_strategies row (target_margin/competitiveness_discount)
+produced this decision (Phase 25) — edits never overwrite an existing version,
+so this is what "reproducibility" means for this project: no historical replay,
+but always knowing exactly which strategy version priced any given decision.
+Null for a record predating Phase 25.
+{% enddocs %}
+
 {% docs suggested_price_eur %}
 The final nightly price the engine recommends, after market, floor and
 channel rules. This is the number the property manager would actually

@@ -97,6 +97,13 @@ models:
       - name: channel_price_matrix
         description: "{{ doc('channel_price_matrix') }}"
 
+      - name: viability_status
+        description: "{{ doc('viability_status') }}"
+      - name: floor_breach_days
+        description: "{{ doc('floor_breach_days') }}"
+      - name: pricing_strategy_version
+        description: "{{ doc('pricing_strategy_version') }}"
+
       - name: suggested_price_eur
         description: "{{ doc('suggested_price_eur') }}"
       - name: currency

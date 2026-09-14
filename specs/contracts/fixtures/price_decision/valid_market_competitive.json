@@ -1,6 +1,6 @@
 {
   "decision_id": "c3d4e5f6-89ab-4562-b3fc-2c963f66afa6",
-  "schema_version": "2.0",
+  "schema_version": "4.0",
   "apartment_id": "a1b2c3d4-0001",
   "apartment_reference": "BCN-042",
   "target_date": "2026-08-15",
@@ -213,7 +213,10 @@
     },
     "channel_price_matrix": [],
     "break_even_revenue_eur": 16.08,
-    "profitable_floor_eur": 21.03
+    "profitable_floor_eur": 21.03,
+    "viability_status": "ok",
+    "floor_breach_days": 0,
+    "pricing_strategy_version": 1
   },
   "output": {
     "suggested_price_eur": 114.47,

@@ -26,7 +26,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_minimum_profitable_price", "revenue_base_netting", "manual_override_applied", "minimum_stay_recommended", "minimum_stay_not_viable"],
+          "enum": ["property_quality_tier", "property_rating", "property_view", "property_parking", "rule_market_competitive", "rule_minimum_floor", "rule_minimum_profitable_price", "rule_early_bird", "rule_last_minute", "rule_same_day", "revenue_base_netting", "manual_override_applied", "minimum_stay_recommended", "minimum_stay_not_viable"],
           "description": "Stable across specific attribute values — the specific value observed (which tier, which rating) lives in label, not in a proliferating enum."
         },
         "label": { "type": "string", "description": "Human-readable, carries the specific value (e.g. \"Rating 4.8 vs baseline 4.0\")." },
@@ -43,7 +43,7 @@
     },
     "schema_version": {
       "type": "string",
-      "const": "2.0"
+      "const": "4.0"
     },
 
     "apartment_id":        { "type": "string" },
@@ -126,7 +126,7 @@
             "properties": {
               "concept": {
                 "type": "string",
-                "enum": ["electricity", "water", "gas", "internet", "pms_subscription", "ota_fee", "channel_manager", "office_rent", "cleaning", "maintenance", "insurance", "community_fee", "other", "owner_commission"]
+                "enum": ["electricity", "water", "gas", "internet", "pms_subscription", "ota_fee", "channel_manager", "office_rent", "cleaning", "laundry", "maintenance", "insurance", "community_fee", "other", "owner_commission"]
               },
               "amount_eur": {
                 "type": "number",
@@ -162,7 +162,7 @@
 
     "calculation": {
       "type": "object",
-      "required": ["target_margin", "minimum_price_eur", "break_even_revenue_eur", "profitable_floor_eur", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components", "minimum_stay_recommendation", "channel_price_matrix"],
+      "required": ["target_margin", "minimum_price_eur", "break_even_revenue_eur", "profitable_floor_eur", "floor_policy", "commission_pct", "commission_base", "days_to_arrival", "competitiveness_discount", "property_attribute_factor", "property_reference_price_eur", "market_reference_price_eur", "rule_applied", "los_floor_matrix", "decision_components", "minimum_stay_recommendation", "channel_price_matrix", "viability_status", "floor_breach_days", "pricing_strategy_version"],
       "additionalProperties": false,
       "description": "Step-by-step trace of how the price was derived. Fully reproducible from the inputs above.",
       "properties": {
@@ -199,8 +199,8 @@
         },
         "commission_base": {
           "type": "string",
-          "enum": ["total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning"],
-          "description": "This apartment's owner-commission CostDefinition.revenue_base (ADR-0011 backlog #5, ADR-0013 §4). total_revenue reproduces this project's pre-Phase-11 behavior exactly; the other two net ota_fee/channel_manager (and cleaning) out of the base, reducing the floor's numerator — see calculation.decision_components' revenue_base_netting entry when this happens."
+          "enum": ["total_revenue", "revenue_minus_ota", "revenue_minus_ota_minus_cleaning", "revenue_minus_ota_minus_cleaning_minus_laundry", "revenue_minus_all_booking_costs"],
+          "description": "This apartment's owner-commission CostDefinition.revenue_base (ADR-0011 backlog #5, ADR-0013 §4, extended by ADR-0017 §1/Phase 24). total_revenue reproduces this project's pre-Phase-11 behavior exactly; the others net ota_fee/channel_manager, cleaning, laundry, and (widest) every scope='booking' concept out of the base, reducing the floor's numerator — see calculation.decision_components' revenue_base_netting entry when this happens."
         },
         "days_to_arrival": {
           "type": "integer",
@@ -313,6 +313,21 @@
             "valid_until": { "type": "string", "format": "date-time", "description": "Expiry of the authorization. Cancelling a live override before this timestamp is done by updating this field, not deleting the row (spec 14 §1/§7)." },
             "expected_loss_eur": { "type": "number", "minimum": 0, "description": "max(0, minimum_price_eur - override_price_eur) — zero when the override is at or above the algorithmic floor, not the raw (possibly negative) difference." }
           }
+        },
+        "viability_status": {
+          "type": "string",
+          "enum": ["ok", "demand_upside", "min_stay_lever_available", "channel_lever_available", "persistent_floor_breach", "override_active", "floor_binding"],
+          "description": "External spec §13's situation/action table as an explicit classification (ADR-0016, Phase 23), evaluated priority-ordered: an active override always wins, then a persistent (30+ day) floor breach, then market_competitive (ok/demand_upside), then a min-stay or channel lever, else floor_binding."
+        },
+        "floor_breach_days": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Days this (apartment, target_date) has held rule_applied != market_competitive in an unbroken streak, 0 when currently market_competitive (ADR-0016 §4). Informational/audit only — viability_status is the decision surface."
+        },
+        "pricing_strategy_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which insert-only pricing_strategies row (target_margin/competitiveness_discount) produced this decision (ADR-0018, Phase 25) — the field 'reproducibility' (external spec §28) hinges on, since this project does no historical replay (future-only, same precedent ADR-0011/ADR-0013 already established)."
         }
       }
     },

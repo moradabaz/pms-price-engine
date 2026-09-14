@@ -40,6 +40,12 @@ def apply_manual_override(
     # still audited but registers no loss (spec 14 §4).
     floor_gap = decision.calculation.minimum_price_eur - assignment.override_price_eur
     expected_loss_eur = round(max(0.0, floor_gap), 2)
+    # Phase 23 (ADR-0016 §2, spec 23 §7): classify_viability() in Stage B
+    # always runs with manual_override_active=False — Stage B has no
+    # override information at all, since override application happens here,
+    # in Stage C, strictly afterward. An active override outranks every
+    # other viability_status per the external spec's own priority (§13), so
+    # this is where that classification is actually finalized.
     override_component = DecisionComponent(
         code="manual_override_applied",
         label=(
@@ -66,6 +72,7 @@ def apply_manual_override(
                         *decision.calculation.decision_components,
                         override_component,
                     ],
+                    "viability_status": "override_active",
                 }
             ),
             "output": decision.output.model_copy(

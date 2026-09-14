@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, date, datetime
 from typing import cast
 from uuid import uuid4
@@ -13,6 +14,7 @@ from pricing_formulas.layers.commercial import (
     netted_revenue_base_amount,
     revenue_base_netting_component,
 )
+from pricing_formulas.viability import classify_viability
 from pyflink.common.typeinfo import Types
 from pyflink.datastream import OutputTag
 from pyflink.datastream.functions import KeyedCoProcessFunction
@@ -38,9 +40,16 @@ from flink_jobs.eviction import (
     is_over_capacity,
     oldest_key_by_updated_at,
 )
-from flink_jobs.models import CostAggregate, MarketSnapshot, NightSnapshot
+from flink_jobs.models import (
+    CostAggregate,
+    MarketSnapshot,
+    NightSnapshot,
+    StayCandidate,
+)
 from flink_jobs.staleness import is_safe_to_overwrite
 from flink_jobs.watchdog import expired_keys, next_deadline_millis
+
+logger = logging.getLogger(__name__)
 
 DATA_STALE_TAG = OutputTag("data-stale", Types.PICKLED_BYTE_ARRAY())
 
@@ -56,6 +65,20 @@ APARTMENT_DEADLINES_DESCRIPTOR = MapStateDescriptor(
 NIGHT_DEADLINES_DESCRIPTOR = MapStateDescriptor(
     "night-deadlines", Types.STRING(), Types.PICKLED_BYTE_ARRAY()
 )
+# Phase 23 (ADR-0016 §4, spec 23 §7): keyed by "{apartment_id}|{target_date}"
+# — NOT on NightSnapshot, which spec 23 originally proposed. NightSnapshot
+# (self.nights) is keyed by target_date alone and shared across every
+# apartment in this segment, so a field on it cannot hold a per-apartment
+# breach streak without wrongly sharing one apartment's streak with every
+# other apartment priced against the same night. A genuinely new state,
+# scoped to the actual (apartment, night) pair, is required.
+FLOOR_BREACH_DESCRIPTOR = MapStateDescriptor(
+    "floor-breach-since", Types.STRING(), Types.PICKLED_BYTE_ARRAY()
+)
+
+
+def _floor_breach_key(apartment_id: str, target_date: date) -> str:
+    return f"{apartment_id}|{target_date.isoformat()}"
 
 
 class PriceDecisionFunction(KeyedCoProcessFunction):
@@ -70,6 +93,7 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
             APARTMENT_DEADLINES_DESCRIPTOR
         )
         self.night_deadlines = runtime_context.get_map_state(NIGHT_DEADLINES_DESCRIPTOR)
+        self.floor_breach_since = runtime_context.get_map_state(FLOOR_BREACH_DESCRIPTOR)
 
     def process_element1(self, value: CostAggregate, ctx):
         """Cost side: updates one apartment, then reprices every known night."""
@@ -85,6 +109,11 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
             oldest = oldest_key_by_updated_at(dict(self.apartments.items()))
             self.apartments.remove(oldest)
             self.apartment_deadlines.remove(oldest)
+            # Phase 23: an evicted apartment's floor-breach streaks are no
+            # longer meaningful — drop every (apartment, night) entry for it.
+            for key in list(dict(self.floor_breach_since.items())):
+                if key.startswith(f"{oldest}|"):
+                    self.floor_breach_since.remove(key)
 
         self.apartments.put(value.apartment_id, value)
         deadline_millis = next_deadline_millis(datetime.now(UTC))
@@ -98,9 +127,16 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
             # fan out from here either.
             if night.blended is None:
                 continue
-            yield _build_price_decision(
-                value, night, date.fromisoformat(target_date_str)
+            target_date = date.fromisoformat(target_date_str)
+            key = _floor_breach_key(value.apartment_id, target_date)
+            decision, new_since = _build_price_decision(
+                value, night, target_date, self.floor_breach_since.get(key)
             )
+            if new_since is None:
+                self.floor_breach_since.remove(key)
+            else:
+                self.floor_breach_since.put(key, new_since)
+            yield decision
 
     def process_element2(self, value: MarketPrice, ctx):
         """Market side: updates one night (its blended rate, or one channel's
@@ -128,8 +164,10 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
         # fresher channel update for the same night, or vice versa.
         previous_collected_at = None
         if existing is not None:
-            previous = existing.blended if platform is None else existing.channels.get(
-                platform
+            previous = (
+                existing.blended
+                if platform is None
+                else existing.channels.get(platform)
             )
             previous_collected_at = previous.collected_at if previous else None
         if not is_safe_to_overwrite(snapshot.collected_at, previous_collected_at):
@@ -142,6 +180,11 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
         for expired_key in expired:
             self.nights.remove(expired_key)
             self.night_deadlines.remove(expired_key)
+            # Phase 23: an expired night's floor-breach streaks are no
+            # longer meaningful for any apartment.
+            for breach_key in list(dict(self.floor_breach_since.items())):
+                if breach_key.endswith(f"|{expired_key}"):
+                    self.floor_breach_since.remove(breach_key)
 
         if platform is None:
             night = NightSnapshot(
@@ -163,7 +206,15 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
         if night.blended is None:
             return
         for apartment_id, cost in dict(self.apartments.items()).items():
-            yield _build_price_decision(cost, night, target_date)
+            breach_key = _floor_breach_key(apartment_id, target_date)
+            decision, new_since = _build_price_decision(
+                cost, night, target_date, self.floor_breach_since.get(breach_key)
+            )
+            if new_since is None:
+                self.floor_breach_since.remove(breach_key)
+            else:
+                self.floor_breach_since.put(breach_key, new_since)
+            yield decision
 
     def on_timer(self, timestamp: int, ctx):
         """Fires data_stale for apartments/nights whose deadline matches timestamp."""
@@ -176,9 +227,16 @@ class PriceDecisionFunction(KeyedCoProcessFunction):
 
 
 def _build_price_decision(
-    cost: CostAggregate, night: NightSnapshot, target_date: date
-) -> PriceDecision:
-    """Applies the pricing formula and assembles a PriceDecision. Returns it.
+    cost: CostAggregate,
+    night: NightSnapshot,
+    target_date: date,
+    floor_breach_since: date | None,
+) -> tuple[PriceDecision, date | None]:
+    """Applies the pricing formula and assembles a PriceDecision. Returns it
+    alongside this (apartment, night)'s updated floor_breach_since (Phase 23,
+    ADR-0016 §4) — the caller is responsible for writing it back to its own
+    FLOOR_BREACH_DESCRIPTOR state under the right composite key, since that
+    state lives on the caller (a KeyedCoProcessFunction), not here.
     night.blended must already be resolved (Phase 16, ADR-0011 backlog #2) —
     both call sites (process_element1/2) only reach here once it is; the
     top-level calculation always reflects it, never a channel-specific rate."""
@@ -189,6 +247,21 @@ def _build_price_decision(
     # (there are no antelación tiers left to select) — still recorded on the
     # event directly, informational/audit only.
     days_to_arrival = (target_date - decided_at.date()).days
+
+    # Phase 21 (ADR-0014, spec 21 §2/§3): formalizes the top-level
+    # (apartment, night) candidate this function is about to price —
+    # stay_length=1, channel=None, matching decide_price()'s own defaults
+    # below. Not consumed by libs/pricing-formulas (its signatures are
+    # unchanged by this phase); carried purely for explainability/audit.
+    # The LOS matrix and channel matrix (decide_price_los_matrix()/
+    # decide_price_by_channel() below) loop internally inside
+    # libs/pricing-formulas and are deliberately left untouched — no
+    # separate StayCandidate is constructed per LOS/channel row (spec 21 §2's
+    # design fork explains why).
+    stay_candidate = StayCandidate(
+        apartment_id=cost.apartment_id, arrival_date=target_date, stay_length=1
+    )
+    logger.debug("Pricing stay candidate: %s", stay_candidate)
 
     fixed_and_allocated_costs_per_night_eur = round(
         cost.fixed_cost_eur + cost.variable_cost_eur, 2
@@ -217,6 +290,8 @@ def _build_price_decision(
             pc_revenue_base,
             cost.ota_related_cost_eur,
             cost.cleaning_cost_eur,
+            cost.laundry_cost_eur,
+            cost.booking_scope_cost_eur,
         )
         netting_eur += round(pc.rate * net, 2)
         component = revenue_base_netting_component(pc_revenue_base, pc.rate, net)
@@ -235,6 +310,7 @@ def _build_price_decision(
         netting_eur=netting_eur,
         property_decision_components=cost.property_decision_components,
         commission_decision_components=netting_components,
+        days_to_arrival=days_to_arrival,
     )
     los_matrix = decide_price_los_matrix(
         fixed_and_allocated_costs_per_night_eur=fixed_and_allocated_costs_per_night_eur,
@@ -245,6 +321,7 @@ def _build_price_decision(
         competitiveness_discount=cost.competitiveness_discount,
         property_attribute_factor=cost.property_attribute_factor,
         netting_eur=netting_eur,
+        days_to_arrival=days_to_arrival,
     )
     # Phase 15 (ADR-0011 backlog #12): pure post-processing over the matrix
     # just computed above, plus the same raw cost inputs decide_price() used
@@ -276,7 +353,43 @@ def _build_price_decision(
         revenue_base=cost.commission_base,
         ota_related_cost_eur=cost.ota_related_cost_eur,
         cleaning_cost_eur=cost.cleaning_cost_eur,
+        laundry_cost_eur=cost.laundry_cost_eur,
+        booking_scope_cost_eur=cost.booking_scope_cost_eur,
+        days_to_arrival=days_to_arrival,
     )
+    # Phase 23 (ADR-0016 §2/§4, spec 23 §7): the streak is updated with
+    # THIS decision's own rule_applied first, then floor_breach_days/
+    # viability_status are both derived from that already-updated streak —
+    # not the pre-decision one. Doing it the other way around (classify
+    # using the streak as it stood before this decision) would report
+    # "persistent_floor_breach" for the very decision that just cleared the
+    # floor, one decision later than a human reading the dashboard would
+    # expect (spec 23 §6 AC-03's "a single intervening market_competitive
+    # day resets the streak" means resets visibly in that same decision).
+    # manual_override_active is always False here — Stage C
+    # (stage_manual_override_enrichment.py) runs strictly after Stage B and
+    # overwrites viability_status to "override_active" directly when it
+    # actually applies one.
+    if calc.rule_applied != "market_competitive":
+        new_floor_breach_since = floor_breach_since or decided_at.date()
+    else:
+        new_floor_breach_since = None
+    floor_breach_days = (
+        (decided_at.date() - new_floor_breach_since).days
+        if new_floor_breach_since
+        else 0
+    )
+    viability_status = classify_viability(
+        rule_applied=calc.rule_applied,
+        below_market_by=calc.below_market_by,
+        recommended_min_stay=minimum_stay.recommended_min_stay,
+        any_channel_market_competitive=any(
+            c.rule_applied == "market_competitive" for c in channel_candidates
+        ),
+        manual_override_active=False,
+        floor_breach_days=floor_breach_days,
+    )
+
     decision_components = [
         DecisionComponent(code=c.code, label=c.label, impact=c.impact)
         for c in calc.decision_components
@@ -348,6 +461,11 @@ def _build_price_decision(
             commission_base=cost.commission_base,
             days_to_arrival=days_to_arrival,
             competitiveness_discount=cost.competitiveness_discount,
+            # Phase 25 (ADR-0018 §2): the PricingStrategy version resolved
+            # once, in Stage A, alongside target_margin/competitiveness_
+            # discount above — the field "reproducibility" (external spec
+            # §28) hinges on.
+            pricing_strategy_version=cost.pricing_strategy_version,
             property_attribute_factor=calc.property_attribute_factor,
             property_reference_price_eur=calc.property_reference_price_eur,
             market_reference_price_eur=calc.market_reference_price_eur,
@@ -396,10 +514,12 @@ def _build_price_decision(
                 )
                 for c in channel_candidates
             ],
+            viability_status=viability_status,
+            floor_breach_days=floor_breach_days,
         ),
         output=Output(
             suggested_price_eur=calc.suggested_price_eur,
             effective_margin=calc.effective_margin,
             below_market_by=calc.below_market_by,
         ),
-    )
+    ), new_floor_breach_since

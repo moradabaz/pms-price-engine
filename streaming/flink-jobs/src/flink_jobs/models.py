@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Literal
 
 from pricing_formulas.decision_components import DecisionComponent
 from pricing_formulas.layers.commercial import RevenueBase
@@ -12,20 +13,23 @@ from flink_jobs.cost_aggregation import (
 
 
 @dataclass(frozen=True)
-class SegmentAssignment:
-    """An apartment's segment and pricing config, as stored in broadcast state.
+class PropertyPricingProfile:
+    """An apartment's attributes and segment identity, as stored in broadcast
+    state (external spec §6-7). Phase 21 (ADR-0014): split from the old
+    SegmentAssignment, which also carried strategy parameters (target_margin,
+    competitiveness_discount) — this class answers "what the property IS",
+    not "what business risk the operator wants to take" (see
+    PricingStrategy).
 
     Phase 11 (ADR-0011 backlog #5): commission_pct moved to
-    OwnerContractAssignment — this class no longer carries it at all, the
-    same real removal (not another additive field) spec 11 §3 documents for
+    OwnerContractAssignment — this class doesn't carry it at all, the same
+    real removal (not another additive field) spec 11 §3 documents for
     apartment_market_segments itself."""
 
     city: str
     neighborhood: str
     property_type: str
     bedrooms: int
-    target_margin: float
-    competitiveness_discount: float
     # Phase 8 (ADR-0011 backlog #6): raw Property Bonus/Malus attributes.
     # Defaults match apartment_market_segments' own column defaults, for CDC
     # messages predating this phase (same pattern commission_pct established).
@@ -36,34 +40,80 @@ class SegmentAssignment:
 
 
 @dataclass(frozen=True)
+class PricingStrategy:
+    """Strategy parameters an apartment/cluster is configured with (external
+    spec §15). Phase 21 (ADR-0014): split from SegmentAssignment — separated
+    from PropertyPricingProfile because it answers a different question
+    (business risk tolerance, not what the property is). Phase 25 (ADR-0018):
+    now resolved from its own `pricing_strategies` CDC stream, not
+    apartment_market_segments — `version` records which insert-only row
+    produced this instance (never None: every PricingStrategyRow carries a
+    real version, §2 of the phase spec).
+
+    floor_policy_default documents today's implicit assumption (every
+    apartment can go "soft", i.e. target_margin may be > 0) as an explicit,
+    named field. It is descriptive only in this phase — decide_price() still
+    derives the *actual* per-decision floor_policy from target_margin == 0
+    (ADR-0013 §5), unchanged."""
+
+    version: int
+    target_margin: float
+    competitiveness_discount: float
+    floor_policy_default: Literal["hard", "soft"] = "soft"
+
+
+@dataclass(frozen=True)
 class ApartmentSegmentRow:
-    """One apartment_market_segments CDC row, as received from Kafka."""
+    """One apartment_market_segments CDC row, as received from Kafka.
+    Phase 25 (ADR-0018 §1): target_margin/competitiveness_discount removed —
+    a real substitution, not a redundant copy (same precedent ADR-0012/
+    ADR-0013 already established) — those columns moved to their own
+    pricing_strategies table/CDC stream (see PricingStrategyRow below)."""
 
     apartment_id: str
     city: str
     neighborhood: str
     property_type: str
     bedrooms: int
-    target_margin: float
-    competitiveness_discount: float
     quality_tier: str = "standard"
     rating: float = 4.0
     has_view: bool = False
     has_parking: bool = False
 
-    def to_assignment(self) -> SegmentAssignment:
+    def to_property_pricing_profile(self) -> PropertyPricingProfile:
         """Drops apartment_id (used as the map key, not stored in the value)."""
-        return SegmentAssignment(
+        return PropertyPricingProfile(
             city=self.city,
             neighborhood=self.neighborhood,
             property_type=self.property_type,
             bedrooms=self.bedrooms,
-            target_margin=self.target_margin,
-            competitiveness_discount=self.competitiveness_discount,
             quality_tier=self.quality_tier,
             rating=self.rating,
             has_view=self.has_view,
             has_parking=self.has_parking,
+        )
+
+
+@dataclass(frozen=True)
+class PricingStrategyRow:
+    """One pricing_strategies CDC row, as received from Kafka (Phase 25,
+    ADR-0018 §2) — insert-only: Debezium only ever emits an INSERT for this
+    table, never an UPDATE (editing a strategy inserts the next version,
+    never mutates an existing row)."""
+
+    apartment_id: str
+    version: int
+    target_margin: float
+    competitiveness_discount: float
+    floor_policy_default: Literal["hard", "soft"] = "soft"
+
+    def to_pricing_strategy(self) -> PricingStrategy:
+        """Drops apartment_id (used as the map key, not stored in the value)."""
+        return PricingStrategy(
+            version=self.version,
+            target_margin=self.target_margin,
+            competitiveness_discount=self.competitiveness_discount,
+            floor_policy_default=self.floor_policy_default,
         )
 
 
@@ -187,6 +237,38 @@ class CompanyCostOccurrenceRow:
 
 
 @dataclass(frozen=True)
+class StayCandidate:
+    """Formalizes the (apartment, arrival, LOS, channel) tuple Stage B
+    evaluates when pricing a night (external spec §9) — a hypothetical stay,
+    not a real reservation (no occupancy/availability calendar exists,
+    unchanged limitation from Phase 9). Phase 21 (ADR-0014): carried
+    alongside _build_price_decision()'s top-level calculation purely for
+    explainability/audit purposes — never consumed by
+    libs/pricing-formulas, whose functions keep their existing flat
+    arguments unchanged (spec 21 §2).
+
+    guests/candidate_revenue have no data source anywhere in this project
+    yet (§6 known limitation of spec 21) — always None until a future phase
+    extends Phase 18's booking ingestion to carry them.
+
+    Only the top-level (stay_length=1, channel=None) candidate is
+    constructed today. The LOS matrix (LOS_CANDIDATES) and the per-channel
+    matrix are computed by decide_price_los_matrix()/decide_price_by_channel()
+    *inside* libs/pricing-formulas, which loop internally and are
+    deliberately left untouched by this phase (spec 21 §2's design fork) —
+    so no separate StayCandidate is constructed per LOS/channel row without
+    first pulling those loops out of the pure-math package, which is out of
+    scope here."""
+
+    apartment_id: str
+    arrival_date: date
+    stay_length: int
+    channel: str | None = None  # None = blended/no channel filter
+    guests: int | None = None  # not yet sourced anywhere
+    candidate_revenue: float | None = None  # not yet sourced anywhere
+
+
+@dataclass(frozen=True)
 class CostAggregate:
     """Stage A's output: one apartment's current cost, segment, and margin config."""
 
@@ -232,21 +314,30 @@ class CostAggregate:
     # columns directly — the field names/roles are otherwise unchanged.
     commission_pct: float = 0.15
     commission_base: RevenueBase = "total_revenue"
+    # Phase 25 (ADR-0018 §2): resolved in the same Stage A process_element
+    # call as target_margin/competitiveness_discount above, from the
+    # pricing_strategies broadcast (not a later stage, unlike commission_*).
+    # Default 1 keeps every pre-Phase-25 CostAggregate construction (tests
+    # included) valid without change.
+    pricing_strategy_version: int = 1
     # Phase 20 (ADR-0013 §3): every OTHER applicable percentage CostDefinition
     # for this apartment/period (payment-line-derived, e.g. ota_fee) —
     # resolved once in Stage A from cost_aggregation.py. The owner-commission
     # CostDefinition (commission_pct/commission_base above) is NOT included
     # here (it is resolved separately, by Stage A2) — stage_price_decision.py
     # combines both into the formula's own `p`.
-    percentage_costs: tuple[PercentageCostComponent, ...] = field(
-        default_factory=tuple
-    )
+    percentage_costs: tuple[PercentageCostComponent, ...] = field(default_factory=tuple)
     # Phase 11: resolved once in Stage A from cost_aggregation.py's new
     # concept-based sub-totals — already fully counted inside
     # fixed_cost_eur/variable_cost_eur above, these are additional
     # breakdowns for decide_price()'s revenue-base netting, not new costs.
     ota_related_cost_eur: float = 0.0
     cleaning_cost_eur: float = 0.0
+    # Phase 24 (ADR-0017 §3): laundry_cost_eur mirrors ota_related_cost_eur/
+    # cleaning_cost_eur; booking_scope_cost_eur is the widest netting base
+    # (every scope='booking' concept, not just OTA/cleaning/laundry).
+    laundry_cost_eur: float = 0.0
+    booking_scope_cost_eur: float = 0.0
     # Phase 17 (ADR-0011 backlog #3): resolved once in Stage A alongside
     # ota_related_cost_eur/cleaning_cost_eur above, from the same
     # cost_aggregation.py computation — every concept observed in the
