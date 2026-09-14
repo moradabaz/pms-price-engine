@@ -80,23 +80,31 @@ def price_status(
     suggested_price_eur: float,
     total_cost_eur: float,
     target_margin: float,
-    avg_market_price_eur: float,
+    property_reference_price_eur: float,
 ) -> str:
     """Classifies the suggested price for the dashboard's Status column.
     Checked in order, worst case first:
     - Price Below Cost: loses money outright.
     - Price Below Profit: covers cost but not the PM's target_margin.
-    - Price Above Market: clears the target margin but prices above the raw
-      market average (upside, not a guardrail failure).
+    - Price Above Market: clears the target margin but prices above this
+      apartment's own Property Reference Price (the raw market average
+      adjusted for this apartment's Bonus/Malus attributes, Phase 8) —
+      upside, not a guardrail failure. Compared against the *property*
+      reference, not the raw segment-wide market average, so this agrees
+      with Apartment Detail's "Below market by" metric (output.
+      below_market_by, guardrails.py), which uses the same baseline —
+      a premium apartment priced above the raw market average but below
+      its own, higher reference no longer shows contradictory signals
+      between the two views.
     - Market Competitive: clears the target margin and stays at/below the
-      market average — the desired steady state.
+      property reference price — the desired steady state.
     Returns the status label."""
     profit_floor_eur = total_cost_eur * (1 + target_margin)
     if suggested_price_eur < total_cost_eur:
         return "Price Below Cost"
     if suggested_price_eur < profit_floor_eur:
         return "Price Below Profit"
-    if suggested_price_eur > avg_market_price_eur:
+    if suggested_price_eur > property_reference_price_eur:
         return "Price Above Market"
     return "Market Competitive"
 
@@ -123,9 +131,11 @@ def to_display_row(apartment_id: str, item: dict[str, Any]) -> dict[str, Any]:
     # avg_market_price_eur adjusted by property_attribute_factor (Bonus/
     # Malus) — surfaced here so a premium property's suggested_price_eur
     # landing above avg_market_price_eur is visibly explained, not silently
-    # inflated. Both fields exist on every decision since Phase 8; no
-    # None-fallback needed the way minimum_stay_recommendation (Phase 15)
-    # requires below.
+    # inflated, and used (not avg_market_price_eur) as price_status()'s own
+    # "above market" baseline, so the list status agrees with Apartment
+    # Detail's "Below market by" metric instead of contradicting it. Both
+    # fields exist on every decision since Phase 8; no None-fallback needed
+    # the way minimum_stay_recommendation (Phase 15) requires below.
     property_reference_price_eur = float(
         item["calculation"]["property_reference_price_eur"]
     )
@@ -154,7 +164,10 @@ def to_display_row(apartment_id: str, item: dict[str, Any]) -> dict[str, Any]:
         "suggested_price_eur": suggested_price_eur,
         "effective_margin": float(item["output"]["effective_margin"]),
         "status": price_status(
-            suggested_price_eur, total_cost_eur, target_margin, avg_market_price_eur
+            suggested_price_eur,
+            total_cost_eur,
+            target_margin,
+            property_reference_price_eur,
         ),
         "min_stay_reco": (
             None if recommended_min_stay is None else int(recommended_min_stay)

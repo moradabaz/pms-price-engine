@@ -69,8 +69,8 @@ def test_to_display_row_flattens_cost_market_and_output():
     item = {
         "target_date": "2026-08-08",
         "cost_inputs": {
-                    "fixed_and_allocated_costs_eur": 37.8,
-                    "per_booking_cost_eur": 2.0,
+            "fixed_and_allocated_costs_eur": 37.8,
+            "per_booking_cost_eur": 2.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 145.0},
         "calculation": {
@@ -108,8 +108,8 @@ def test_to_display_row_surfaces_minimum_stay_recommendation_when_present():
     item = {
         "target_date": "2026-08-08",
         "cost_inputs": {
-                    "fixed_and_allocated_costs_eur": 0.0,
-                    "per_booking_cost_eur": 110.0,
+            "fixed_and_allocated_costs_eur": 0.0,
+            "per_booking_cost_eur": 110.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 90.0},
         "calculation": {
@@ -141,8 +141,8 @@ def test_to_display_row_defaults_minimum_stay_recommendation_to_none_when_absent
     item = {
         "target_date": "2026-08-08",
         "cost_inputs": {
-                    "fixed_and_allocated_costs_eur": 37.8,
-                    "per_booking_cost_eur": 2.0,
+            "fixed_and_allocated_costs_eur": 37.8,
+            "per_booking_cost_eur": 2.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 145.0},
         "calculation": {
@@ -238,11 +238,16 @@ def test_to_display_row_surfaces_property_reference_price_and_factor():
     # — not a bug, but confusing without these two fields visible alongside
     # it (real case: BCN-003, 2026-09-12 live stack, factor 1.11 net of a
     # 5% competitiveness_discount still nets +5.45% over the raw average).
+    # price_status() itself is keyed off property_reference_price_eur, not
+    # avg_market_price_eur, precisely so this case reads "Market Competitive"
+    # here and agrees with Apartment Detail's "Below market by" (both use
+    # the same baseline) instead of contradicting it with "Price Above
+    # Market" — see price_status()'s own docstring.
     item = {
         "target_date": "2026-09-24",
         "cost_inputs": {
-                    "fixed_and_allocated_costs_eur": 25.86,
-                    "per_booking_cost_eur": 0.0,
+            "fixed_and_allocated_costs_eur": 25.86,
+            "per_booking_cost_eur": 0.0,
         },
         "market_inputs": {"avg_nightly_rate_eur": 305.41},
         "calculation": {
@@ -262,6 +267,8 @@ def test_to_display_row_surfaces_property_reference_price_and_factor():
     assert row["property_reference_price_eur"] == 339.01
     assert row["property_attribute_factor"] == 1.11
     assert row["suggested_price_eur"] > row["avg_market_price_eur"]
+    assert row["suggested_price_eur"] < row["property_reference_price_eur"]
+    assert row["status"] == "Market Competitive"
 
 
 def test_to_native_converts_integral_decimal_to_int():
@@ -364,6 +371,18 @@ def test_price_status_at_cost_boundary_is_not_below_cost():
 def test_price_status_at_profit_floor_boundary_is_not_below_profit():
     # Equal to the profit floor clears it (strict < is what fails, not <=).
     assert price_status(105.0, 100.0, 0.05, 150.0) == "Market Competitive"
+
+
+def test_price_status_uses_property_reference_not_raw_market_average():
+    # Regression test: price_status()'s 4th argument is
+    # property_reference_price_eur, not the raw market average — a premium
+    # apartment priced above the raw average but at/below its own,
+    # Bonus/Malus-adjusted reference must read "Market Competitive", so the
+    # list status agrees with Apartment Detail's "Below market by" (both
+    # keyed off the same property reference price) instead of contradicting
+    # it with "Price Above Market".
+    assert price_status(140.0, 100.0, 0.05, 150.0) == "Market Competitive"
+    assert price_status(160.0, 100.0, 0.05, 150.0) == "Price Above Market"
 
 
 def test_price_status_at_market_boundary_is_market_competitive():
