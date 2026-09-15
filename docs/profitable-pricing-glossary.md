@@ -206,6 +206,203 @@ segments), not real market data. See backlog item `#11`.
 
 ---
 
+## 14. How it is actually calculated (code map)
+
+This section is the concrete counterpart to the plain-language sections above: for every
+concept, the real formula, the exact function that computes it, and where in the pipeline it
+runs. All formulas live in `libs/pricing-formulas/src/pricing_formulas/` (pure Python, no Flink
+dependency, unit-tested in isolation) and are invoked from `streaming/flink-jobs/src/flink_jobs/`
+(the PyFlink job that runs the formulas per event). Nothing downstream (dbt, the dashboard)
+recalculates any of this — dbt only reads the already-computed fields back out of Iceberg/DynamoDB.
+
+### 14.1 Pipeline stages that feed the price ladder
+
+```mermaid
+flowchart TD
+    PL["payment_line CDC<br/>(Postgres via Debezium)"] --> A0["Stage A0<br/>stage_cost_definition_resolution.py<br/>resolves cost_definition_id → concept/behavior/rate"]
+    A0 --> A["Stage A<br/>stage_cost_enrichment.py<br/>aggregate_cost() + property_attribute_factor()"]
+    SEG["apartment_market_segments CDC"] -. broadcast .-> A
+    STRAT["pricing_strategies CDC<br/>(target_margin, competitiveness_discount)"] -. broadcast .-> A
+    A --> ABK["Stage A-bookings<br/>stage_booking_enrichment.py<br/>occupied_nights / booking_count / avg_guests"]
+    BK["bookings CDC"] -. keyed join .-> ABK
+    ABK --> ACORR["Stage A-correction<br/>stage_allocation_correction.py<br/>resolves occupied_night/booking allocations"]
+    ACORR --> A4["Stage A4<br/>stage_company_cost_enrichment.py<br/>adds weighted company-scoped costs"]
+    CCOST["cost_definitions / cost_allocation_rules /<br/>company_cost_occurrences CDC"] -. broadcast .-> A4
+    A4 --> A2["Stage A2<br/>stage_owner_contract_enrichment.py<br/>resolves commission_pct / commission_base"]
+    OC["owner_contracts CDC"] -. broadcast .-> A2
+    A2 --> B["Stage B<br/>stage_price_decision.py<br/>decide_price() / decide_price_los_matrix() /<br/>decide_price_by_channel() / classify_viability()"]
+    MKT["market_price<br/>(scraper → Kinesis → bridge → Kafka)"] --> B
+    B --> C["Stage C<br/>stage_manual_override_enrichment.py<br/>overwrites suggested_price_eur if an override is active"]
+    OVR["manual_overrides CDC"] -. broadcast .-> C
+    C --> SINK["DynamoDB (hot) +<br/>DynamoDB Streams → Iceberg (cold)"]
+```
+
+### 14.2 Market Reference Price
+
+- **Formula:** `market_reference_price_eur = property_reference_price_eur * (1 - competitiveness_discount)`
+- **Code:** `layers/market.py:market_reference_price()`
+- **Stage:** Stage B (`stage_price_decision.py`, inside `decide_price()`), per event — recomputed
+  every time either the cost side or the market side changes for that (apartment, night).
+- **Persisted:** `calculation.market_reference_price_eur`
+
+### 14.3 Property Reference Price (and Bonus/Malus)
+
+- **Bonus/Malus multiplier:**
+  `property_attribute_factor = clamp(1 + Σ(quality_tier_adj, rating_adj, view_adj, parking_adj), 0.5, 2.0)`
+  where `rating_adj = (rating - 4.0) * 0.10`, `quality_tier_adj ∈ {-0.15, 0, 0.15, 0.30}`,
+  `view_adj = 0.05` if has_view else 0, `parking_adj = 0.04` if has_parking else 0.
+  - **Code:** `layers/structural.py:property_attribute_factor()` — computed **once per apartment**,
+    in Stage A (`stage_cost_enrichment.py`), from the `apartment_market_segments` broadcast, not
+    per pricing decision.
+- **Property Reference Price:**
+  `property_reference_price_eur = avg_nightly_rate_eur * property_attribute_factor`, then
+  multiplied by the (currently neutral, 1.0) Performance and Inventory layer stubs and by the
+  Booking Window factor (§14.7).
+  - **Code:** `layers/structural.py:property_reference_price()`, combined in `engine.py:decide_price()`.
+  - **Stage:** Stage B, per decision.
+- **Persisted:** `calculation.property_attribute_factor`, `calculation.property_reference_price_eur`;
+  the four individual Bonus/Malus components (`property_quality_tier`, `property_rating`,
+  `property_view`, `property_parking`) are in `calculation.decision_components`.
+
+### 14.4 Break-Even ADR and Profitable Floor
+
+```mermaid
+flowchart LR
+    F["fixed_cost_eur + variable_cost_eur<br/>(per night, Stage A/A4/A-correction)"] --> N
+    PB["per_booking_cost_eur / stay_length"] --> N["fixed_and_allocated_costs_eur"]
+    N --> SUB["numerator = fixed_and_allocated_costs_eur - netting_eur"]
+    NET["netting_eur = Σ rate_i * netted_base_i<br/>(one per % CostDefinition, e.g. owner commission)"] --> SUB
+    SUB --> BER["Break-Even Revenue =<br/>numerator / (1 - p)"]
+    SUB --> MPR["Profitable Floor =<br/>numerator / (1 - p - target_margin)"]
+    MPR --> MIN["minimum_price_eur = Profitable Floor<br/>(the ENFORCED floor; BER is audit-only)"]
+```
+
+- `p` = sum of the rates of every applicable percentage `CostDefinition` for that apartment/period
+  (OTA commission, owner commission, etc.), resolved once per decision.
+- `netting_eur` reduces the numerator when a percentage cost's `revenue_base` excludes some
+  concepts (e.g. commission charged on `revenue_minus_ota_minus_cleaning`, not total revenue).
+- **Code:** `engine.py:decide_price()`, lines computing `break_even_revenue_eur` /
+  `profitable_floor_eur` / `minimum_price_eur`. `netted_revenue_base_amount()` in
+  `layers/commercial.py` computes the 5 possible revenue bases.
+- **Stage:** Stage B, per decision. Raw cost inputs (`fixed_cost_eur`, `variable_cost_eur`,
+  `per_booking_cost_eur`, `ota_related_cost_eur`, `cleaning_cost_eur`, `laundry_cost_eur`,
+  `booking_scope_cost_eur`) are produced earlier by `cost_aggregation.py:aggregate_cost()` (Stage A),
+  corrected by `stage_allocation_correction.py` (occupied-night/booking allocations) and
+  `stage_company_cost_enrichment.py` (shared company costs, weighted per apartment).
+- **Persisted:** `calculation.break_even_revenue_eur` (informational only, never enforced),
+  `calculation.profitable_floor_eur`, `calculation.minimum_price_eur`.
+
+### 14.5 Final Rate (Guardrails: Hard/Soft Floor)
+
+- **Rule** (`layers/guardrails.py:apply_guardrails()`, unrounded comparisons):
+  ```
+  if minimum_price_eur <= market_reference_price_eur:
+      rule_applied = "market_competitive"; suggested_price_eur = market_reference_price_eur
+  elif minimum_price_eur <= property_reference_price_eur:
+      rule_applied = "minimum_floor"; suggested_price_eur = minimum_price_eur
+  else:
+      rule_applied = "minimum_profitable_price"; suggested_price_eur = minimum_price_eur
+  ```
+- **Hard vs Soft floor:** `floor_policy_for(target_margin)` in `engine.py` — `"hard"` iff
+  `target_margin == 0` (break-even == profitable floor, never crossed); `"soft"` whenever a margin
+  is targeted (relaxable down to break-even only via an authorised Manual Override, §14.9).
+- **Stage:** Stage B, per decision (final step of `decide_price()`).
+- **Persisted:** `output.suggested_price_eur` (this is the "Final Rate" published downstream, unless
+  overwritten by an active Manual Override in Stage C), `calculation.rule_applied`,
+  `calculation.floor_policy`.
+
+### 14.6 LOS Floor Matrix
+
+- **Formula:** `decide_price()` evaluated once per candidate stay length
+  `LOS_CANDIDATES = (1, 2, 3, 7, 14)`, varying only
+  `per_booking_cost_per_night_eur = per_booking_cost_eur / stay_length` — the fixed booking cost
+  gets diluted as nights grow, everything else (market side) stays constant across candidates.
+- **Code:** `engine.py:decide_price_los_matrix()`.
+- **Stage:** Stage B, per decision (called alongside the top-level `decide_price()` call in
+  `stage_price_decision.py`).
+- **Persisted:** `calculation.los_floor_matrix[]` (one entry per stay length).
+- **Minimum-stay recommendation** (not in the original glossary table, but derived from the
+  matrix): `engine.py:recommend_minimum_stay()` walks the matrix and returns the shortest stay
+  length whose `rule_applied != "minimum_profitable_price"`, i.e. the shortest stay that clears the
+  cost floor. Persisted in `calculation.minimum_stay_recommendation`.
+
+### 14.7 Booking Window (implemented, not yet documented above — Phase 22)
+
+Not one of the glossary's original 6 rungs, but a real, implemented layer that adjusts the
+Property Reference Price before Market:
+
+| Days to arrival | Tier | Adjustment |
+|---|---|---|
+| ≥ 45 | standard_window | 0% |
+| 15–44 | early_bird | −3% |
+| 3–14 | standard_window | 0% |
+| 1–2 | last_minute | −5% |
+| 0 | same_day | −8% |
+
+- **Code:** `layers/booking_window.py:booking_window_factor()` / `booking_window_component()`.
+- **Stage:** Stage B — `days_to_arrival = target_date - decided_at.date()` computed in
+  `stage_price_decision.py`, fed into `decide_price()` before the Market layer.
+- **Persisted:** folded into `calculation.property_reference_price_eur`; when non-zero, a
+  `rule_early_bird` / `rule_last_minute` / `rule_same_day` entry appears in
+  `calculation.decision_components`.
+
+### 14.8 Owner Contract (payout base / commission netting)
+
+- Each apartment's `owner_contracts.cost_definition_id` resolves, via the `cost_definitions`
+  broadcast, to a `rate` (commission %) and a `revenue_base` (one of 5: `total_revenue`,
+  `revenue_minus_ota`, `revenue_minus_ota_minus_cleaning`,
+  `revenue_minus_ota_minus_cleaning_minus_laundry`, `revenue_minus_all_booking_costs`).
+- That `revenue_base` determines `netting_eur` (§14.4) via `netted_revenue_base_amount()`.
+- **Code:** `stage_owner_contract_enrichment.py:OwnerContractEnrichmentFunction` (resolution),
+  `layers/commercial.py:netted_revenue_base_amount()` (the netting math).
+- **Stage:** Stage A2 (resolution, once per apartment config change) → consumed in Stage B (per
+  decision).
+- **Persisted:** `calculation.commission_pct`, `calculation.commission_base`; the netting effect
+  itself appears as a `revenue_base_netting` entry in `calculation.decision_components`.
+
+### 14.9 Manual Override (Guardrail exception)
+
+- **Formula:** `expected_loss_eur = max(0, minimum_price_eur - override_price_eur)`;
+  `effective_margin = override_price_eur / total_cost_eur - 1`. The override price fully replaces
+  `output.suggested_price_eur`.
+- **Code:** `stage_manual_override_enrichment.py:apply_manual_override()`.
+- **Stage:** Stage C — the only stage in the pipeline that runs **after** a price decision is
+  already computed (chained after Stage B), consuming the `manual_overrides` CDC topic.
+- **Persisted:** `calculation.manual_override` (price, reason, authorised_by, valid_until,
+  expected_loss_eur), `calculation.viability_status = "override_active"`,
+  `manual_override_applied` decision component.
+- Note: this makes the "not implemented" line in §11 above stale — Manual Override *is*
+  implemented (Phase 14). Channel gross-up (§8) is still genuinely not implemented: each channel
+  uses a hard-coded flat commission (`CHANNEL_COMMISSION_PCT` in `engine.py`:
+  airbnb 12%, booking 15%, vrbo 8%), not a real gross-up solved against a "same margin as direct"
+  target.
+
+### 14.10 Viability status (explainability layer on top of the ladder)
+
+- Priority-ordered classification combining `rule_applied`, `below_market_by`,
+  `recommended_min_stay`, whether any channel is `market_competitive`, an active override, and a
+  ≥30-day floor-breach streak (`floor_breach_days`, tracked in Flink keyed state per
+  apartment+night).
+- **Code:** `viability.py:classify_viability()`.
+- **Stage:** Stage B computes it with `manual_override_active=False` always; Stage C overwrites it
+  to `"override_active"` directly when an override actually applies (Stage B has no visibility into
+  overrides — they're resolved one stage later).
+- **Persisted:** `calculation.viability_status`, `calculation.floor_breach_days`.
+
+### 14.11 Concepts explicitly NOT implemented (confirmed in code, not just docs)
+
+- **Channel gross-up** (§8): `decide_price_by_channel()` exists and produces one candidate per
+  channel, but each candidate uses a flat hard-coded commission, not a solved gross-up targeting
+  equal margin across channels.
+- **Comp-set / real market data** (§12): `market.py` and `MarketSnapshot` carry `occupancy_rate` /
+  `sample_size`, but nothing in `pricing_formulas` reads them — Performance and Inventory layers
+  (`layers/performance.py`, `layers/inventory.py`) are permanent `1.0` stubs.
+- **dbt / transform:** no `.sql` model recomputes or overrides any of the above — confirmed via
+  `grep` across `transform/models/`; dbt only builds marts on top of the already-decided
+  `price_decision` records in Iceberg.
+
+---
+
 ## How this relates to the rest of the documentation
 
 - `docs/adr/ADR-0011-profitable-pricing-target-architecture.md`: the decision to adopt the

@@ -164,6 +164,43 @@ aws --endpoint-url=http://localhost:4566 --profile localstack s3 ls
 
 ---
 
+## CDC Configuration and Replication Reliability
+
+The pipeline runs a single Debezium PostgreSQL connector
+([`infra/debezium/postgres-connector.json`](infra/debezium/postgres-connector.json)) that captures
+9 tables via logical WAL replication (`pgoutput`), each routed to its own Kafka topic. There is no
+polling: every committed row change is streamed from the replication slot as it happens.
+
+| Setting | Why it exists |
+|---|---|
+| `snapshot.mode: initial` | Backfills existing rows once, on first connector start, then switches to pure streaming. |
+| `message.key.columns` | Overrides Debezium's default key (the primary key column) with `apartment_id`, so Kafka's partitioner actually groups records the way Flink's keyed state expects. Without it, every row is keyed by its own UUID and scatters randomly across partitions. |
+| `transforms.route*` (RegexRouter) | Renames each table's topic from Debezium's default (`<prefix>.<schema>.<table>`) to the project's own topic names (`payment-events.v1`, etc.). |
+| `decimal.handling.mode: double` | Emits `NUMERIC` columns as plain JSON numbers instead of Debezium's precision-preserving `Decimal` logical type, which only schema-aware consumers (Avro/Schema Registry) can decode. |
+| Custom `DateStringConverter` (Java, `infra/debezium/custom-converters/`) | Debezium's `DATE` columns use its own `io.debezium.time.Date` logical type (an epoch-day integer) with no built-in Kafka Connect transform able to convert it. This connector plugin renders it as a plain ISO date string instead. |
+| `errors.tolerance: none` | Fails loudly on any error instead of silently dropping or skipping records. |
+| Replication slot lag (`pg_wal_lsn_diff`) | The actual health signal for the connector. Kafka Connect's `RUNNING` status only reflects the control plane; it says nothing about whether records are actually being delivered. |
+
+### What can break replication
+
+These are real incidents hit and documented while building this project (full write-ups in
+[`error-handling/`](error-handling/)):
+
+| Failure | Root cause | Symptom |
+|---|---|---|
+| Wrong topic name | Debezium's default topic naming (`<prefix>.<schema>.<table>`) is never a project's chosen topic name unless a `RegexRouter` is configured. | Connector reports `RUNNING`, target topic stays at offset 0. |
+| One bad topic stalls every topic | A Kafka producer is shared across every topic a connector writes to (business topics, heartbeat topic, dead letter topic). If any one of them cannot be resolved (does not exist, `auto.create.topics.enable=false`), the producer's metadata never becomes ready and delivery to every topic, including healthy ones, stalls. | Connector still `RUNNING`; replication slot lag grows unbounded while topic offsets freeze. |
+| Default key breaks partition affinity | Without `message.key.columns`, Debezium keys records by the table's primary key, not the business column downstream consumers need for partition affinity. | Kafka's hash partitioner scatters one apartment's events across every partition, breaking Flink's per-apartment ordering guarantee. |
+| Encoding mismatch with the data contract | Debezium's default `DATE`/`NUMERIC` wire encodings are designed for schema-aware consumers, not plain JSON. | Captured messages carry epoch-day integers or base64 byte strings instead of the ISO strings and plain numbers the event schema requires. |
+| Adding a table to a running connector skips its snapshot | `snapshot.mode: initial` only snapshots on a connector's first-ever start. Once a committed offset exists, adding a new table to `table.include.list` only captures its future changes, never a backfill of its existing rows. | The new topic stays at offset 0 until a real write happens to that table again. |
+
+The common thread across every incident: a `RUNNING` connector status is a control plane signal
+only. Verifying replication health always requires a data plane check, comparing the replication
+slot's confirmed LSN against the current WAL position, or consuming the actual topic, rather than
+trusting the REST API's reported state.
+
+---
+
 ## Getting Started
 
 ### Prerequisites
