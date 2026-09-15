@@ -1,13 +1,17 @@
-# Technical definitions: Debezium CDC configuration
+# Technical definitions: CDC and stream processing
 
-**Who this is for:** anyone who needs to understand not just *what* the Debezium connector
-(`infra/debezium/postgres-connector.json`) is configured to do, but *why* each setting has the
-value it has, what the alternatives were, and what was traded away by picking it.
+**Who this is for:** anyone who needs to understand not just *what* this project's Debezium
+connector (`infra/debezium/postgres-connector.json`) and Flink job (`streaming/flink-jobs/`) are
+configured to do, but *why* each setting or design pattern has the shape it has, what the
+alternatives were, and what was traded away by picking it.
 
-**What this is not:** it is not a Debezium reference manual. Only the settings this project
-actually uses are covered, each grounded in a concrete trade-off made for this pipeline, several
-of them discovered the hard way (see [`error-handling/`](../error-handling/) for the full
-incident write-ups referenced below).
+**What this is not:** it is not a Debezium or Flink reference manual. Only the settings and
+patterns this project actually uses are covered, each grounded in a concrete trade-off made for
+this pipeline, several of them discovered the hard way (see [`error-handling/`](../error-handling/)
+for the full incident write-ups referenced below).
+
+**Sections:** §1-10 cover Debezium CDC configuration; §11-14 cover Flink/PyFlink stream processing
+concepts used in `streaming/flink-jobs/`.
 
 ---
 
@@ -205,11 +209,106 @@ expose to Prometheus/Grafana with a lag threshold alert.
 
 ---
 
+## 11. `MapState`
+
+**Definition:** a Flink managed state primitive (`MapState<K, V>`) that behaves like a
+dictionary/hash map, but whose lifetime is tied to the operator's lifecycle and is automatically
+included in checkpoints. Unlike a plain Python variable inside a function, `MapState` survives job
+failures and restarts because Flink persists it (here, via `EmbeddedRocksDBStateBackend`).
+
+**How it is declared:** via a `MapStateDescriptor` (a name plus key/value types), accessed with
+`runtime_context.get_map_state(descriptor)` inside an operator's `open()` method.
+
+**Usage in this project:** each `keyBy()` key (a market segment, or `apartment_id|target_date` for
+the floor-breach streak) gets its own isolated `MapState`. Real examples in
+`stage_price_decision.py`: `self.apartments` (every known apartment in a segment), `self.nights`
+(every known night in a segment), `self.floor_breach_since` (per-(apartment, night) streak of days
+below the profitability floor). This is the literal mechanism that makes fan-out possible: when a
+new cost update arrives, the code iterates `dict(self.nights.items())` to reprice every known night
+for that apartment.
+
+---
+
+## 12. Broadcast State Pattern
+
+**Definition:** a Flink pattern for distributing an identical copy of a reference/configuration
+stream to every parallel instance of a keyed operator, without that data going through the
+operator's normal `keyBy()` partitioning. Used when a low-throughput, wide-reach input
+(configuration, rules, catalogs) needs to be available alongside every event of a high-throughput
+keyed stream, without repartitioning it by the main stream's key.
+
+**Mechanics:** a normal `DataStream` becomes a `BroadcastStream` via `.broadcast(descriptor1,
+descriptor2, ...)`, then is `.connect()`-ed to a keyed stream. Every parallel subtask receives a
+**full copy** of each broadcast element, not a partition of it.
+
+**Usage in this project:** `apartment_market_segments` and `pricing_strategies` (Postgres CDC) are
+unioned (`.union()`) and broadcast (`job.py:268`,
+`.broadcast(SEGMENT_BROADCAST_DESCRIPTOR, ...)`) into Stage A, so every subtask processing costs
+for any apartment has local access to the segment/pricing-strategy configuration for **every**
+apartment, without repartitioning that configuration by `apartment_id`.
+
+**What it guarantees, and what it does not (the source of the Stage A startup race, see
+`error-handling/flink-operational-checklist.md` item 2):** Flink guarantees every subtask sees
+broadcast elements in the same relative order as every other subtask (broadcast state stays
+consistent across parallelism), but gives **no guarantee** about the relative timing between an
+element arriving on the broadcast side and one arriving on the keyed side at the same wall-clock
+moment. This is why Stage A accepts, as a known and unfixed startup race, that an apartment's first
+cost event can arrive before its segment configuration does (log-and-skip, no buffering) — not a
+bug, a fundamental property of the pattern.
+
+---
+
+## 13. `KeyedBroadcastProcessFunction`
+
+**Definition:** the Flink base class that combines both of the above into a single operator: it
+processes a normal keyed stream (with its own per-key `MapState`) **and** a connected
+`BroadcastStream`, within the same operator. It exposes two separate callbacks:
+
+- `process_element(value, ctx, out)`: handles an element from the **keyed** side (here, a
+  `CostAggregate` under construction).
+- `process_broadcast_element(value, ctx)`: handles an element from the **broadcast** side (here, a
+  segment or pricing-strategy update), and is where broadcast state is written via
+  `ctx.get_broadcast_state(descriptor).put(...)`.
+
+**Usage in this project:** `CostEnrichmentFunction`
+(`streaming/flink-jobs/src/flink_jobs/stage_cost_enrichment.py`) is exactly this — Stage A is a
+`KeyedBroadcastProcessFunction` that, for every incoming cost line (keyed side), reads the most
+recently known pricing profile/strategy for that apartment from broadcast state
+(`ctx.get_broadcast_state(SEGMENT_BROADCAST_DESCRIPTOR).get(apartment_id)`) and enriches the cost
+with it before emitting.
+
+---
+
+## 14. Throttling (DynamoDB sink)
+
+**Definition:** not a Flink concept itself, but a **DynamoDB** one — the write/read capacity limit
+(provisioned, or the on-demand mode's own internal rate limit) that, once exceeded, makes DynamoDB
+reject requests with a `ProvisionedThroughputExceededException`-shaped error instead of accepting
+them.
+
+**Why it shows up as a Flink design risk specifically:** Stage B's fan-out multiplies write volume
+— a single market-price update for one date can emit up to ~6 `price_decision` writes (one per
+apartment in that segment), and a single cost update can emit up to ~60 (one per known future
+date). Under `EXACTLY_ONCE` checkpointing, if that write burst saturates DynamoDB's capacity, a
+defined retry/backoff story is needed (flagged as **not yet formally implemented** at the time
+`error-handling/anticipated-risks-flink-processing.md` Risk 4 was written).
+
+**Why it is simpler here than Kinesis's equivalent case (Phase 3):** every write is idempotent by
+`decision_id`, so a retry after throttling is **safe by construction** (plain at-least-once, no
+caveats) — unlike `market-ingestor`'s `put_records` retries onto Kinesis, which needed the more
+careful Kleppmann-style at-least-once/duplicate reasoning already covered by
+`docs/profitable-pricing-glossary.md`-adjacent design discussions.
+
+---
+
 ## How this relates to the rest of the documentation
 
 - [`README.md`](../README.md) `CDC Configuration and Replication Reliability`: the summarized
-  version of this document, aimed at a first-time reader of the repo.
-- [`error-handling/`](../error-handling/): the full incident write-ups this document draws its
-  trade-offs from, each with root cause, how it was found, and how it was fixed.
+  version of this document's Debezium sections, aimed at a first-time reader of the repo.
+- [`error-handling/`](../error-handling/): the full incident write-ups (real and, for Flink,
+  prospective) this document draws its trade-offs and definitions from.
 - [`infra/debezium/postgres-connector.json`](../infra/debezium/postgres-connector.json): the live
-  configuration every setting above refers to.
+  configuration every Debezium setting above refers to.
+- [`streaming/flink-jobs/src/flink_jobs/stage_cost_enrichment.py`](../streaming/flink-jobs/src/flink_jobs/stage_cost_enrichment.py)
+  and [`stage_price_decision.py`](../streaming/flink-jobs/src/flink_jobs/stage_price_decision.py):
+  the live code every Flink concept above refers to.
