@@ -9,12 +9,14 @@ dependencies = [
     "shared-schemas",
     "common",
     "pricing-formulas",
+    "flink-shared",
 ]
 
 [tool.uv.sources]
 shared-schemas = { workspace = true }
 common = { workspace = true }
 pricing-formulas = { workspace = true }
+flink-shared = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

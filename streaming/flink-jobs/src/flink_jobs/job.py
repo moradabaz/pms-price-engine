@@ -1,7 +1,7 @@
 import json
 from datetime import date, datetime
 
-from pyflink.common import Configuration
+from flink_shared import configure_checkpointing
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
@@ -59,23 +59,6 @@ from flink_jobs.stage_owner_contract_enrichment import (
     OwnerContractEnrichmentFunction,
 )
 from flink_jobs.stage_price_decision import DATA_STALE_TAG, PriceDecisionFunction
-
-
-def _configure_checkpointing(env, settings: FlinkJobSettings) -> None:
-    """Enables EXACTLY_ONCE checkpointing on RocksDB + S3."""
-    env.enable_checkpointing(settings.checkpoint_interval_ms)
-    config = Configuration()
-    config.set_string("state.backend.type", "rocksdb")
-    config.set_string("state.backend.incremental", "true")
-    config.set_string("state.checkpoints.dir", settings.checkpoint_storage_path)
-    config.set_string("execution.checkpointing.mode", "EXACTLY_ONCE")
-    if settings.s3_endpoint_url:
-        config.set_string("s3.endpoint", settings.s3_endpoint_url)
-        config.set_string("s3.path.style.access", "true")
-        config.set_string("s3.access-key", "test")
-        config.set_string("s3.secret-key", "test")
-    env.configure(config)
-
 
 # Phase 8 (ADR-0011 backlog #6): defensive-default pattern for the four
 # Bonus/Malus columns added after this topic already had history.
@@ -206,7 +189,12 @@ def build_job(env, settings: FlinkJobSettings) -> None:
     """Wires sources, Stage A/B, and the DynamoDB sink onto env."""
     env.set_max_parallelism(settings.max_parallelism)
     env.set_parallelism(settings.parallelism)
-    _configure_checkpointing(env, settings)
+    configure_checkpointing(
+        env,
+        settings.checkpoint_interval_ms,
+        settings.checkpoint_storage_path,
+        settings.s3_endpoint_url,
+    )
 
     payment_source = (
         KafkaSource.builder()
