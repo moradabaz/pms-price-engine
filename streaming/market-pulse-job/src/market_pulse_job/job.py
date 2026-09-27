@@ -2,15 +2,25 @@ import logging
 
 from flink_shared import configure_checkpointing
 from pyflink.common.serialization import SimpleStringSchema
-from pyflink.common.time import Duration
+from pyflink.common.time import Duration, Time
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaSource,
 )
+from pyflink.datastream.functions import SinkFunction
+from pyflink.datastream.window import TumblingEventTimeWindows
 from shared_schemas.booking import Booking
 from shared_schemas.market_price import MarketPrice
 
+from market_pulse_job.market_pulse import (
+    ACC_TYPE,
+    MarketPulseAggregateFunction,
+    MarketPulseSinkFunction,
+    MarketPulseWindowFunction,
+    is_blended_snapshot,
+    segment_key,
+)
 from market_pulse_job.settings import MarketPulseJobSettings
 
 # Plain stdlib logging, not common.get_logger() (structlog): this module's
@@ -76,11 +86,28 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         .set_parallelism(1)
     )
 
-    market_stream.map(
-        lambda event: logger.info(
-            "market_event_received market_area=%s", event.market_area.city
+    market_pulse_writer = MarketPulseSinkFunction(
+        table_name=settings.market_pulse_table,
+        endpoint_url=settings.dynamodb_endpoint_url,
+        region_name=settings.aws_region,
+    )
+    (
+        market_stream.filter(is_blended_snapshot)
+        .key_by(segment_key)
+        .window(TumblingEventTimeWindows.of(Time.minutes(settings.market_pulse_window_minutes)))
+        .aggregate(
+            MarketPulseAggregateFunction(),
+            MarketPulseWindowFunction(),
+            accumulator_type=ACC_TYPE,
+        )
+        .map(market_pulse_writer)
+        .add_sink(
+            SinkFunction(
+                "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
+            )
         )
     )
+
     booking_stream.map(
         lambda event: logger.info(
             "booking_event_received booking_id=%s", event.booking_id
