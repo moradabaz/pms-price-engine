@@ -76,10 +76,10 @@ awslocal dynamodb create-table \
   --table-name bookings_created_5min \
   --attribute-definitions \
       AttributeName=apartment_id,AttributeType=S \
-      AttributeName=booking_id,AttributeType=S \
+      AttributeName=window_start,AttributeType=S \
   --key-schema \
       AttributeName=apartment_id,KeyType=HASH \
-      AttributeName=booking_id,KeyType=RANGE \
+      AttributeName=window_start,KeyType=RANGE \
   --billing-mode PAY_PER_REQUEST \
   --region "$REGION"
 

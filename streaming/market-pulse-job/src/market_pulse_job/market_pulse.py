@@ -23,7 +23,7 @@ ACC_TYPE = Types.TUPLE(
 def is_blended_snapshot(event: MarketPrice) -> bool:
     """True for the top-level, per-segment snapshot — excludes the
     per-channel snapshots Phase 16 also publishes (spec 26 §4.1, AC-02)."""
-    return event.market_context.platform is not None
+    return event.market_context.platform is None
 
 
 def segment_key(event: MarketPrice) -> str:
@@ -43,7 +43,7 @@ class MarketPulseAggregateFunction(AggregateFunction):
     high-confidence one."""
 
     def create_accumulator(self) -> tuple[float, float, float, float, int]:
-        return (0.0, 0.0, -float("inf"), float("inf"), 0)
+        return (0.0, 0.0, float("inf"), -float("inf"), 0)
 
     def add(
         self, value: MarketPrice, accumulator: tuple[float, float, float, float, int]
