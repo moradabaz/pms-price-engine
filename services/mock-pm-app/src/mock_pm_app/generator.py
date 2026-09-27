@@ -120,6 +120,33 @@ def insert_one_booking(
     )
 
 
+def flip_one_confirmed_to_cancelled(conn: Any) -> None:
+    """Cancels one random still-upcoming confirmed booking. Phase 26: the
+    only live source of a real UPDATE on bookings.status — without this,
+    booking-events.v1 never carries a cancellation with a real updated_at,
+    only the seed's already-cancelled rows (updated_at NULL, since they were
+    INSERTed as cancelled, never UPDATEd)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT booking_id FROM bookings
+            WHERE status = 'confirmed' AND check_in > CURRENT_DATE
+            ORDER BY random()
+            LIMIT 1
+            """
+        )
+        row = cur.fetchone()
+        if row is None:
+            return
+        (booking_id,) = row
+        cur.execute(
+            "UPDATE bookings SET status = 'cancelled' WHERE booking_id = %s",
+            (booking_id,),
+        )
+    conn.commit()
+    logger.info("cancelled_booking", booking_id=str(booking_id))
+
+
 def flip_one_pending_to_paid(conn: Any) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -158,6 +185,10 @@ def run_forever(
     # Phase 18: its own timer, same insert-interval range as payment lines
     # but independent so the two don't collide/starve each other.
     next_booking_insert_at = time.monotonic()
+    # Phase 26: its own timer too, independent of the two above.
+    next_cancellation_check_at = (
+        time.monotonic() + settings.cancellation_check_interval_seconds
+    )
 
     while True:
         now = time.monotonic()
@@ -181,5 +212,11 @@ def run_forever(
         if now >= next_update_check_at:
             flip_one_pending_to_paid(conn)
             next_update_check_at = now + settings.update_check_interval_seconds
+
+        if now >= next_cancellation_check_at:
+            flip_one_confirmed_to_cancelled(conn)
+            next_cancellation_check_at = (
+                now + settings.cancellation_check_interval_seconds
+            )
 
         time.sleep(1)
