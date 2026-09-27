@@ -7,6 +7,8 @@ members = [
     "services/lakehouse-maintenance",
     "services/dbt-runner",
     "streaming/flink-jobs",
+    "streaming/market-pulse-job",
+    "libs/flink-shared",
     "dashboard",
     "libs/shared-schemas",
     "libs/common",
