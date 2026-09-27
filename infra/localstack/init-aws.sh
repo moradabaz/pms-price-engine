@@ -57,6 +57,45 @@ awslocal dynamodb create-table \
   --billing-mode PAY_PER_REQUEST \
   --region "$REGION"
 
+echo ">> [LocalStack] Creating DynamoDB table: market_pulse_5min (spec 26 §5.2)"
+awslocal dynamodb describe-table --table-name market_pulse_5min --region "$REGION" >/dev/null 2>&1 || \
+awslocal dynamodb create-table \
+  --table-name market_pulse_5min \
+  --attribute-definitions \
+      AttributeName=segment_key,AttributeType=S \
+      AttributeName=window_start,AttributeType=S \
+  --key-schema \
+      AttributeName=segment_key,KeyType=HASH \
+      AttributeName=window_start,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --region "$REGION"
+
+echo ">> [LocalStack] Creating DynamoDB table: bookings_created_5min (spec 26 §5.2)"
+awslocal dynamodb describe-table --table-name bookings_created_5min --region "$REGION" >/dev/null 2>&1 || \
+awslocal dynamodb create-table \
+  --table-name bookings_created_5min \
+  --attribute-definitions \
+      AttributeName=apartment_id,AttributeType=S \
+      AttributeName=booking_id,AttributeType=S \
+  --key-schema \
+      AttributeName=apartment_id,KeyType=HASH \
+      AttributeName=booking_id,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --region "$REGION"
+
+echo ">> [LocalStack] Creating DynamoDB table: bookings_cancelled_5min (spec 26 §5.2)"
+awslocal dynamodb describe-table --table-name bookings_cancelled_5min --region "$REGION" >/dev/null 2>&1 || \
+awslocal dynamodb create-table \
+  --table-name bookings_cancelled_5min \
+  --attribute-definitions \
+      AttributeName=apartment_id,AttributeType=S \
+      AttributeName=window_start,AttributeType=S \
+  --key-schema \
+      AttributeName=apartment_id,KeyType=HASH \
+      AttributeName=window_start,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --region "$REGION"
+
 echo ">> [LocalStack] Bootstrap complete."
 # No Glue database step here — confirmed 2026-08-04, AWS Glue is Ultimate-tier
 # only in LocalStack (https://docs.localstack.cloud/references/coverage/coverage_glue/),
