@@ -14,9 +14,7 @@ from lakehouse_consumer.settings import ConsumerSettings
 
 def ensure_table(catalog: Catalog, settings: ConsumerSettings) -> Table:
     """Creates the raw table (and its Glue database) if this is the first
-    run, otherwise loads the existing one. Partitioned by days(decided_at)
-    (spec 05 §4/§10, pre-spec Decision B) — Iceberg's hidden partitioning,
-    no partition value computed by this consumer.
+    run, otherwise loads the existing one.
 
     Self-healing schema migration (Phase 9, ADR-0011 backlog #1): on an
     existing table, create_table_if_not_exists loads it as-is and ignores
