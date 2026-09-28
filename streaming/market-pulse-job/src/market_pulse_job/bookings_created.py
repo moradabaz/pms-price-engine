@@ -1,4 +1,5 @@
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
@@ -34,7 +35,7 @@ class BookingCreatedDedupFunction(KeyedProcessFunction):
         self.seen_state = runtime_context.get_state(descriptor)
 
     def process_element(self, value: Booking, ctx: "KeyedProcessFunction.Context"):
-        if not self.seen_state.value():
+        if self.seen_state.value():
             return
         self.seen_state.update(True)
         yield value
@@ -58,8 +59,8 @@ class BookingCreatedWindowFunction(ProcessWindowFunction):
         window = context.window()
         yield {
             "apartment_id": key,
-            "window_start": window.start,
-            "window_end": window.end,
+            "window_start": datetime.fromtimestamp(window.start / 1000, tz=UTC).isoformat(),
+            "window_end": datetime.fromtimestamp(window.end / 1000, tz=UTC).isoformat(),
             "booking_count": len(bookings),
         }
 

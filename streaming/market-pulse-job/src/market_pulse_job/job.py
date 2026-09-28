@@ -121,9 +121,9 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         region_name=settings.aws_region,
     )
     (
-        booking_stream.key_by(apartment_key)
+        booking_stream.key_by(booking_id_key)
         .process(BookingCreatedDedupFunction())
-        .key_by(booking_id_key)
+        .key_by(apartment_key)
         .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
         .process(BookingCreatedWindowFunction())
         .map(booking_created_writer)
