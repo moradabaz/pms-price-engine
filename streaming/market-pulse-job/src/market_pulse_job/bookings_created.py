@@ -161,7 +161,7 @@ class BookingProfitEnrichmentFunction(AsyncFunction):
         p = float(cost_inputs["p"]["N"])
         nights = (booking.check_out - booking.check_in).days
         total_cost_eur = fixed_and_allocated_costs_eur * nights + per_booking_cost_eur
-        return booking.revenue_eur * (1 - p) + total_cost_eur
+        return booking.revenue_eur * (1 - p) - total_cost_eur
 
 
 class BookingCreatedWindowFunction(ProcessWindowFunction):

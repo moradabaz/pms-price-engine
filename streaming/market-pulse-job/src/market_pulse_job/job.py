@@ -145,8 +145,8 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
             endpoint_url=settings.dynamodb_endpoint_url,
             region_name=settings.aws_region,
         ),
-        settings.price_decision_lookup_capacity,
         Time.seconds(settings.price_decision_lookup_timeout_seconds),
+        settings.price_decision_lookup_capacity,
     )
     (
         booking_created_enriched_stream.key_by(enriched_apartment_key)
