@@ -13,6 +13,14 @@ from pyflink.datastream.window import TumblingEventTimeWindows
 from shared_schemas.booking import Booking
 from shared_schemas.market_price import MarketPrice
 
+from market_pulse_job.bookings_cancelled import (
+    BookingCancelledDedupFunction,
+    BookingCancelledSinkFunction,
+    BookingCancelledWindowFunction,
+    is_cancelled,
+)
+from market_pulse_job.bookings_cancelled import apartment_key as cancelled_apartment_key
+from market_pulse_job.bookings_cancelled import booking_id_key as cancelled_booking_id_key
 from market_pulse_job.bookings_created import (
     BookingCreatedDedupFunction,
     BookingCreatedSinkFunction,
@@ -127,6 +135,30 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
         .process(BookingCreatedWindowFunction())
         .map(booking_created_writer)
+        .add_sink(
+            SinkFunction(
+                "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
+            )
+        )
+    )
+
+    # Bloque 4: same booking_stream, filtered down to cancellations only,
+    # with its own independent dedup/key_by/window chain (spec §4.4b) — see
+    # bookings_cancelled.py's module docstrings for why dedupCreated and
+    # dedupCancelled cannot share one ValueState.
+    booking_cancelled_writer = BookingCancelledSinkFunction(
+        table_name=settings.bookings_cancelled_table,
+        endpoint_url=settings.dynamodb_endpoint_url,
+        region_name=settings.aws_region,
+    )
+    (
+        booking_stream.filter(is_cancelled)
+        .key_by(cancelled_booking_id_key)
+        .process(BookingCancelledDedupFunction())
+        .key_by(cancelled_apartment_key)
+        .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
+        .process(BookingCancelledWindowFunction())
+        .map(booking_cancelled_writer)
         .add_sink(
             SinkFunction(
                 "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
