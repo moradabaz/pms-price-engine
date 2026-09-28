@@ -158,6 +158,7 @@ services:
       # (spec 26 §2) — a second, independent job, manually submitted the
       # same way (docs/manual/MANUAL.md), reusing this container's env.
       MARKET_PULSE_JOB_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MARKET_PULSE_JOB_DYNAMODB_ENDPOINT_URL: http://localstack:4566
       MARKET_PULSE_JOB_S3_ENDPOINT_URL: http://localstack:4566
       MARKET_PULSE_JOB_CHECKPOINT_STORAGE_PATH: s3://pms-iceberg/market-pulse-checkpoints
       AWS_ACCESS_KEY_ID: test
