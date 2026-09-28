@@ -8,6 +8,7 @@ from typing import Any
 import boto3
 from pyflink.common.time import Time
 from pyflink.common.typeinfo import Types
+from pyflink.datastream import OutputTag
 from pyflink.datastream.functions import (
     AsyncFunction,
     KeyedProcessFunction,
@@ -21,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 # window (5min) + allowed lateness (spec 26 §4.4).
 DEDUP_TTL_MINUTES = 6
+
+# spec §4.4/AC-04/AC-05: an enriched booking arriving more than
+# watermark_out_of_orderness_seconds late but within this extra buffer
+# re-fires its (already-emitted) window instead of being dropped; a booking
+# later than even this goes to LATE_BOOKING_CREATED_TAG's side output
+# instead of vanishing silently.
+ALLOWED_LATENESS_MS = 60_000
+LATE_BOOKING_CREATED_TAG = OutputTag(
+    "late-bookings-created", Types.PICKLED_BYTE_ARRAY()
+)
 
 
 class BookingCreatedDedupFunction(KeyedProcessFunction):

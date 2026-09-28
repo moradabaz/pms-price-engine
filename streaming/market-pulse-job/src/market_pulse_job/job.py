@@ -15,6 +15,10 @@ from shared_schemas.booking import Booking
 from shared_schemas.market_price import MarketPrice
 
 from market_pulse_job.bookings_cancelled import (
+    ALLOWED_LATENESS_MS as CANCELLED_ALLOWED_LATENESS_MS,
+)
+from market_pulse_job.bookings_cancelled import (
+    LATE_BOOKING_CANCELLED_TAG,
     BookingCancelledDedupFunction,
     BookingCancelledSinkFunction,
     BookingCancelledWindowFunction,
@@ -23,6 +27,10 @@ from market_pulse_job.bookings_cancelled import (
 from market_pulse_job.bookings_cancelled import apartment_key as cancelled_apartment_key
 from market_pulse_job.bookings_cancelled import booking_id_key as cancelled_booking_id_key
 from market_pulse_job.bookings_created import (
+    ALLOWED_LATENESS_MS as CREATED_ALLOWED_LATENESS_MS,
+)
+from market_pulse_job.bookings_created import (
+    LATE_BOOKING_CREATED_TAG,
     BookingCreatedDedupFunction,
     BookingCreatedSinkFunction,
     BookingCreatedWindowFunction,
@@ -148,15 +156,30 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         Time.seconds(settings.price_decision_lookup_timeout_seconds),
         settings.price_decision_lookup_capacity,
     )
-    (
+    booking_created_windowed = (
         booking_created_enriched_stream.key_by(enriched_apartment_key)
         .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
+        .allowed_lateness(CREATED_ALLOWED_LATENESS_MS)
+        .side_output_late_data(LATE_BOOKING_CREATED_TAG)
         .process(BookingCreatedWindowFunction())
-        .map(booking_created_writer)
-        .add_sink(
+    )
+    # AC-04: a late-but-within-allowed-lateness event re-fires this same
+    # window's already-emitted row — put_item overwrites by (apartment_id,
+    # window_start), so the later firing simply replaces the earlier one.
+    (
+        booking_created_windowed.map(booking_created_writer).add_sink(
             SinkFunction(
                 "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
             )
+        )
+    )
+    # AC-05: anything later than even that goes here, logged, never silently
+    # dropped and never touching an already-emitted window.
+    booking_created_windowed.get_side_output(LATE_BOOKING_CREATED_TAG).map(
+        lambda late: logger.warning(
+            "late_booking_created_dropped apartment_id=%s booking_id=%s",
+            late["booking"].apartment_id,
+            late["booking"].booking_id,
         )
     )
 
@@ -169,17 +192,27 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         endpoint_url=settings.dynamodb_endpoint_url,
         region_name=settings.aws_region,
     )
-    (
+    booking_cancelled_windowed = (
         booking_stream.filter(is_cancelled)
         .key_by(cancelled_booking_id_key)
         .process(BookingCancelledDedupFunction())
         .key_by(cancelled_apartment_key)
         .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
+        .allowed_lateness(CANCELLED_ALLOWED_LATENESS_MS)
+        .side_output_late_data(LATE_BOOKING_CANCELLED_TAG)
         .process(BookingCancelledWindowFunction())
-        .map(booking_cancelled_writer)
-        .add_sink(
+    )
+    (
+        booking_cancelled_windowed.map(booking_cancelled_writer).add_sink(
             SinkFunction(
                 "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
             )
+        )
+    )
+    booking_cancelled_windowed.get_side_output(LATE_BOOKING_CANCELLED_TAG).map(
+        lambda late: logger.warning(
+            "late_booking_cancelled_dropped apartment_id=%s booking_id=%s",
+            late.apartment_id,
+            late.booking_id,
         )
     )

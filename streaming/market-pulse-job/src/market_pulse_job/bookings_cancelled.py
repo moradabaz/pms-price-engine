@@ -5,6 +5,7 @@ from typing import Any
 import boto3
 from pyflink.common.time import Time
 from pyflink.common.typeinfo import Types
+from pyflink.datastream import OutputTag
 from pyflink.datastream.functions import (
     KeyedProcessFunction,
     MapFunction,
@@ -18,6 +19,13 @@ from shared_schemas.booking import Booking
 # because the two dedup functions are deliberately independent (see
 # BookingCancelledDedupFunction's docstring below).
 DEDUP_TTL_MINUTES = 6
+
+# Same AC-04/AC-05 guarantee as bookings_created.py, its own tag/constant
+# since this window has its own independent lifecycle.
+ALLOWED_LATENESS_MS = 60_000
+LATE_BOOKING_CANCELLED_TAG = OutputTag(
+    "late-bookings-cancelled", Types.PICKLED_BYTE_ARRAY()
+)
 
 
 def is_cancelled(booking: Booking) -> bool:
