@@ -8,6 +8,7 @@ from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaSource,
 )
+from pyflink.datastream import AsyncDataStream
 from pyflink.datastream.functions import SinkFunction
 from pyflink.datastream.window import TumblingEventTimeWindows
 from shared_schemas.booking import Booking
@@ -25,8 +26,9 @@ from market_pulse_job.bookings_created import (
     BookingCreatedDedupFunction,
     BookingCreatedSinkFunction,
     BookingCreatedWindowFunction,
-    apartment_key,
+    BookingProfitEnrichmentFunction,
     booking_id_key,
+    enriched_apartment_key,
 )
 from market_pulse_job.market_pulse import (
     ACC_TYPE,
@@ -128,10 +130,26 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         endpoint_url=settings.dynamodb_endpoint_url,
         region_name=settings.aws_region,
     )
+    # Bloque 5: dedup --> asyncEnrich --> createdWin (spec §2). The dedup
+    # stream (keyed by booking_id) feeds AsyncDataStream.unordered_wait,
+    # which calls BookingProfitEnrichmentFunction.async_invoke() once per
+    # deduplicated booking; only its output is re-keyed by apartment_id and
+    # windowed, so the window function never sees an un-enriched Booking.
+    booking_created_dedup_stream = booking_stream.key_by(booking_id_key).process(
+        BookingCreatedDedupFunction()
+    )
+    booking_created_enriched_stream = AsyncDataStream.unordered_wait(
+        booking_created_dedup_stream,
+        BookingProfitEnrichmentFunction(
+            table_name=settings.price_decision_table,
+            endpoint_url=settings.dynamodb_endpoint_url,
+            region_name=settings.aws_region,
+        ),
+        settings.price_decision_lookup_capacity,
+        Time.seconds(settings.price_decision_lookup_timeout_seconds),
+    )
     (
-        booking_stream.key_by(booking_id_key)
-        .process(BookingCreatedDedupFunction())
-        .key_by(apartment_key)
+        booking_created_enriched_stream.key_by(enriched_apartment_key)
         .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
         .process(BookingCreatedWindowFunction())
         .map(booking_created_writer)

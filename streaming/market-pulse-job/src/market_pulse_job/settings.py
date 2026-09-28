@@ -23,6 +23,12 @@ class MarketPulseJobSettings(BaseSettings):
     # Bloque 3 — bookings created window size (spec §4.2).
     bookings_window_minutes: int = 5
 
+    # Bloque 5 — Async I/O profit enrichment (spec §4.5). Reads the existing
+    # price_decision table, does not write to it.
+    price_decision_table: str = "price_decision"
+    price_decision_lookup_timeout_seconds: int = 5
+    price_decision_lookup_capacity: int = 100
+
     # Global default (Bloque 0, tarea 2). booking-events.v1 overrides this
     # to 1 on its own operator (spec §3.1) — only 1 real Kafka partition.
     parallelism: int = 4

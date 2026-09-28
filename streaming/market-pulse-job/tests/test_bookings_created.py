@@ -4,8 +4,8 @@ from uuid import uuid4
 
 from market_pulse_job.bookings_created import (
     BookingCreatedDedupFunction,
-    apartment_key,
     booking_id_key,
+    enriched_apartment_key,
 )
 from shared_schemas.booking import Booking
 
@@ -29,9 +29,10 @@ def test_booking_id_key_uses_booking_id():
     assert booking_id_key(booking) == str(booking.booking_id)
 
 
-def test_apartment_key_uses_apartment_id():
+def test_enriched_apartment_key_uses_apartment_id():
     booking = _booking(apartment_id="apt-42")
-    assert apartment_key(booking) == "apt-42"
+    enriched = {"booking": booking, "profit_eur": None}
+    assert enriched_apartment_key(enriched) == "apt-42"
 
 
 def _dedup_fn_with_state(initial_seen: bool) -> tuple[BookingCreatedDedupFunction, MagicMock]:
