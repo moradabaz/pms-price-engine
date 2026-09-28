@@ -139,7 +139,7 @@ class BookingCancelledSinkFunction(MapFunction):
             "apartment_id": {"S": value["apartment_id"]},
             "window_start": {"S": value["window_start"]},
             "window_end": {"S": value["window_end"]},
-            "cancelled_count": {"N": str(value["cancelled_count"] + 1)},
+            "cancelled_count": {"N": str(value["cancelled_count"])},
         }
         attempt = 0
         while True:
