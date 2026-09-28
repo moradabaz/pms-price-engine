@@ -13,6 +13,13 @@ from pyflink.datastream.window import TumblingEventTimeWindows
 from shared_schemas.booking import Booking
 from shared_schemas.market_price import MarketPrice
 
+from market_pulse_job.bookings_created import (
+    BookingCreatedDedupFunction,
+    BookingCreatedSinkFunction,
+    BookingCreatedWindowFunction,
+    apartment_key,
+    booking_id_key,
+)
 from market_pulse_job.market_pulse import (
     ACC_TYPE,
     MarketPulseAggregateFunction,
@@ -108,8 +115,21 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         )
     )
 
-    booking_stream.map(
-        lambda event: logger.info(
-            "booking_event_received booking_id=%s", event.booking_id
+    booking_created_writer = BookingCreatedSinkFunction(
+        table_name=settings.bookings_created_table,
+        endpoint_url=settings.dynamodb_endpoint_url,
+        region_name=settings.aws_region,
+    )
+    (
+        booking_stream.key_by(apartment_key)
+        .process(BookingCreatedDedupFunction())
+        .key_by(booking_id_key)
+        .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
+        .process(BookingCreatedWindowFunction())
+        .map(booking_created_writer)
+        .add_sink(
+            SinkFunction(
+                "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
+            )
         )
-    ).set_parallelism(1)
+    )

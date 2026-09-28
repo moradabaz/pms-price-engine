@@ -20,6 +20,9 @@ class MarketPulseJobSettings(BaseSettings):
     # Bloque 2 — market pulse window size (spec §4.1).
     market_pulse_window_minutes: int = 5
 
+    # Bloque 3 — bookings created window size (spec §4.2).
+    bookings_window_minutes: int = 5
+
     # Global default (Bloque 0, tarea 2). booking-events.v1 overrides this
     # to 1 on its own operator (spec §3.1) — only 1 real Kafka partition.
     parallelism: int = 4
