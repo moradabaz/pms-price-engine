@@ -61,3 +61,63 @@ resource "aws_dynamodb_table" "apartment_prices" {
 
   tags = local.common_tags
 }
+
+# ---------------------------------------------------------------------------
+# DynamoDB — Phase 26 market-pulse-job tables (spec 26 §5.2)
+# ---------------------------------------------------------------------------
+resource "aws_dynamodb_table" "market_pulse_5min" {
+  name         = "market_pulse_5min"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "segment_key"
+  range_key    = "window_start"
+
+  attribute {
+    name = "segment_key"
+    type = "S"
+  }
+
+  attribute {
+    name = "window_start"
+    type = "S"
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_dynamodb_table" "bookings_created_5min" {
+  name         = "bookings_created_5min"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "apartment_id"
+  range_key    = "window_start"
+
+  attribute {
+    name = "apartment_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "window_start"
+    type = "S"
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_dynamodb_table" "bookings_cancelled_5min" {
+  name         = "bookings_cancelled_5min"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "apartment_id"
+  range_key    = "window_start"
+
+  attribute {
+    name = "apartment_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "window_start"
+    type = "S"
+  }
+
+  tags = local.common_tags
+}

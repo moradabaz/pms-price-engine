@@ -44,7 +44,10 @@ COPY . .
 # stdlib lookup once we drop to `flink` below.
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 
-RUN uv sync --frozen --package flink-jobs && \
+# Phase 26: market-pulse-job is a second, independent job (spec 26 §2) but
+# runs on this same Flink cluster/image — --package flink-jobs alone would
+# leave market_pulse_job unimportable when it's submitted here manually.
+RUN uv sync --frozen --package flink-jobs --package market-pulse-job && \
     chmod -R a+rX /opt/uv-python
 
 ENV PATH="/app/.venv/bin:${PATH}"

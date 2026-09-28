@@ -1,6 +1,8 @@
 # Phase 26 — Market Pulse Job (windowed streaming metrics)
 
-**Status:** Draft
+**Status:** Implemented — AC-01 to AC-05, AC-07 to AC-10, AC-12 live-verified against the real stack;
+AC-06 and AC-11 remain open (infra/fault-injection gaps, not implementation gaps — see
+`docs/AUDIT_DIARY.md`'s Phase 26 entry for detail).
 **Depends on:** Phase 3 (market ingestion — `market-price-bridge.v1`), Phase 4 (Flink processing —
 `booking-events.v1`, the `price_decision` DynamoDB table and its key shape), Phase 18 (owner
 contract / cost fields on `PriceDecision`)

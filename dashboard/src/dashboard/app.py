@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 from common import configure_logging
 
-from dashboard import hot_path, marts
+from dashboard import hot_path, live_metrics, marts
 from dashboard.settings import DashboardSettings
 
 _SETTINGS = DashboardSettings()
@@ -19,6 +19,36 @@ def _price_decision_table() -> Any:
         endpoint_url=_SETTINGS.dynamodb_endpoint_url,
     )
     return resource.Table(_SETTINGS.price_decision_table_name)
+
+
+@st.cache_resource
+def _market_pulse_table() -> Any:
+    resource = boto3.resource(
+        "dynamodb",
+        region_name=_SETTINGS.aws_region,
+        endpoint_url=_SETTINGS.dynamodb_endpoint_url,
+    )
+    return resource.Table(_SETTINGS.market_pulse_table_name)
+
+
+@st.cache_resource
+def _bookings_created_table() -> Any:
+    resource = boto3.resource(
+        "dynamodb",
+        region_name=_SETTINGS.aws_region,
+        endpoint_url=_SETTINGS.dynamodb_endpoint_url,
+    )
+    return resource.Table(_SETTINGS.bookings_created_table_name)
+
+
+@st.cache_resource
+def _bookings_cancelled_table() -> Any:
+    resource = boto3.resource(
+        "dynamodb",
+        region_name=_SETTINGS.aws_region,
+        endpoint_url=_SETTINGS.dynamodb_endpoint_url,
+    )
+    return resource.Table(_SETTINGS.bookings_cancelled_table_name)
 
 
 @st.cache_data(ttl=_SETTINGS.marts_cache_ttl_seconds)
@@ -226,6 +256,119 @@ def render_cost_breakdown() -> None:
             ),
         },
     )
+
+
+def render_market_pulse_job() -> None:
+    # Phase 26: live from market-pulse-job's own 3 DynamoDB tables, not the
+    # cold-path marts — re-queried every 60s fragment run same as
+    # "Current price" (hot_path), not ttl-cached, since these are meant to
+    # visibly move while the demo runs.
+    st.header("Market Pulse Job (live) — Phase 26")
+    tab_pulse, tab_created, tab_cancelled = st.tabs(
+        ["Market pulse", "Bookings created", "Bookings cancelled"]
+    )
+
+    with tab_pulse:
+        df = live_metrics.windowed_metric_df(_market_pulse_table())
+        if df.empty:
+            st.caption("No market pulse windows yet.")
+        else:
+            segment_key = st.selectbox(
+                "Segment", sorted(df["segment_key"].unique()), key="market_pulse_segment"
+            )
+            segment_df = df[df["segment_key"] == segment_key]
+            latest = segment_df.iloc[-1]
+            st.caption(
+                f"Current market pulse (last 5 min) — window "
+                f"{latest['window_start']} to {latest['window_end']}"
+            )
+            cols = st.columns(3)
+            cols[0].metric("Avg price", f"{latest['avg_price_eur']:.2f} €")
+            cols[1].metric("Min price", f"{latest['min_price_eur']:.2f} €")
+            cols[2].metric("Max price", f"{latest['max_price_eur']:.2f} €")
+            st.line_chart(
+                segment_df,
+                x="window_start",
+                y=["avg_price_eur", "min_price_eur", "max_price_eur"],
+            )
+            st.dataframe(
+                segment_df,
+                hide_index=True,
+                column_config={
+                    "segment_key": "Segment",
+                    "window_start": "Window start",
+                    "window_end": "Window end",
+                    "avg_price_eur": st.column_config.NumberColumn(
+                        "Avg price", format="euro"
+                    ),
+                    "min_price_eur": st.column_config.NumberColumn(
+                        "Min price", format="euro"
+                    ),
+                    "max_price_eur": st.column_config.NumberColumn(
+                        "Max price", format="euro"
+                    ),
+                    "sample_count": st.column_config.NumberColumn("Samples"),
+                },
+            )
+
+    with tab_created:
+        df = live_metrics.windowed_metric_df(_bookings_created_table())
+        if df.empty:
+            st.caption("No bookings-created windows yet.")
+        else:
+            apartment_id = st.selectbox(
+                "Apartment",
+                sorted(df["apartment_id"].unique()),
+                key="bookings_created_apartment",
+            )
+            apt_df = df[df["apartment_id"] == apartment_id]
+            st.line_chart(apt_df, x="window_start", y="booking_count")
+            if "avg_profit_eur" in apt_df.columns:
+                st.line_chart(apt_df, x="window_start", y="avg_profit_eur")
+            st.dataframe(
+                apt_df,
+                hide_index=True,
+                column_config={
+                    "apartment_id": "Apartment",
+                    "window_start": "Window start",
+                    "window_end": "Window end",
+                    "booking_count": st.column_config.NumberColumn("Bookings"),
+                    "avg_profit_eur": st.column_config.NumberColumn(
+                        "Avg profit",
+                        format="euro",
+                        help="Null when no booking in the window had a resolved cost basis.",
+                    ),
+                    "profit_sample_count": st.column_config.NumberColumn(
+                        "Profit samples"
+                    ),
+                    "unresolved_cost_count": st.column_config.NumberColumn(
+                        "Unresolved cost"
+                    ),
+                },
+            )
+
+    with tab_cancelled:
+        df = live_metrics.windowed_metric_df(_bookings_cancelled_table())
+        if df.empty:
+            st.caption("No bookings-cancelled windows yet.")
+        else:
+            apartment_id = st.selectbox(
+                "Apartment",
+                sorted(df["apartment_id"].unique()),
+                key="bookings_cancelled_apartment",
+            )
+            apt_df = df[df["apartment_id"] == apartment_id]
+            st.line_chart(apt_df, x="window_start", y="cancelled_count")
+            st.dataframe(
+                apt_df,
+                hide_index=True,
+                column_config={
+                    "apartment_id": "Apartment",
+                    "window_start": "Window start",
+                    "window_end": "Window end",
+                    "cancelled_count": st.column_config.NumberColumn("Cancelled"),
+                },
+            )
 
 
 # Plain-language names/explanations for rule_applied, shown to a property
@@ -866,6 +1009,7 @@ def render_dashboard() -> None:
         tab_alerts,
         tab_channels,
         tab_costs,
+        tab_market_pulse,
     ) = st.tabs(
         [
             "Current price",
@@ -874,6 +1018,7 @@ def render_dashboard() -> None:
             "Margin alerts",
             "Channel pricing",
             "Cost breakdown",
+            "Market Pulse Job (live)",
         ]
     )
     with tab_current:
@@ -888,6 +1033,8 @@ def render_dashboard() -> None:
         render_channel_pricing()
     with tab_costs:
         render_cost_breakdown()
+    with tab_market_pulse:
+        render_market_pulse_job()
 
 
 def main() -> None:

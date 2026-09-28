@@ -14,6 +14,20 @@ class MarketPulseJobSettings(BaseSettings):
     market_pulse_table: str = "market_pulse_5min"
     bookings_created_table: str = "bookings_created_5min"
     bookings_cancelled_table: str = "bookings_cancelled_5min"
+    aws_region: str = "eu-west-1"
+    dynamodb_endpoint_url: str | None = None
+
+    # Bloque 2 — market pulse window size (spec §4.1).
+    market_pulse_window_minutes: int = 5
+
+    # Bloque 3 — bookings created window size (spec §4.2).
+    bookings_window_minutes: int = 5
+
+    # Bloque 5 — Async I/O profit enrichment (spec §4.5). Reads the existing
+    # price_decision table, does not write to it.
+    price_decision_table: str = "price_decision"
+    price_decision_lookup_timeout_seconds: int = 5
+    price_decision_lookup_capacity: int = 100
 
     # Global default (Bloque 0, tarea 2). booking-events.v1 overrides this
     # to 1 on its own operator (spec §3.1) — only 1 real Kafka partition.

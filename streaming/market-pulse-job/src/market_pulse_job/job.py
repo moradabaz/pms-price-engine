@@ -2,15 +2,50 @@ import logging
 
 from flink_shared import configure_checkpointing
 from pyflink.common.serialization import SimpleStringSchema
-from pyflink.common.time import Duration
+from pyflink.common.time import Duration, Time
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaSource,
 )
+from pyflink.datastream import AsyncDataStream
+from pyflink.datastream.functions import SinkFunction
+from pyflink.datastream.window import TumblingEventTimeWindows
 from shared_schemas.booking import Booking
 from shared_schemas.market_price import MarketPrice
 
+from market_pulse_job.bookings_cancelled import (
+    ALLOWED_LATENESS_MS as CANCELLED_ALLOWED_LATENESS_MS,
+)
+from market_pulse_job.bookings_cancelled import (
+    LATE_BOOKING_CANCELLED_TAG,
+    BookingCancelledDedupFunction,
+    BookingCancelledSinkFunction,
+    BookingCancelledWindowFunction,
+    is_cancelled,
+)
+from market_pulse_job.bookings_cancelled import apartment_key as cancelled_apartment_key
+from market_pulse_job.bookings_cancelled import booking_id_key as cancelled_booking_id_key
+from market_pulse_job.bookings_created import (
+    ALLOWED_LATENESS_MS as CREATED_ALLOWED_LATENESS_MS,
+)
+from market_pulse_job.bookings_created import (
+    LATE_BOOKING_CREATED_TAG,
+    BookingCreatedDedupFunction,
+    BookingCreatedSinkFunction,
+    BookingCreatedWindowFunction,
+    BookingProfitEnrichmentFunction,
+    booking_id_key,
+    enriched_apartment_key,
+)
+from market_pulse_job.market_pulse import (
+    ACC_TYPE,
+    MarketPulseAggregateFunction,
+    MarketPulseSinkFunction,
+    MarketPulseWindowFunction,
+    is_blended_snapshot,
+    segment_key,
+)
 from market_pulse_job.settings import MarketPulseJobSettings
 
 # Plain stdlib logging, not common.get_logger() (structlog): this module's
@@ -76,13 +111,108 @@ def build_job(env, settings: MarketPulseJobSettings) -> None:
         .set_parallelism(1)
     )
 
-    market_stream.map(
-        lambda event: logger.info(
-            "market_event_received market_area=%s", event.market_area.city
+    market_pulse_writer = MarketPulseSinkFunction(
+        table_name=settings.market_pulse_table,
+        endpoint_url=settings.dynamodb_endpoint_url,
+        region_name=settings.aws_region,
+    )
+    (
+        market_stream.filter(is_blended_snapshot)
+        .key_by(segment_key)
+        .window(TumblingEventTimeWindows.of(Time.minutes(settings.market_pulse_window_minutes)))
+        .aggregate(
+            MarketPulseAggregateFunction(),
+            MarketPulseWindowFunction(),
+            accumulator_type=ACC_TYPE,
+        )
+        .map(market_pulse_writer)
+        .add_sink(
+            SinkFunction(
+                "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
+            )
         )
     )
-    booking_stream.map(
-        lambda event: logger.info(
-            "booking_event_received booking_id=%s", event.booking_id
+
+    booking_created_writer = BookingCreatedSinkFunction(
+        table_name=settings.bookings_created_table,
+        endpoint_url=settings.dynamodb_endpoint_url,
+        region_name=settings.aws_region,
+    )
+    # Bloque 5: dedup --> asyncEnrich --> createdWin (spec §2). The dedup
+    # stream (keyed by booking_id) feeds AsyncDataStream.unordered_wait,
+    # which calls BookingProfitEnrichmentFunction.async_invoke() once per
+    # deduplicated booking; only its output is re-keyed by apartment_id and
+    # windowed, so the window function never sees an un-enriched Booking.
+    booking_created_dedup_stream = booking_stream.key_by(booking_id_key).process(
+        BookingCreatedDedupFunction()
+    )
+    booking_created_enriched_stream = AsyncDataStream.unordered_wait(
+        booking_created_dedup_stream,
+        BookingProfitEnrichmentFunction(
+            table_name=settings.price_decision_table,
+            endpoint_url=settings.dynamodb_endpoint_url,
+            region_name=settings.aws_region,
+        ),
+        Time.seconds(settings.price_decision_lookup_timeout_seconds),
+        settings.price_decision_lookup_capacity,
+    )
+    booking_created_windowed = (
+        booking_created_enriched_stream.key_by(enriched_apartment_key)
+        .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
+        .allowed_lateness(CREATED_ALLOWED_LATENESS_MS)
+        .side_output_late_data(LATE_BOOKING_CREATED_TAG)
+        .process(BookingCreatedWindowFunction())
+    )
+    # AC-04: a late-but-within-allowed-lateness event re-fires this same
+    # window's already-emitted row — put_item overwrites by (apartment_id,
+    # window_start), so the later firing simply replaces the earlier one.
+    (
+        booking_created_windowed.map(booking_created_writer).add_sink(
+            SinkFunction(
+                "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
+            )
         )
-    ).set_parallelism(1)
+    )
+    # AC-05: anything later than even that goes here, logged, never silently
+    # dropped and never touching an already-emitted window.
+    booking_created_windowed.get_side_output(LATE_BOOKING_CREATED_TAG).map(
+        lambda late: logger.warning(
+            "late_booking_created_dropped apartment_id=%s booking_id=%s",
+            late["booking"].apartment_id,
+            late["booking"].booking_id,
+        )
+    )
+
+    # Bloque 4: same booking_stream, filtered down to cancellations only,
+    # with its own independent dedup/key_by/window chain (spec §4.4b) — see
+    # bookings_cancelled.py's module docstrings for why dedupCreated and
+    # dedupCancelled cannot share one ValueState.
+    booking_cancelled_writer = BookingCancelledSinkFunction(
+        table_name=settings.bookings_cancelled_table,
+        endpoint_url=settings.dynamodb_endpoint_url,
+        region_name=settings.aws_region,
+    )
+    booking_cancelled_windowed = (
+        booking_stream.filter(is_cancelled)
+        .key_by(cancelled_booking_id_key)
+        .process(BookingCancelledDedupFunction())
+        .key_by(cancelled_apartment_key)
+        .window(TumblingEventTimeWindows.of(Time.minutes(settings.bookings_window_minutes)))
+        .allowed_lateness(CANCELLED_ALLOWED_LATENESS_MS)
+        .side_output_late_data(LATE_BOOKING_CANCELLED_TAG)
+        .process(BookingCancelledWindowFunction())
+    )
+    (
+        booking_cancelled_windowed.map(booking_cancelled_writer).add_sink(
+            SinkFunction(
+                "org.apache.flink.streaming.api.functions.sink.legacy.DiscardingSink"
+            )
+        )
+    )
+    booking_cancelled_windowed.get_side_output(LATE_BOOKING_CANCELLED_TAG).map(
+        lambda late: logger.warning(
+            "late_booking_cancelled_dropped apartment_id=%s booking_id=%s",
+            late.apartment_id,
+            late.booking_id,
+        )
+    )
