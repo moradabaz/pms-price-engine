@@ -4,6 +4,9 @@ Practical companion to the root [`README.md`](../../README.md): how to bring the
 from a fresh clone, what each piece does, and how to read the dashboard once it's running. The
 README stays the high-level pitch; this manual is the "I just cloned this, now what" document.
 
+Running this on your own machine? Keep reading. Turning the public portfolio demo on/off on EC2
+instead? See [`PORTFOLIO_DEMO.md`](./PORTFOLIO_DEMO.md).
+
 1. [Prerequisites](#1-prerequisites)
 2. [Bringing up the stack from scratch](#2-bringing-up-the-stack-from-scratch)
 3. [Verifying the pipeline is actually flowing](#3-verifying-the-pipeline-is-actually-flowing)
