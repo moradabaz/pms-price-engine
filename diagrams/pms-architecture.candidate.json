@@ -1,0 +1,419 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "PMS Price Engine — Architecture",
+    "output": "pms-price-engine-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "cdc-path",
+        "label": "CDC pipeline",
+        "focus": [
+          "mockPmApp",
+          "postgres",
+          "kafka",
+          "pricingJob"
+        ],
+        "note": "Synthetic bookings/costs land in Postgres, and Debezium's CDC turns every row change into a Kafka event."
+      },
+      {
+        "id": "market-ingestion",
+        "label": "Market ingestion",
+        "focus": [
+          "marketIngestor",
+          "kinesis",
+          "bridge",
+          "kafka"
+        ],
+        "note": "Market snapshots ride Kinesis, then a bridge republishes them onto Kafka for Flink to consume."
+      },
+      {
+        "id": "market-pulse-windows",
+        "label": "Market Pulse windows",
+        "focus": [
+          "kafka",
+          "marketPulseJob",
+          "dynamodb"
+        ],
+        "note": "3 independent 5-min tumbling windows, per-source watermarks/idleness, dedup and Async I/O — none of which the pricing job needs."
+      },
+      {
+        "id": "lakehouse-and-serving",
+        "label": "Lakehouse & serving",
+        "focus": [
+          "dynamodb",
+          "lakehouseConsumer",
+          "iceberg",
+          "dbtDuckdb",
+          "dashboard"
+        ],
+        "note": "DynamoDB is the hot path; its own Streams feed the cold-path lakehouse dbt builds marts from."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "mockPmApp",
+      "type": "backend",
+      "label": "mock-pm-app",
+      "sublabel": "synthetic PM traffic",
+      "pos": [
+        40,
+        90
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "bookings, costs, contracts",
+      "pos": [
+        260,
+        90
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "kafka",
+      "type": "messagebus",
+      "label": "Kafka",
+      "sublabel": "event bus",
+      "pos": [
+        480,
+        90
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "pricingJob",
+      "type": "backend",
+      "label": "Pricing Job",
+      "sublabel": "per-decision, no windows",
+      "tag": "PyFlink 2.3",
+      "pos": [
+        700,
+        90
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "marketPulseJob",
+      "type": "backend",
+      "label": "Market Pulse Job",
+      "sublabel": "3× 5-min tumbling windows",
+      "tag": "watermarks + dedup + Async I/O",
+      "pos": [
+        920,
+        90
+      ],
+      "size": [
+        180,
+        60
+      ]
+    },
+    {
+      "id": "marketIngestor",
+      "type": "backend",
+      "label": "market-ingestor",
+      "sublabel": "synthetic snapshots",
+      "pos": [
+        40,
+        190
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "kinesis",
+      "type": "cloud",
+      "label": "Kinesis",
+      "sublabel": "market events",
+      "pos": [
+        260,
+        190
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "bridge",
+      "type": "backend",
+      "label": "kinesis-kafka-bridge",
+      "sublabel": "republishes onto Kafka",
+      "pos": [
+        480,
+        190
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "dynamodb",
+      "type": "database",
+      "label": "DynamoDB",
+      "sublabel": "price_decision + 3 metrics",
+      "pos": [
+        920,
+        190
+      ],
+      "size": [
+        180,
+        60
+      ]
+    },
+    {
+      "id": "lakehouseConsumer",
+      "type": "backend",
+      "label": "lakehouse-consumer",
+      "sublabel": "Streams → Iceberg",
+      "pos": [
+        1160,
+        190
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "iceberg",
+      "type": "cloud",
+      "label": "Iceberg on S3",
+      "sublabel": "cold-path lakehouse",
+      "pos": [
+        1160,
+        290
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "dashboard",
+      "type": "frontend",
+      "label": "Streamlit Dashboard",
+      "sublabel": "hot path + cold path",
+      "pos": [
+        920,
+        390
+      ],
+      "size": [
+        180,
+        60
+      ]
+    },
+    {
+      "id": "dbtDuckdb",
+      "type": "backend",
+      "label": "dbt / DuckDB",
+      "sublabel": "marts every 15 min",
+      "pos": [
+        1160,
+        390
+      ],
+      "size": [
+        160,
+        60
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "mockapp-to-postgres",
+      "from": "mockPmApp",
+      "to": "postgres",
+      "label": "writes"
+    },
+    {
+      "id": "postgres-to-kafka",
+      "from": "postgres",
+      "to": "kafka",
+      "label": "Debezium CDC"
+    },
+    {
+      "id": "kafka-to-pricing",
+      "from": "kafka",
+      "to": "pricingJob",
+      "label": "consumes topics",
+      "labelAt": [
+        665,
+        86
+      ]
+    },
+    {
+      "id": "kafka-to-marketpulse",
+      "from": "kafka",
+      "to": "marketPulseJob",
+      "label": "market-price-bridge, booking-events",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          555,
+          50
+        ],
+        [
+          1010,
+          50
+        ]
+      ],
+      "labelAt": [
+        775,
+        40
+      ]
+    },
+    {
+      "id": "marketingestor-to-kinesis",
+      "from": "marketIngestor",
+      "to": "kinesis",
+      "label": "publishes"
+    },
+    {
+      "id": "kinesis-to-bridge",
+      "from": "kinesis",
+      "to": "bridge",
+      "label": "consumes"
+    },
+    {
+      "id": "bridge-to-kafka",
+      "from": "bridge",
+      "to": "kafka",
+      "label": "republishes",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "pricing-to-dynamodb",
+      "from": "pricingJob",
+      "to": "dynamodb",
+      "label": "put_item price_decision",
+      "labelAt": [
+        745,
+        164
+      ]
+    },
+    {
+      "id": "marketpulse-to-dynamodb",
+      "from": "marketPulseJob",
+      "to": "dynamodb",
+      "label": "put_item (3 windows)",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1010,
+        164
+      ]
+    },
+    {
+      "id": "dynamodb-to-marketpulse-async",
+      "from": "dynamodb",
+      "to": "marketPulseJob",
+      "label": "Async I/O GetItem",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "right"
+    },
+    {
+      "id": "dynamodb-to-lakehouse",
+      "from": "dynamodb",
+      "to": "lakehouseConsumer",
+      "label": "DynamoDB Streams",
+      "labelAt": [
+        1105,
+        264
+      ]
+    },
+    {
+      "id": "lakehouse-to-iceberg",
+      "from": "lakehouseConsumer",
+      "to": "iceberg",
+      "label": "merge writes",
+      "labelAt": [
+        1235,
+        264
+      ]
+    },
+    {
+      "id": "iceberg-to-dbt",
+      "from": "iceberg",
+      "to": "dbtDuckdb",
+      "label": "iceberg_scan",
+      "labelAt": [
+        1235,
+        364
+      ]
+    },
+    {
+      "id": "dbt-to-dashboard",
+      "from": "dbtDuckdb",
+      "to": "dashboard",
+      "label": "cold path",
+      "variant": "dashed"
+    },
+    {
+      "id": "dynamodb-to-dashboard",
+      "from": "dynamodb",
+      "to": "dashboard",
+      "label": "hot path (Query)",
+      "labelAt": [
+        1015,
+        264
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "CDC pipeline",
+      "items": [
+        "mock-pm-app seeds Postgres with synthetic PM traffic",
+        "Debezium turns every row change into a Kafka event, no dual writes"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Market ingestion",
+      "items": [
+        "market-ingestor publishes to Kinesis",
+        "A dedicated bridge republishes onto Kafka — Flink 2.x dropped the legacy Kinesis source"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Windowing (Phase 26)",
+      "items": [
+        "Market Pulse Job runs 3 independent 5-min tumbling windows: market pulse, bookings created, bookings cancelled",
+        "Per-source watermarks/idleness, ValueState dedup with TTL, and an Async I/O profit lookup — none of which the Pricing Job needs"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Storage & serving",
+      "items": [
+        "DynamoDB is the single writer; Iceberg is derived via its own Streams, never a second direct write",
+        "Dashboard reads DynamoDB directly (hot path) and dbt/DuckDB marts (cold path)"
+      ]
+    }
+  ]
+}

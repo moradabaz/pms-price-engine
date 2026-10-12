@@ -1,14 +1,36 @@
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import boto3
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from common import configure_logging
 
-from dashboard import hot_path, marts
+from dashboard import flink_status, hot_path, live_metrics, marts
 from dashboard.settings import DashboardSettings
 
 _SETTINGS = DashboardSettings()
+
+# Market Pulse Job panel — chart/format constants, kept out of the render
+# functions below so no color, placeholder, or threshold is a magic literal.
+_TIMESTAMP_DISPLAY_FORMAT = "%H:%M:%S"
+_MISSING_VALUE_PLACEHOLDER = "—"
+_BYTES_PER_KILOBYTE = 1024
+_CHART_HEIGHT_PX = 340
+_CHART_MARGIN = dict(l=10, r=10, t=40, b=60)
+_CHART_LEGEND = dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5)
+
+_JOB_STATUS_RUNNING = "RUNNING"
+_STATUS_BADGE_RUNNING = "🟢"
+_STATUS_BADGE_OTHER = "🟡"
+
+_AVG_PRICE_COLOR = "#2563eb"
+_MIN_PRICE_COLOR = "#16a34a"
+_MAX_PRICE_COLOR = "#dc2626"
+_BOOKING_COUNT_COLOR = "#2563eb"
+_PROFIT_COLOR = "#16a34a"
+_CANCELLED_COLOR = "#dc2626"
 
 
 @st.cache_resource
@@ -19,6 +41,36 @@ def _price_decision_table() -> Any:
         endpoint_url=_SETTINGS.dynamodb_endpoint_url,
     )
     return resource.Table(_SETTINGS.price_decision_table_name)
+
+
+@st.cache_resource
+def _market_pulse_table() -> Any:
+    resource = boto3.resource(
+        "dynamodb",
+        region_name=_SETTINGS.aws_region,
+        endpoint_url=_SETTINGS.dynamodb_endpoint_url,
+    )
+    return resource.Table(_SETTINGS.market_pulse_table_name)
+
+
+@st.cache_resource
+def _bookings_created_table() -> Any:
+    resource = boto3.resource(
+        "dynamodb",
+        region_name=_SETTINGS.aws_region,
+        endpoint_url=_SETTINGS.dynamodb_endpoint_url,
+    )
+    return resource.Table(_SETTINGS.bookings_created_table_name)
+
+
+@st.cache_resource
+def _bookings_cancelled_table() -> Any:
+    resource = boto3.resource(
+        "dynamodb",
+        region_name=_SETTINGS.aws_region,
+        endpoint_url=_SETTINGS.dynamodb_endpoint_url,
+    )
+    return resource.Table(_SETTINGS.bookings_cancelled_table_name)
 
 
 @st.cache_data(ttl=_SETTINGS.marts_cache_ttl_seconds)
@@ -226,6 +278,229 @@ def render_cost_breakdown() -> None:
             ),
         },
     )
+
+
+def _line_figure(
+    df: pd.DataFrame, x: str, y_cols: list[str], colors: list[str], title: str
+) -> go.Figure:
+    fig = go.Figure()
+    for y_col, color in zip(y_cols, colors):
+        fig.add_trace(
+            go.Scatter(
+                x=df[x],
+                y=df[y_col],
+                mode="lines+markers",
+                name=y_col,
+                line=dict(color=color, width=2),
+            )
+        )
+    fig.update_layout(
+        title=title,
+        margin=_CHART_MARGIN,
+        height=_CHART_HEIGHT_PX,
+        legend=_CHART_LEGEND,
+        hovermode="x unified",
+    )
+    return fig
+
+
+def _render_job_health() -> None:
+    status = flink_status.fetch_status(
+        _SETTINGS.flink_rest_url, _SETTINGS.flink_job_name
+    )
+    st.subheader("Job health")
+    if not status.ok:
+        st.warning(f"Flink job not reachable: {status.error}")
+        return
+
+    cols = st.columns(4)
+    badge = (
+        _STATUS_BADGE_RUNNING
+        if status.job_status == _JOB_STATUS_RUNNING
+        else _STATUS_BADGE_OTHER
+    )
+    cols[0].metric("Status", f"{badge} {status.job_status}")
+    cols[1].metric(
+        "Last checkpoint",
+        status.checkpoint_id if status.checkpoint_id is not None else _MISSING_VALUE_PLACEHOLDER,
+    )
+    duration = (
+        f"{status.checkpoint_duration_ms} ms"
+        if status.checkpoint_duration_ms is not None
+        else _MISSING_VALUE_PLACEHOLDER
+    )
+    cols[2].metric("Checkpoint duration", duration)
+    size = (
+        f"{status.checkpoint_size_bytes / _BYTES_PER_KILOBYTE:.1f} KB"
+        if status.checkpoint_size_bytes is not None
+        else _MISSING_VALUE_PLACEHOLDER
+    )
+    cols[3].metric("Checkpoint size", size)
+    st.caption(
+        "Pulled live from the Flink REST API (/jobs, /jobs/{id}/checkpoints). "
+        "RocksDB incremental checkpoints every 60s, EXACTLY_ONCE mode — this "
+        "is what the job restores from after a taskmanager failure."
+    )
+
+
+def render_market_pulse_job() -> None:
+    # Phase 26: live from market-pulse-job's own 3 DynamoDB tables, not the
+    # cold-path marts — re-queried every 60s fragment run same as
+    # "Current price" (hot_path), not ttl-cached, since these are meant to
+    # visibly move while the demo runs.
+    st.header("Market Pulse Job (live) — Phase 26")
+    st.caption(
+        f"Last refreshed {datetime.now(timezone.utc).strftime(_TIMESTAMP_DISPLAY_FORMAT)} UTC"
+    )
+
+    _render_job_health()
+    st.divider()
+
+    tab_pulse, tab_created, tab_cancelled = st.tabs(
+        ["Market pulse", "Bookings created", "Bookings cancelled"]
+    )
+
+    with tab_pulse:
+        df = live_metrics.windowed_metric_df(_market_pulse_table())
+        if df.empty:
+            st.caption("No market pulse windows yet.")
+        else:
+            segment_key = st.selectbox(
+                "Segment", sorted(df["segment_key"].unique()), key="market_pulse_segment"
+            )
+            segment_df = df[df["segment_key"] == segment_key]
+            latest = segment_df.iloc[-1]
+            st.caption(
+                f"Current market pulse (last 5 min) — window "
+                f"{latest['window_start']} to {latest['window_end']}"
+            )
+            cols = st.columns(3)
+            cols[0].metric("Avg price", f"{latest['avg_price_eur']:.2f} €")
+            cols[1].metric("Min price", f"{latest['min_price_eur']:.2f} €")
+            cols[2].metric("Max price", f"{latest['max_price_eur']:.2f} €")
+            st.plotly_chart(
+                _line_figure(
+                    segment_df,
+                    "window_start",
+                    ["avg_price_eur", "min_price_eur", "max_price_eur"],
+                    [_AVG_PRICE_COLOR, _MIN_PRICE_COLOR, _MAX_PRICE_COLOR],
+                    f"Price range — {segment_key}",
+                ),
+                use_container_width=True,
+            )
+            st.dataframe(
+                segment_df,
+                hide_index=True,
+                column_config={
+                    "segment_key": "Segment",
+                    "window_start": "Window start",
+                    "window_end": "Window end",
+                    "avg_price_eur": st.column_config.NumberColumn(
+                        "Avg price", format="euro"
+                    ),
+                    "min_price_eur": st.column_config.NumberColumn(
+                        "Min price", format="euro"
+                    ),
+                    "max_price_eur": st.column_config.NumberColumn(
+                        "Max price", format="euro"
+                    ),
+                    "sample_count": st.column_config.NumberColumn("Samples"),
+                },
+            )
+
+    with tab_created:
+        df = live_metrics.windowed_metric_df(_bookings_created_table())
+        if df.empty:
+            st.caption("No bookings-created windows yet.")
+        else:
+            apartment_id = st.selectbox(
+                "Apartment",
+                sorted(df["apartment_id"].unique()),
+                key="bookings_created_apartment",
+            )
+            apt_df = df[df["apartment_id"] == apartment_id]
+            latest = apt_df.iloc[-1]
+            cols = st.columns(2)
+            cols[0].metric("Bookings (last window)", int(latest["booking_count"]))
+            if "avg_profit_eur" in apt_df.columns and pd.notna(latest.get("avg_profit_eur")):
+                cols[1].metric("Avg profit (last window)", f"{latest['avg_profit_eur']:.2f} €")
+            else:
+                cols[1].metric("Avg profit (last window)", _MISSING_VALUE_PLACEHOLDER)
+            st.plotly_chart(
+                _line_figure(
+                    apt_df,
+                    "window_start",
+                    ["booking_count"],
+                    [_BOOKING_COUNT_COLOR],
+                    "Bookings created",
+                ),
+                use_container_width=True,
+            )
+            if "avg_profit_eur" in apt_df.columns:
+                st.plotly_chart(
+                    _line_figure(
+                        apt_df,
+                        "window_start",
+                        ["avg_profit_eur"],
+                        [_PROFIT_COLOR],
+                        "Avg profit",
+                    ),
+                    use_container_width=True,
+                )
+            st.dataframe(
+                apt_df,
+                hide_index=True,
+                column_config={
+                    "apartment_id": "Apartment",
+                    "window_start": "Window start",
+                    "window_end": "Window end",
+                    "booking_count": st.column_config.NumberColumn("Bookings"),
+                    "avg_profit_eur": st.column_config.NumberColumn(
+                        "Avg profit",
+                        format="euro",
+                        help="Null when no booking in the window had a resolved cost basis.",
+                    ),
+                    "profit_sample_count": st.column_config.NumberColumn(
+                        "Profit samples"
+                    ),
+                    "unresolved_cost_count": st.column_config.NumberColumn(
+                        "Unresolved cost"
+                    ),
+                },
+            )
+
+    with tab_cancelled:
+        df = live_metrics.windowed_metric_df(_bookings_cancelled_table())
+        if df.empty:
+            st.caption("No bookings-cancelled windows yet.")
+        else:
+            apartment_id = st.selectbox(
+                "Apartment",
+                sorted(df["apartment_id"].unique()),
+                key="bookings_cancelled_apartment",
+            )
+            apt_df = df[df["apartment_id"] == apartment_id]
+            st.metric("Cancelled (last window)", int(apt_df.iloc[-1]["cancelled_count"]))
+            st.plotly_chart(
+                _line_figure(
+                    apt_df,
+                    "window_start",
+                    ["cancelled_count"],
+                    [_CANCELLED_COLOR],
+                    "Cancellations",
+                ),
+                use_container_width=True,
+            )
+            st.dataframe(
+                apt_df,
+                hide_index=True,
+                column_config={
+                    "apartment_id": "Apartment",
+                    "window_start": "Window start",
+                    "window_end": "Window end",
+                    "cancelled_count": st.column_config.NumberColumn("Cancelled"),
+                },
+            )
 
 
 # Plain-language names/explanations for rule_applied, shown to a property
@@ -866,6 +1141,7 @@ def render_dashboard() -> None:
         tab_alerts,
         tab_channels,
         tab_costs,
+        tab_market_pulse,
     ) = st.tabs(
         [
             "Current price",
@@ -874,6 +1150,7 @@ def render_dashboard() -> None:
             "Margin alerts",
             "Channel pricing",
             "Cost breakdown",
+            "Market Pulse Job (live)",
         ]
     )
     with tab_current:
@@ -888,6 +1165,8 @@ def render_dashboard() -> None:
         render_channel_pricing()
     with tab_costs:
         render_cost_breakdown()
+    with tab_market_pulse:
+        render_market_pulse_job()
 
 
 def main() -> None:
