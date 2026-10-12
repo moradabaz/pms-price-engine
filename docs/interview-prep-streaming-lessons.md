@@ -193,3 +193,82 @@ vivo, no son teoría:
   grande identificada (§2.2) — y decirlo así es más fuerte que inventar un dashboard que no existe.
 - *"¿Lo has probado bajo carga?"* → No, volumen de PoC únicamente — el hot-shard de ADR-0005 es un
   riesgo aceptado, no medido bajo tráfico real (§2.3).
+
+---
+
+## 4. Backpressure y reprocesamiento desde checkpoint/savepoint
+
+Distingue lo verificado en este proyecto (recuperación desde checkpoint tras un fallo) de lo que
+solo se puede responder desde la teoría (backpressure sostenido bajo carga real) — nunca lo hemos
+tenido que gestionar de verdad porque el volumen de la PoC es pequeño y siempre se arranca en
+limpio. Es honesto decir eso en una entrevista, no inventar una anécdota que no ocurrió.
+
+**P: ¿Qué es backpressure en Flink y cómo se propaga?**
+
+R: Es la señal de que un operador downstream no puede consumir tan rápido como el upstream produce
+— el sink escribe más lento de lo que la ventana emite, o el `AsyncFunction` tiene su `capacity` de
+`unordered_wait` saturada de peticiones en vuelo. Flink no descarta datos ni los acumula sin límite
+en memoria: usa buffers de red con crédito (credit-based flow control) entre subtasks, así que
+cuando un operador se satura, deja de pedir crédito al de arriba, que a su vez deja de vaciar sus
+propios buffers, y la señal se propaga hacia atrás hasta la fuente (Kafka), que simplemente deja de
+avanzar el offset que consume. El pipeline se ralentiza de forma controlada en vez de caerse o
+perder datos.
+
+**P: ¿Cómo se detecta backpressure en producción?**
+
+R: Con métricas, no adivinando — el hueco que ya reconocemos en §2.2 (cero observabilidad real en
+este proyecto). Flink expone `backPressuredTimeMsPerSecond` por subtask en sus métricas, y la propia
+UI web marca visualmente qué operador está "OK/LOW/HIGH" en backpressure. La señal característica es
+que el operador *aguas abajo* del cuello de botella tiene baja utilización de CPU mientras el que
+está justo antes se satura — el cuello de botella real está una posición más adelante de donde
+parece, porque el que se ve "trabajando al 100%" a menudo solo está esperando.
+
+**P: En nuestro propio Bloque 5 (Async I/O contra `price_decision`), ¿dónde aparecería backpressure
+si DynamoDB empezara a responder lento?**
+
+R: En `capacity` de `AsyncDataStream.unordered_wait` — ese número es exactamente el límite de
+cuántos lookups pueden estar pendientes a la vez por subtask. Si DynamoDB se ralentiza, las
+respuestas tardan más en volver, el buffer de `capacity` peticiones en vuelo se llena, y
+`async_invoke()` deja de poder aceptar bookings nuevos hasta que se libera un hueco — eso frena al
+operador de dedup justo antes, que frena al `KeyedProcessFunction`, que frena al consumo de
+`booking-events.v1`. Es el mismo mecanismo de crédito, aplicado a I/O externo en vez de a otro
+operador de Flink.
+
+**P: ¿Qué diferencia hay entre un checkpoint y un savepoint?**
+
+R: Un checkpoint es automático, periódico (`checkpoint_interval_ms` en este proyecto), pensado para
+recuperación de fallos — Flink lo gestiona él solo y los va rotando/limpiando. Un savepoint es
+manual, disparado explícitamente (`flink savepoint <job-id>`), pensado para operaciones planeadas:
+actualizar el código del job, cambiar el paralelismo, migrar de cluster. Ambos usan el mismo
+mecanismo interno (snapshot distribuido vía barreras de Chandy-Lamport) y el mismo formato de
+estado, pero un savepoint está pensado para durar y ser portable entre versiones del job; un
+checkpoint no tiene esa garantía de compatibilidad hacia adelante.
+
+**P: ¿Cómo se reprocesa desde un checkpoint, y qué garantiza que no se dupliquen ni se pierdan
+eventos?**
+
+R: Al reiniciar, Flink recarga el último checkpoint completado: el estado de cada operador (nuestros
+`ValueState` de dedup, los acumuladores de ventana a medio cerrar) y los offsets de Kafka que
+`KafkaSource` tenía confirmados en ese momento — no los offsets reales de commit en Kafka, los que
+Flink guardó dentro del propio checkpoint. Vuelve a leer desde ahí, así que **algunos eventos se
+reprocesan** (los que ya se habían consumido después del último checkpoint pero antes del fallo) —
+eso es exactamente por lo que el dedup por `ValueState[bool]` con TTL (Bloque 3/4 de esta fase) no
+es opcional: sin él, ese reprocesamiento produciría conteos duplicados. La garantía real que da
+Flink es "exactly-once en el estado interno" (el estado nunca queda a medias gracias al two-phase
+commit de las barreras), no "exactly-once en el mundo exterior" — eso último depende de que el sink
+sea idempotente o transaccional, que es justo lo que ya verificamos en la Fase 5 (AC-04,
+`docs/AUDIT_DIARY.md`): matar el consumer de Iceberg a mitad de stream, con un registro más escrito
+mientras estaba caído, y al reiniciar recuperó exactamente las filas esperadas sin duplicar ni
+perder ninguna.
+
+**P: Si el pipeline lleva horas caído (el productor no para de escribir mientras tanto), ¿qué pasa
+al recuperar?**
+
+R: Aquí es donde entra la retención, no solo el checkpoint. El checkpoint te dice *desde dónde*
+reanudar, pero si esos offsets ya cayeron fuera de la ventana de retención del topic (24h en Kafka,
+en este proyecto — ver §1, "doble bus de eventos"), esos mensajes ya no existen y no es un problema
+de Flink, es dato permanentemente perdido. Asumiendo que la retención cubre el hueco, Flink no
+"pone al día" instantáneamente: procesa el backlog acumulado tan rápido como el paralelismo se lo
+permita, y durante ese catch-up es *esperable* ver watermarks avanzando de golpe y ventanas
+cerrándose en ráfaga — no es un bug, es el pipeline recuperando terreno. Nunca hemos medido esto
+bajo carga real (mismo hueco que §2.3): sabemos explicarlo, no lo hemos cronometrado.
