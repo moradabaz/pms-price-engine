@@ -9,15 +9,16 @@
 # ---------------------------------------------------------------------------
 
 locals {
-  demo_instance_type    = "m5.xlarge" # 16GB RAM: Kafka+ZK+Connect+Flink JM+TM+dashboard JVMs
-  demo_root_volume_gb   = 50          # gp3, Docker images + Kafka/Postgres/Iceberg data
-  demo_ssh_port         = 22
-  demo_http_port        = 80
-  demo_https_port       = 443
-  demo_repo_url         = "https://github.com/moradabaz/pms-price-engine.git"
-  demo_repo_clone_path  = "/opt/pms-price-engine"
-  demo_app_user         = "ec2-user"
-  caddy_install_version = "2.8.4"
+  demo_instance_type     = "m5.xlarge" # 16GB RAM: Kafka+ZK+Connect+Flink JM+TM+dashboard JVMs
+  demo_root_volume_gb    = 50          # gp3, Docker images + Kafka/Postgres/Iceberg data
+  demo_ssh_port          = 22
+  demo_http_port         = 80
+  demo_https_port        = 443
+  demo_repo_url          = "https://github.com/moradabaz/pms-price-engine.git"
+  demo_repo_clone_path   = "/opt/pms-price-engine"
+  demo_app_user          = "ec2-user"
+  caddy_install_version  = "2.8.4"
+  buildx_install_version = "0.19.3" # compose build requires >= 0.17.0
 }
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,7 @@ resource "aws_instance" "demo" {
     repo_clone_path = local.demo_repo_clone_path
     app_user        = local.demo_app_user
     caddy_version   = local.caddy_install_version
+    buildx_version  = local.buildx_install_version
   })
 
   tags = merge(local.common_tags, {

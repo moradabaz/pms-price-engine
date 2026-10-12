@@ -17,12 +17,43 @@ curl -SL "https://github.com/docker/compose/releases/latest/download/docker-comp
   -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
+# buildx: pinned above the minimum this project's compose plugin requires to
+# build local Dockerfiles (an older buildx fails with "compose build
+# requires buildx 0.17.0 or later"). Installed system-wide so it's picked
+# up regardless of which user runs docker compose.
+curl -SL "https://github.com/docker/buildx/releases/download/v${buildx_version}/buildx-v${buildx_version}.linux-amd64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
 # Caddy, pinned version, installed as a systemd service but not enabled —
-# start-demo.sh starts it explicitly once the Caddyfile is in place.
+# start-demo.sh writes the real Caddyfile and starts the service once it's
+# in place.
 curl -SL "https://github.com/caddyserver/caddy/releases/download/v${caddy_version}/caddy_${caddy_version}_linux_amd64.tar.gz" \
   -o /tmp/caddy.tar.gz
 tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy
 rm -f /tmp/caddy.tar.gz
+
+mkdir -p /etc/caddy
+cat > /etc/systemd/system/caddy.service <<'UNIT'
+[Unit]
+Description=Caddy
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+User=root
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable caddy
 
 git clone "${repo_url}" "${repo_clone_path}"
 chown -R "${app_user}:${app_user}" "${repo_clone_path}"
