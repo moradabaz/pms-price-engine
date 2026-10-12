@@ -38,16 +38,19 @@ origen de Streamlit y quedarse colgado en "Please wait...". Dos formas de evitar
 
 No aplica en local (mismo host, puertos distintos ya funciona).
 
-## Build para el demo de portfolio (EC2 + DuckDNS)
+## Despliegue actual: dominios separados
 
-La demo usa un único dominio (`pms-price-engine.duckdns.org`): la landing en `/` y el dashboard
-en `/dashboard` (ver `infra/aws/Caddyfile` e `infra/aws/start-demo.sh`, que arrancan Streamlit
-con `--server.baseUrlPath=dashboard`). El build de producción debe apuntar ahí:
+`pms-price-engine.duckdns.org` sirve **Streamlit directamente** (ver `infra/aws/Caddyfile`), sin
+`baseUrlPath` ni iframe — más simple y sin los problemas de WebSocket que un iframe cross-path
+introducía. Esta landing de Astro (`web/`) no se despliega ahí; queda reservada para una página
+personal en otro dominio, que embeberá el dashboard por iframe apuntando al dominio de DuckDNS:
 
 ```bash
-PUBLIC_DASHBOARD_URL=https://pms-price-engine.duckdns.org/dashboard \
+PUBLIC_DASHBOARD_URL=https://pms-price-engine.duckdns.org \
 PUBLIC_GITHUB_URL=https://github.com/moradabaz/pms-price-engine \
   npm run build
 ```
 
-`web/dist/` resultante es lo que sirve Caddy como `root` en el host EC2.
+Como en ese escenario la landing y el dashboard sí viven en **dominios distintos**, aplica el
+caveat de arriba: si el iframe se queda colgado en "Please wait...", arrancar Streamlit con
+`--server.enableCORS=false`.

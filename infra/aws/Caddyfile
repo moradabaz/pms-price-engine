@@ -6,20 +6,10 @@
 # Substitute DNS_DOMAIN before copying this file to the instance (see
 # infra/aws/start-demo.sh), e.g.:
 #   sed "s/DNS_DOMAIN/demo.example.com/" infra/aws/Caddyfile > Caddyfile
+#
+# Serves the Streamlit dashboard directly at the root. The Astro landing
+# page (web/) is kept for a separate personal domain, not served here.
 
 DNS_DOMAIN {
-	# Streamlit is started with --server.baseUrlPath=dashboard (see
-	# infra/aws/start-demo.sh), so it already expects and generates its own
-	# URLs/websocket paths under /dashboard. Do NOT strip the prefix here —
-	# Streamlit needs to see it, both for the initial request and for its
-	# websocket upgrade.
-	handle /dashboard* {
-		reverse_proxy localhost:8501
-	}
-
-	# Astro landing page (static build) everywhere else.
-	handle {
-		root * /opt/pms-price-engine/web/dist
-		file_server
-	}
+	reverse_proxy localhost:8501
 }

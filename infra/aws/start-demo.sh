@@ -21,7 +21,6 @@ readonly SSH_USER="ec2-user"
 readonly REPO_PATH="/opt/pms-price-engine"
 readonly POLL_INTERVAL_SECONDS=5
 readonly MAX_POLL_ATTEMPTS=60
-readonly STREAMLIT_BASE_URL_PATH="dashboard"
 
 echo "Starting instance ${DEMO_INSTANCE_ID} (profile: ${AWS_PROFILE})..."
 aws ec2 start-instances --profile "${AWS_PROFILE}" --instance-ids "${DEMO_INSTANCE_ID}"
@@ -46,10 +45,9 @@ ssh -i "${DEMO_SSH_KEY_PATH}" "${SSH_USER}@${public_ip}" bash -s <<REMOTE_SCRIPT
 set -euo pipefail
 cd "${REPO_PATH}"
 git pull --ff-only
-STREAMLIT_SERVER_BASE_URL_PATH="${STREAMLIT_BASE_URL_PATH}" \
-  docker compose -f infra/docker-compose.yml up -d
+docker compose -f infra/docker-compose.yml up -d
 sed "s/DNS_DOMAIN/${DEMO_DOMAIN}/" infra/aws/Caddyfile | sudo tee /etc/caddy/Caddyfile >/dev/null
 sudo systemctl restart caddy || sudo caddy start --config /etc/caddy/Caddyfile
 REMOTE_SCRIPT
 
-echo "Demo live at https://${DEMO_DOMAIN} (dashboard under /${STREAMLIT_BASE_URL_PATH})"
+echo "Demo live at https://${DEMO_DOMAIN}"
