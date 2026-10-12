@@ -1,14 +1,36 @@
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import boto3
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from common import configure_logging
 
-from dashboard import hot_path, live_metrics, marts
+from dashboard import flink_status, hot_path, live_metrics, marts
 from dashboard.settings import DashboardSettings
 
 _SETTINGS = DashboardSettings()
+
+# Market Pulse Job panel — chart/format constants, kept out of the render
+# functions below so no color, placeholder, or threshold is a magic literal.
+_TIMESTAMP_DISPLAY_FORMAT = "%H:%M:%S"
+_MISSING_VALUE_PLACEHOLDER = "—"
+_BYTES_PER_KILOBYTE = 1024
+_CHART_HEIGHT_PX = 340
+_CHART_MARGIN = dict(l=10, r=10, t=40, b=60)
+_CHART_LEGEND = dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5)
+
+_JOB_STATUS_RUNNING = "RUNNING"
+_STATUS_BADGE_RUNNING = "🟢"
+_STATUS_BADGE_OTHER = "🟡"
+
+_AVG_PRICE_COLOR = "#2563eb"
+_MIN_PRICE_COLOR = "#16a34a"
+_MAX_PRICE_COLOR = "#dc2626"
+_BOOKING_COUNT_COLOR = "#2563eb"
+_PROFIT_COLOR = "#16a34a"
+_CANCELLED_COLOR = "#dc2626"
 
 
 @st.cache_resource
@@ -258,12 +280,82 @@ def render_cost_breakdown() -> None:
     )
 
 
+def _line_figure(
+    df: pd.DataFrame, x: str, y_cols: list[str], colors: list[str], title: str
+) -> go.Figure:
+    fig = go.Figure()
+    for y_col, color in zip(y_cols, colors):
+        fig.add_trace(
+            go.Scatter(
+                x=df[x],
+                y=df[y_col],
+                mode="lines+markers",
+                name=y_col,
+                line=dict(color=color, width=2),
+            )
+        )
+    fig.update_layout(
+        title=title,
+        margin=_CHART_MARGIN,
+        height=_CHART_HEIGHT_PX,
+        legend=_CHART_LEGEND,
+        hovermode="x unified",
+    )
+    return fig
+
+
+def _render_job_health() -> None:
+    status = flink_status.fetch_status(
+        _SETTINGS.flink_rest_url, _SETTINGS.flink_job_name
+    )
+    st.subheader("Job health")
+    if not status.ok:
+        st.warning(f"Flink job not reachable: {status.error}")
+        return
+
+    cols = st.columns(4)
+    badge = (
+        _STATUS_BADGE_RUNNING
+        if status.job_status == _JOB_STATUS_RUNNING
+        else _STATUS_BADGE_OTHER
+    )
+    cols[0].metric("Status", f"{badge} {status.job_status}")
+    cols[1].metric(
+        "Last checkpoint",
+        status.checkpoint_id if status.checkpoint_id is not None else _MISSING_VALUE_PLACEHOLDER,
+    )
+    duration = (
+        f"{status.checkpoint_duration_ms} ms"
+        if status.checkpoint_duration_ms is not None
+        else _MISSING_VALUE_PLACEHOLDER
+    )
+    cols[2].metric("Checkpoint duration", duration)
+    size = (
+        f"{status.checkpoint_size_bytes / _BYTES_PER_KILOBYTE:.1f} KB"
+        if status.checkpoint_size_bytes is not None
+        else _MISSING_VALUE_PLACEHOLDER
+    )
+    cols[3].metric("Checkpoint size", size)
+    st.caption(
+        "Pulled live from the Flink REST API (/jobs, /jobs/{id}/checkpoints). "
+        "RocksDB incremental checkpoints every 60s, EXACTLY_ONCE mode — this "
+        "is what the job restores from after a taskmanager failure."
+    )
+
+
 def render_market_pulse_job() -> None:
     # Phase 26: live from market-pulse-job's own 3 DynamoDB tables, not the
     # cold-path marts — re-queried every 60s fragment run same as
     # "Current price" (hot_path), not ttl-cached, since these are meant to
     # visibly move while the demo runs.
     st.header("Market Pulse Job (live) — Phase 26")
+    st.caption(
+        f"Last refreshed {datetime.now(timezone.utc).strftime(_TIMESTAMP_DISPLAY_FORMAT)} UTC"
+    )
+
+    _render_job_health()
+    st.divider()
+
     tab_pulse, tab_created, tab_cancelled = st.tabs(
         ["Market pulse", "Bookings created", "Bookings cancelled"]
     )
@@ -286,10 +378,15 @@ def render_market_pulse_job() -> None:
             cols[0].metric("Avg price", f"{latest['avg_price_eur']:.2f} €")
             cols[1].metric("Min price", f"{latest['min_price_eur']:.2f} €")
             cols[2].metric("Max price", f"{latest['max_price_eur']:.2f} €")
-            st.line_chart(
-                segment_df,
-                x="window_start",
-                y=["avg_price_eur", "min_price_eur", "max_price_eur"],
+            st.plotly_chart(
+                _line_figure(
+                    segment_df,
+                    "window_start",
+                    ["avg_price_eur", "min_price_eur", "max_price_eur"],
+                    [_AVG_PRICE_COLOR, _MIN_PRICE_COLOR, _MAX_PRICE_COLOR],
+                    f"Price range — {segment_key}",
+                ),
+                use_container_width=True,
             )
             st.dataframe(
                 segment_df,
@@ -322,9 +419,34 @@ def render_market_pulse_job() -> None:
                 key="bookings_created_apartment",
             )
             apt_df = df[df["apartment_id"] == apartment_id]
-            st.line_chart(apt_df, x="window_start", y="booking_count")
+            latest = apt_df.iloc[-1]
+            cols = st.columns(2)
+            cols[0].metric("Bookings (last window)", int(latest["booking_count"]))
+            if "avg_profit_eur" in apt_df.columns and pd.notna(latest.get("avg_profit_eur")):
+                cols[1].metric("Avg profit (last window)", f"{latest['avg_profit_eur']:.2f} €")
+            else:
+                cols[1].metric("Avg profit (last window)", _MISSING_VALUE_PLACEHOLDER)
+            st.plotly_chart(
+                _line_figure(
+                    apt_df,
+                    "window_start",
+                    ["booking_count"],
+                    [_BOOKING_COUNT_COLOR],
+                    "Bookings created",
+                ),
+                use_container_width=True,
+            )
             if "avg_profit_eur" in apt_df.columns:
-                st.line_chart(apt_df, x="window_start", y="avg_profit_eur")
+                st.plotly_chart(
+                    _line_figure(
+                        apt_df,
+                        "window_start",
+                        ["avg_profit_eur"],
+                        [_PROFIT_COLOR],
+                        "Avg profit",
+                    ),
+                    use_container_width=True,
+                )
             st.dataframe(
                 apt_df,
                 hide_index=True,
@@ -358,7 +480,17 @@ def render_market_pulse_job() -> None:
                 key="bookings_cancelled_apartment",
             )
             apt_df = df[df["apartment_id"] == apartment_id]
-            st.line_chart(apt_df, x="window_start", y="cancelled_count")
+            st.metric("Cancelled (last window)", int(apt_df.iloc[-1]["cancelled_count"]))
+            st.plotly_chart(
+                _line_figure(
+                    apt_df,
+                    "window_start",
+                    ["cancelled_count"],
+                    [_CANCELLED_COLOR],
+                    "Cancellations",
+                ),
+                use_container_width=True,
+            )
             st.dataframe(
                 apt_df,
                 hide_index=True,

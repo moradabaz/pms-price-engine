@@ -15,6 +15,10 @@ class DashboardSettings(BaseSettings):
     bookings_created_table_name: str = "bookings_created_5min"
     bookings_cancelled_table_name: str = "bookings_cancelled_5min"
 
+    # Flink REST API, queried read-only for the "Job health" section.
+    flink_rest_url: str = "http://flink-jobmanager:8081"
+    flink_job_name: str = "market-pulse-job"
+
     # Same file dbt-runner writes, mounted read-only.
     duckdb_path: str = "/data/dbt/pms_lakehouse.duckdb"
     marts_cache_ttl_seconds: int = 300
