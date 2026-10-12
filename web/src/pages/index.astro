@@ -1,0 +1,289 @@
+---
+const DASHBOARD_URL = import.meta.env.PUBLIC_DASHBOARD_URL ?? "http://localhost:8501";
+const GITHUB_URL =
+  import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/moradabaz/pms-price-engine";
+
+const HIGHLIGHTS = [
+  {
+    title: "Watermarks and event time",
+    body: "with_idleness for a single-partition source, the minimum rule across sources, allowed lateness with a side output for late data instead of silently dropping it.",
+  },
+  {
+    title: "Exactly-once checkpointing",
+    body: "Incremental RocksDB state, checkpoints persisted to S3 every 60s. The panel below reads the real state of the latest checkpoint via the Flink REST API.",
+  },
+  {
+    title: "Keyed state with a computed TTL",
+    body: "Deduplication with ValueState[bool] per booking_id, TTL = window size plus allowed lateness, not an arbitrary number.",
+  },
+  {
+    title: "Async I/O enrichment",
+    body: "AsyncDataStream.unordered_wait against price_decision to attach margin/profit without blocking the main pipeline.",
+  },
+  {
+    title: "Spec-driven development",
+    body: "Every phase has a spec, ADRs explaining the why behind each decision, and an audit diary of live verification, not just unit tests.",
+  },
+  {
+    title: "Cost discipline in architecture",
+    body: "Explicit decisions about what runs managed and what stays local (self-hosted Kafka/Flink vs. managed DynamoDB/S3/Kinesis) instead of defaulting everything to AWS.",
+  },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PMS Price Engine - Streaming pricing platform</title>
+    <meta
+      name="description"
+      content="Dynamic pricing platform built with PyFlink, Kafka, and exactly-once checkpointing. A learning project on streaming and spec-driven development."
+    />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="container">
+        <p class="eyebrow">Portfolio · Data Engineering</p>
+        <h1>PMS Price Engine</h1>
+        <p class="subtitle">
+          A dynamic pricing engine for vacation rentals built to learn streaming for real:
+          PyFlink, Kafka, CDC with Debezium, keyed state, exactly-once checkpointing, and a
+          pipeline designed spec-first with ADRs and live auditing.
+        </p>
+        <div class="cta-row">
+          <a class="button primary" href="#demo">See the live demo</a>
+          <a class="button" href={GITHUB_URL} target="_blank" rel="noreferrer">Code on GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="section">
+        <div class="container">
+          <h2>What this project demonstrates</h2>
+          <div class="grid">
+            {
+              HIGHLIGHTS.map((item) => (
+                <article class="card">
+                  <h3>{item.title}</h3>
+                  <p>{item.body}</p>
+                </article>
+              ))
+            }
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <h2>Architecture</h2>
+          <p class="section-intro">
+            CDC from Postgres via Debezium, two independent PyFlink jobs on the same cluster
+            (pricing and Market Pulse), DynamoDB as the hot path, and Apache Iceberg as the cold
+            path, transformed with dbt.
+          </p>
+          <img
+            src="/architecture.png"
+            alt="PMS Price Engine architecture diagram"
+            class="architecture-diagram"
+          />
+        </div>
+      </section>
+
+      <section class="section" id="demo">
+        <div class="container">
+          <h2>Live dashboard</h2>
+          <p class="section-intro">
+            The "Market Pulse Job" panel shows the real state of the Flink job (status, latest
+            checkpoint) plus the 5-minute windowed metrics, read live from DynamoDB.
+          </p>
+          <div class="dashboard-frame">
+            <iframe
+              src={DASHBOARD_URL}
+              title="PMS Price Engine - Streamlit dashboard"
+              loading="lazy"
+            />
+          </div>
+          <p class="dashboard-fallback">
+            Not loading? The demo server is switched on on demand before each interview, reach
+            out and I'll start it, or check the code directly on
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <p>PMS Price Engine - a learning project on streaming and spec-driven development.</p>
+      </div>
+    </footer>
+
+    <style>
+      :root {
+        --bg: #0b1020;
+        --bg-alt: #0f1630;
+        --text: #e7eaf3;
+        --text-muted: #a3acc9;
+        --accent: #5b8cff;
+        --card-bg: #131a33;
+        --border: #232c4d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        line-height: 1.6;
+      }
+
+      .container {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 0 1.5rem;
+      }
+
+      .hero {
+        padding: 5rem 0 3.5rem;
+        background: radial-gradient(circle at top left, #1a2550, var(--bg) 60%);
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin: 0 0 0.75rem;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 5vw, 3.2rem);
+        margin: 0 0 1rem;
+      }
+
+      .subtitle {
+        color: var(--text-muted);
+        font-size: 1.1rem;
+        max-width: 640px;
+        margin: 0 0 2rem;
+      }
+
+      .cta-row {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      .button {
+        display: inline-block;
+        padding: 0.7rem 1.3rem;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      .button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #06102b;
+      }
+
+      .section {
+        padding: 3.5rem 0;
+      }
+
+      .section.alt {
+        background: var(--bg-alt);
+      }
+
+      h2 {
+        font-size: 1.8rem;
+        margin: 0 0 1rem;
+      }
+
+      .section-intro {
+        color: var(--text-muted);
+        max-width: 720px;
+        margin: 0 0 2rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1rem;
+      }
+
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1.25rem;
+      }
+
+      .card h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1.05rem;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.95rem;
+      }
+
+      .architecture-diagram {
+        width: 100%;
+        height: auto;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+      }
+
+      .dashboard-frame {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        height: 80vh;
+        min-height: 480px;
+      }
+
+      .dashboard-frame iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #fff;
+      }
+
+      .dashboard-fallback {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        margin-top: 1rem;
+      }
+
+      .dashboard-fallback a {
+        color: var(--accent);
+      }
+
+      .footer {
+        padding: 2rem 0;
+        border-top: 1px solid var(--border);
+        color: var(--text-muted);
+        font-size: 0.85rem;
+      }
+    </style>
+  </body>
+</html>

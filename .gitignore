@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 .env
 .env.*
+!.env.example
+!**/.env.example
 *.egg-info/
 dist/
 build/
@@ -41,6 +43,11 @@ infra/localstack/volume/
 # Maven (infra/debezium/custom-converters) - build the jar with:
 #   docker run --rm -v "$(pwd)/infra/debezium/custom-converters:/app" -w /app maven:3.9-eclipse-temurin-17 mvn -q -DskipTests package
 infra/debezium/custom-converters/target/
+
+# Node (web/ — Astro landing)
+node_modules/
+.astro/
+web/dist/
 
 # IDE
 .idea/

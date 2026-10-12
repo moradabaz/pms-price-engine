@@ -9,7 +9,16 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = var.aws_profile
+
+  # Belt-and-braces safety net: aws_profile has no default (see
+  # variables.tf), so a bare `terraform plan`/`apply` already fails before
+  # reaching the provider. This also pins the account id we expect, so even
+  # a correctly-named but misconfigured profile (pointing at the wrong
+  # account) is caught at plan time instead of silently creating resources
+  # in the wrong AWS account.
+  allowed_account_ids = [var.expected_aws_account_id]
 }
 
 locals {

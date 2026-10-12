@@ -1135,24 +1135,26 @@ def render_apartment_detail() -> None:
 @st.fragment(run_every="60s")
 def render_dashboard() -> None:
     (
+        tab_market_pulse,
         tab_current,
         tab_detail,
         tab_evolution,
         tab_alerts,
         tab_channels,
         tab_costs,
-        tab_market_pulse,
     ) = st.tabs(
         [
+            "Market Pulse Job (live)",
             "Current price",
             "Apartment detail",
             "Price evolution",
             "Margin alerts",
             "Channel pricing",
             "Cost breakdown",
-            "Market Pulse Job (live)",
         ]
     )
+    with tab_market_pulse:
+        render_market_pulse_job()
     with tab_current:
         render_current_prices()
     with tab_detail:
@@ -1165,8 +1167,6 @@ def render_dashboard() -> None:
         render_channel_pricing()
     with tab_costs:
         render_cost_breakdown()
-    with tab_market_pulse:
-        render_market_pulse_job()
 
 
 def main() -> None:

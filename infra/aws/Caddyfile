@@ -1,0 +1,25 @@
+# Reverse proxy for the portfolio demo. Caddy fetches and renews the
+# Let's Encrypt certificate automatically on first start — this requires
+# DNS_DOMAIN to already resolve to the instance's Elastic IP at that point,
+# otherwise the HTTP-01 challenge fails.
+#
+# Substitute DNS_DOMAIN before copying this file to the instance (see
+# infra/aws/start-demo.sh), e.g.:
+#   sed "s/DNS_DOMAIN/demo.example.com/" infra/aws/Caddyfile > Caddyfile
+
+DNS_DOMAIN {
+	# Streamlit is started with --server.baseUrlPath=dashboard (see
+	# infra/aws/start-demo.sh), so it already expects and generates its own
+	# URLs/websocket paths under /dashboard. Do NOT strip the prefix here —
+	# Streamlit needs to see it, both for the initial request and for its
+	# websocket upgrade.
+	handle /dashboard* {
+		reverse_proxy localhost:8501
+	}
+
+	# Astro landing page (static build) everywhere else.
+	handle {
+		root * /opt/pms-price-engine/web/dist
+		file_server
+	}
+}

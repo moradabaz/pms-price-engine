@@ -12,3 +12,13 @@ output "dynamodb_table_name" {
   description = "DynamoDB table for apartment hot-path prices."
   value       = aws_dynamodb_table.apartment_prices.name
 }
+
+output "instance_id" {
+  description = "EC2 instance id for the portfolio demo (feed into start-demo.sh / stop-demo.sh as DEMO_INSTANCE_ID)."
+  value       = aws_instance.demo.id
+}
+
+output "demo_elastic_ip" {
+  description = "Elastic IP to point your DNS A record at."
+  value       = aws_eip.demo.public_ip
+}

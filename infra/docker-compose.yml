@@ -154,6 +154,11 @@ services:
       FLINK_JOB_DYNAMODB_ENDPOINT_URL: http://localstack:4566
       FLINK_JOB_S3_ENDPOINT_URL: http://localstack:4566
       FLINK_JOB_CHECKPOINT_STORAGE_PATH: s3://pms-iceberg/flink-checkpoints
+      # Local-dev-only override: parallelism 4+4 (8 slots) needs more RAM
+      # than an 8GB Docker Desktop budget can hold for both jobs at once
+      # (see docs/printable/resilience-demo-notes.md). 2+2 fits; production
+      # sizing stays at the settings.py default (4).
+      FLINK_JOB_PARALLELISM: "2"
       # Phase 26: market-pulse-job runs on this same cluster/container
       # (spec 26 §2) — a second, independent job, manually submitted the
       # same way (docs/manual/MANUAL.md), reusing this container's env.
@@ -161,6 +166,7 @@ services:
       MARKET_PULSE_JOB_DYNAMODB_ENDPOINT_URL: http://localstack:4566
       MARKET_PULSE_JOB_S3_ENDPOINT_URL: http://localstack:4566
       MARKET_PULSE_JOB_CHECKPOINT_STORAGE_PATH: s3://pms-iceberg/market-pulse-checkpoints
+      MARKET_PULSE_JOB_PARALLELISM: "2"
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
     ports:
@@ -375,6 +381,10 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_REGION: eu-west-1
+      # Empty by default (serves at "/") for local dev. The portfolio demo
+      # host sets this to "dashboard" so Caddy can reverse-proxy it under
+      # /dashboard on the same domain (see infra/aws/start-demo.sh).
+      STREAMLIT_SERVER_BASE_URL_PATH: ${STREAMLIT_SERVER_BASE_URL_PATH:-}
     ports:
       - "8501:8501"
     volumes:

@@ -1,0 +1,28 @@
+#!/bin/bash
+# Bootstraps a fresh instance: Docker + Caddy + the repo checkout.
+# Deliberately does NOT run `docker compose up` or start Caddy — that is
+# infra/aws/start-demo.sh's job, invoked on demand before a demo.
+set -euo pipefail
+
+dnf update -y
+dnf install -y docker git
+
+systemctl enable docker
+systemctl start docker
+usermod -aG docker "${app_user}"
+
+# Docker Compose v2 plugin (not bundled with Amazon Linux's docker package).
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+# Caddy, pinned version, installed as a systemd service but not enabled —
+# start-demo.sh starts it explicitly once the Caddyfile is in place.
+curl -SL "https://github.com/caddyserver/caddy/releases/download/v${caddy_version}/caddy_${caddy_version}_linux_amd64.tar.gz" \
+  -o /tmp/caddy.tar.gz
+tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy
+rm -f /tmp/caddy.tar.gz
+
+git clone "${repo_url}" "${repo_clone_path}"
+chown -R "${app_user}:${app_user}" "${repo_clone_path}"
